@@ -24,6 +24,9 @@ cuda_dep = dependency('cuda', required: true)
 cuda_args = [
     '-gencode', 'arch=compute_52,code=sm_52',
     '-gencode', 'arch=compute_61,code=sm_61',
+    '-gencode', 'arch=compute_70,code=sm_70',
+    '-gencode', 'arch=compute_75,code=sm_75',
+    '-gencode', 'arch=compute_86,code=sm_86',
     '-gencode', 'arch=compute_89,code=sm_89'
 ]
 add_project_arguments(cuda_args, language: 'cuda')
