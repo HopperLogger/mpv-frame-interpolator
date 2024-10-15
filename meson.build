@@ -1,5 +1,6 @@
 project('mpv',
         'c',
+        'cuda',
         license: ['GPL2+', 'LGPL2.1+'],
         version: files('./MPV_VERSION'),
         meson_version: '>=1.3.0',
@@ -17,6 +18,15 @@ project('mpv',
 build_root = meson.project_build_root()
 source_root = meson.project_source_root()
 python = find_program('python3')
+
+# cuda
+cuda_dep = dependency('cuda', required: true)
+cuda_args = [
+    '-gencode', 'arch=compute_52,code=sm_52',
+    '-gencode', 'arch=compute_61,code=sm_61',
+    '-gencode', 'arch=compute_89,code=sm_89'
+]
+add_project_arguments(cuda_args, language: 'cuda')
 
 # ffmpeg
 libavcodec = dependency('libavcodec', version: '>= 60.31.102')
@@ -40,7 +50,8 @@ dependencies = [libass,
                 libavutil,
                 libplacebo,
                 libswresample,
-                libswscale]
+                libswscale,
+                cuda_dep]
 
 # Keeps track of all enabled/disabled features
 features = {
@@ -203,6 +214,8 @@ sources = files(
     'video/csputils.c',
     'video/decode/vd_lavc.c',
     'video/filter/refqueue.c',
+    'video/filter/HopperRender/vf_HopperRender.c',
+    'video/filter/HopperRender/opticalFlowCalc.cu',
     'video/filter/vf_format.c',
     'video/filter/vf_sub.c',
     'video/fmt-conversion.c',
