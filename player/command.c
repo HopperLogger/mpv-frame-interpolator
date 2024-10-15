@@ -452,6 +452,14 @@ static int mp_property_playback_speed(void *ctx, struct m_property *prop,
                                          false, false, action != M_PROPERTY_FIXED_LEN_PRINT);
         return M_PROPERTY_OK;
     }
+
+    // Inform HopperRender about the speed change
+    struct mp_filter_command data = {
+            .type = MP_FILTER_COMMAND_TEXT,
+            .speed = mpctx->opts->playback_speed
+        };
+    mp_output_chain_command(mpctx->vo_chain->filter, "all", &data);
+
     return mp_property_generic_option(mpctx, prop, action, arg);
 }
 
