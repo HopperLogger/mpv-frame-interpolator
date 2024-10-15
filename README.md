@@ -26,8 +26,9 @@ The compilation is the same as for the [mpv](https://github.com/mpv-player/mpv) 
 1. Install the [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads)
 2. git clone https://github.com/mpv-player/mpv-build.git
 3. git clone https://github.com/HopperLogger/mpv-frame-interpolator.git
-4. mv -f mpv-frame-interpolator/mpv mpv-build/
-5. cd mpv-build
+4. mv ~/mpv-frame-interpolator ~/mpv
+5. mv ~/mpv ~/mpv-build
+6. cd mpv-build
 7. ./rebuild -j8
 8. sudo ./install
 9. To use it in your terminal, run: /usr/local/bin/mpv /path/to/video --vf=HopperRender _-hwdec=nvdec_
