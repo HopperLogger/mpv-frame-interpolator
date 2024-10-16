@@ -37,10 +37,11 @@ __global__ void convertNV12toYUV420PKernel(T* outputFrame, const T* inputFrame, 
 }
 
 // Kernel that converts a YUV420P frame to a NV12 frame
+// Note that it expects the frame to only contain the U and V channels (so the first byte should be of the U channel)
 template <typename T>
 __global__ void convertYUV420PtoNV12Kernel(T* outputFrame, const T* inputFrame, const unsigned int dimY, 
 										   const unsigned int dimX, const unsigned int halfDimY, 
-										   const unsigned int halfDimX, const unsigned int channelIdxOffset, const unsigned int secondChannelIdxOffset) {
+										   const unsigned int halfDimX, const unsigned int channelIdxOffset) {
 	// Current entry to be computed by the thread
 	const unsigned int cx = blockIdx.x * blockDim.x + threadIdx.x;
 	const unsigned int cy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -48,10 +49,10 @@ __global__ void convertYUV420PtoNV12Kernel(T* outputFrame, const T* inputFrame, 
 	if (cy < halfDimY && cx < dimX) {
 		// U Channel
 		if (!(cx & 1)) {
-			outputFrame[channelIdxOffset + cy * dimX + cx] = inputFrame[channelIdxOffset + cy * halfDimX + (cx >> 1)];
+			outputFrame[channelIdxOffset + cy * dimX + cx] = inputFrame[cy * halfDimX + (cx >> 1)];
 		// V Channel
 		} else {
-			outputFrame[channelIdxOffset + cy * dimX + cx] = inputFrame[secondChannelIdxOffset + cy * halfDimX + (cx >> 1)];
+			outputFrame[channelIdxOffset + cy * dimX + cx] = inputFrame[halfDimY * halfDimX + cy * halfDimX + (cx >> 1)];
 		}
 	}
 }
@@ -84,13 +85,9 @@ __global__ void blurFrameKernel(const T* frameArray, T* blurredFrameArray,
 	// Current entry to be computed by the thread
 	const unsigned short cx = blockIdx.x * blockDim.x + threadIdx.x;
 	const unsigned short cy = blockIdx.y * blockDim.y + threadIdx.y;
-	const unsigned char cz = blockIdx.z;
 
 	// Check if the current thread is supposed to perform calculations
-	if (cy >= dimY || cx >= realDimX || (cz == 1 && cy >= (dimY >> 1))) {
-		return;
-	} else if (cz == 1 && cy < (dimY >> 1) && cx < realDimX) {
-		blurredFrameArray[dimY * dimX + cy * dimX + cx] = frameArray[dimY * dimX + cy * dimX + cx];
+	if (cy >= dimY || cx >= realDimX) {
 		return;
 	}
 
@@ -1191,6 +1188,19 @@ void free(struct OpticalFlowCalc *ofc) {
 }
 
 /*
+* Checks if there are any recent cuda errors and prints the error if there is one.
+*
+* @param functionName: Name of the function that called this function
+*/
+void checkCudaError(const char* functionName) {
+	cudaError_t cudaError = cudaGetLastError();
+	if (cudaError != cudaSuccess) {
+		printf("CUDA Error in function %s: %s\n", functionName, cudaGetErrorString(cudaError));
+		exit(1);
+	}
+}
+
+/*
 * Blurs a frame
 *
 * @param ofc: Pointer to the optical flow calculator
@@ -1200,59 +1210,54 @@ void free(struct OpticalFlowCalc *ofc) {
 * @param directOutput: Whether to output the blurred frame directly
 */
 void blurFrameArray(struct OpticalFlowCalc *ofc, const void* frame, void* blurredFrame, const unsigned int kernelSize, const bool directOutput) {
+	// Early exit if kernel size is too small to blur
+	if (kernelSize < 4) {
+		cudaMemcpy(blurredFrame, frame, (ofc->m_bIsHDR ? 2 : 1) * ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
+		return;
+	}
+
+	// Calculate useful constants
 	const unsigned char boundsOffset = kernelSize >> 1;
-	const unsigned char chacheSize = kernelSize + (boundsOffset << 1);
-	const size_t sharedMemSize = chacheSize * chacheSize * sizeof(unsigned int);
+	const unsigned char cacheSize = kernelSize + (boundsOffset << 1);
+	const size_t sharedMemSize = cacheSize * cacheSize * sizeof(unsigned int);
 	const unsigned short totalThreads = max(kernelSize * kernelSize, 1);
-    const unsigned short totalEntries = chacheSize * chacheSize;
+    const unsigned short totalEntries = cacheSize * cacheSize;
     const unsigned char avgEntriesPerThread = totalEntries / totalThreads;
 	const unsigned short remainder = totalEntries % totalThreads;
 	const char lumStart = -(kernelSize >> 1);
 	const unsigned char lumEnd = (kernelSize >> 1);
 	const unsigned short lumPixelCount = (lumEnd - lumStart) * (lumEnd - lumStart);
+	
+	// Calculate grid and thread dimensions
+	const unsigned int numBlocksX = max(static_cast<int>(ceil(static_cast<double>(ofc->m_iDimX) / kernelSize)), 1);
+	const unsigned int numBlocksY = max(static_cast<int>(ceil(static_cast<double>(ofc->m_iDimY) / kernelSize)), 1);
+	dim3 gridDim(numBlocksX, numBlocksY, 1);
+	dim3 threadDim(kernelSize, kernelSize, 1);
 
-	// Calculate the number of blocks needed
-	const unsigned int NUM_BLOCKS_X = max(static_cast<int>(ceil(static_cast<double>(ofc->m_iDimX) / kernelSize)), 1);
-	const unsigned int NUM_BLOCKS_Y = max(static_cast<int>(ceil(static_cast<double>(ofc->m_iDimY) / kernelSize)), 1);
-
-	// Use dim3 structs for block and grid size
-	dim3 gridBF(NUM_BLOCKS_X, NUM_BLOCKS_Y, 3);
-	if (!directOutput) gridBF.z = 1; // We only need the luminance channel if we are not doing direct output
-	dim3 threadsBF(kernelSize, kernelSize, 1);
-
-	// No need to blur the frame if the kernel size is less than 4
-	if (kernelSize < 4) {
-		cudaMemcpy(blurredFrame, frame, static_cast<size_t>((ofc->m_bIsHDR ? 3 : 1.5) * ofc->m_iDimY * ofc->m_iDimX), cudaMemcpyDeviceToDevice);
+	// Launch kernel based on HDR/SDR type
+	if (ofc->m_bIsHDR) {
+		blurFrameKernel <<<gridDim, threadDim, sharedMemSize, ofc->m_csWarpStream1>>> (
+			static_cast<const unsigned short*>(frame), static_cast<unsigned short*>(blurredFrame), kernelSize, cacheSize, boundsOffset, avgEntriesPerThread, remainder, lumStart, lumEnd, lumPixelCount, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
+		cudaStreamSynchronize(ofc->m_csWarpStream1);
 	} else {
-		// Launch kernel
-		if (ofc->m_bIsHDR) {
-			unsigned short* frameHDR = static_cast<unsigned short*>(const_cast<void*>(frame));
-			unsigned short* blurredFrameHDR = static_cast<unsigned short*>(blurredFrame);
-			blurFrameKernel << <gridBF, threadsBF, sharedMemSize, ofc->m_csWarpStream1>> > (frameHDR, blurredFrameHDR, kernelSize, chacheSize, boundsOffset, avgEntriesPerThread, remainder, lumStart, lumEnd, lumPixelCount, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
-		} else {
-			unsigned char* frameSDR = static_cast<unsigned char*>(const_cast<void*>(frame));
-			unsigned char* blurredFrameSDR = static_cast<unsigned char*>(blurredFrame);
-			blurFrameKernel << <gridBF, threadsBF, sharedMemSize, ofc->m_csWarpStream1>> > (frameSDR, blurredFrameSDR, kernelSize, chacheSize, boundsOffset, avgEntriesPerThread, remainder, lumStart, lumEnd, lumPixelCount, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
-		}
-		
+		blurFrameKernel <<<gridDim, threadDim, sharedMemSize, ofc->m_csWarpStream1>>> (
+			static_cast<const unsigned char*>(frame), static_cast<unsigned char*>(blurredFrame), kernelSize, cacheSize, boundsOffset, avgEntriesPerThread, remainder, lumStart, lumEnd, lumPixelCount, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
 		cudaStreamSynchronize(ofc->m_csWarpStream1);
 	}
 
-	// Convert the NV12 frame to P010 if we are doing direct output
+	// Handle direct output if necessary
 	if (directOutput) {
 		if (ofc->m_bIsHDR) {
-			cudaMemcpy(ofc->m_outputFrameHDR, blurredFrame, static_cast<size_t>(3 * ofc->m_iDimY * ofc->m_iDimX), cudaMemcpyDeviceToDevice);
+			cudaMemcpy(ofc->m_outputFrameHDR, blurredFrame, 2 * ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
+			cudaMemcpy(ofc->m_outputFrameHDR + ofc->m_iDimY * ofc->m_iDimX, static_cast<const unsigned short*>(frame) + ofc->m_iDimY * ofc->m_iDimX, 2 * ((ofc->m_iDimY / 2) * ofc->m_iDimX), cudaMemcpyDeviceToDevice);
 		} else {
-			cudaMemcpy(ofc->m_outputFrameSDR, blurredFrame, static_cast<size_t>(1.5 * ofc->m_iDimY * ofc->m_iDimX), cudaMemcpyDeviceToDevice);
+			cudaMemcpy(ofc->m_outputFrameSDR, blurredFrame, ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
+			cudaMemcpy(ofc->m_outputFrameSDR + ofc->m_iDimY * ofc->m_iDimX, static_cast<const unsigned char*>(frame) + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY / 2) * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
 		}
 	}
 
-	// Check for CUDA Errors
-	cudaError_t cudaError = cudaGetLastError();
-	if (cudaError != cudaSuccess) {
-		printf("CUDA Error in function blurFrameArray: %s\n", cudaGetErrorString(cudaError));
-		exit(1);
-	}
+	// Check for CUDA errors
+	checkCudaError("blurFrameArray");
 }
 
 /*
@@ -1264,24 +1269,27 @@ void blurFrameArray(struct OpticalFlowCalc *ofc, const void* frame, void* blurre
 * @param directOutput: Whether to output the blurred frame directly
 */
 void updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const unsigned int kernelSize, const bool directOutput) {
-	// Copy the source frame to our internal frame buffer
+	// P010 format
 	if (ofc->m_bIsHDR && ofc->m_iFMT == CUDA_FMT) {
 		cudaMemcpy(ofc->m_frameHDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), cudaMemcpyDeviceToDevice);
 		cudaMemcpy(ofc->m_frameHDR[0] + ofc->m_iDimY * ofc->m_iDimX, pInBuffer[1], (ofc->m_iDimY / 2) * ofc->m_iDimX * sizeof(unsigned short), cudaMemcpyDeviceToDevice);
+	// YUV420P10 format
 	} else if (ofc->m_bIsHDR) {
 		cudaMemcpy(ofc->m_frameHDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), cudaMemcpyHostToDevice);
-		cudaMemcpy(ofc->m_blurredFrameHDR[0] + ofc->m_iDimY * ofc->m_iDimX, pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), cudaMemcpyHostToDevice);
-		cudaMemcpy(ofc->m_blurredFrameHDR[0] + (ofc->m_iDimY * ofc->m_iDimX + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2)), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), cudaMemcpyHostToDevice);
-		convertYUV420PtoNV12Kernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_frameHDR[0], ofc->m_blurredFrameHDR[0], ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset, ofc->m_iChannelIdxOffset + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1));
+		cudaMemcpy(ofc->m_blurredFrameHDR[0], pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), cudaMemcpyHostToDevice);
+		cudaMemcpy(ofc->m_blurredFrameHDR[0] + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), cudaMemcpyHostToDevice);
+		convertYUV420PtoNV12Kernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_frameHDR[0], ofc->m_blurredFrameHDR[0], ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset);
 		cudaStreamSynchronize(ofc->m_csWarpStream1);
+	// NV12 format
 	} else if (ofc->m_iFMT == CUDA_FMT) {
 		cudaMemcpy(ofc->m_frameSDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
 		cudaMemcpy(ofc->m_frameSDR[0] + ofc->m_iDimY * ofc->m_iDimX, pInBuffer[1], (ofc->m_iDimY / 2) * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
+	// YUV420P format
 	} else if (ofc->m_iFMT == YUV420P_FMT) {
 		cudaMemcpy(ofc->m_frameSDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyHostToDevice);
-		cudaMemcpy(ofc->m_blurredFrameSDR[0] + ofc->m_iDimY * ofc->m_iDimX, pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), cudaMemcpyHostToDevice);
-		cudaMemcpy(ofc->m_blurredFrameSDR[0] + (ofc->m_iDimY * ofc->m_iDimX + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2)), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), cudaMemcpyHostToDevice);
-		convertYUV420PtoNV12Kernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_frameSDR[0], ofc->m_blurredFrameSDR[0], ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset, ofc->m_iChannelIdxOffset + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1));
+		cudaMemcpy(ofc->m_blurredFrameSDR[0], pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), cudaMemcpyHostToDevice);
+		cudaMemcpy(ofc->m_blurredFrameSDR[0] + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), cudaMemcpyHostToDevice);
+		convertYUV420PtoNV12Kernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_frameSDR[0], ofc->m_blurredFrameSDR[0], ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset);
 		cudaStreamSynchronize(ofc->m_csWarpStream1);
 	} else {
 		printf("HopperRender does not support this video format: %d\n", ofc->m_iFMT);
@@ -1289,11 +1297,7 @@ void updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const u
 	}
 
 	// Check for CUDA Errors
-	cudaError_t cudaError = cudaGetLastError();
-	if (cudaError != cudaSuccess) {
-		printf("CUDA Error in function updateFrame: %s\n", cudaGetErrorString(cudaError));
-		exit(1);
-	}
+	checkCudaError("updateFrame");
 	
 	// Blur the frame
 	if (ofc->m_bIsHDR) {
@@ -1331,18 +1335,22 @@ void updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const u
 * @param pOutBuffer: Pointer to the output buffer
 */
 void downloadFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer) {
+	// P010 format
 	if (ofc->m_bIsHDR && ofc->m_iFMT == CUDA_FMT) {
 		cudaMemcpy(pOutBuffer[0], ofc->m_outputFrameHDR, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), cudaMemcpyDeviceToDevice);
 		cudaMemcpy(pOutBuffer[1], ofc->m_outputFrameHDR + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * ofc->m_iDimX * sizeof(unsigned short), cudaMemcpyDeviceToDevice);
+	// YUV420P10 format
 	} else if (ofc->m_bIsHDR) {
 		cudaMemcpy(pOutBuffer[0], ofc->m_outputFrameHDR, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), cudaMemcpyDeviceToHost);
 		convertNV12toYUV420PKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_warpedFrame12HDR, ofc->m_outputFrameHDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset, ofc->m_iChannelIdxOffset + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1));
 		cudaStreamSynchronize(ofc->m_csWarpStream1);
 		cudaMemcpy(pOutBuffer[1], ofc->m_warpedFrame12HDR + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1) * sizeof(unsigned short), cudaMemcpyDeviceToHost);
 		cudaMemcpy(pOutBuffer[2], ofc->m_warpedFrame12HDR + (ofc->m_iDimY * ofc->m_iDimX + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1)), (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1) * sizeof(unsigned short), cudaMemcpyDeviceToHost);
+	// NV12 format
 	} else if (ofc->m_iFMT == CUDA_FMT) {
 		cudaMemcpy(pOutBuffer[0], ofc->m_outputFrameSDR, ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
 		cudaMemcpy(pOutBuffer[1], ofc->m_outputFrameSDR + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
+	// YUV420P format
 	} else if (ofc->m_iFMT == YUV420P_FMT) {
 		cudaMemcpy(pOutBuffer[0], ofc->m_outputFrameSDR, ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyDeviceToHost);
 		convertNV12toYUV420PKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_warpedFrame12SDR, ofc->m_outputFrameSDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset, ofc->m_iChannelIdxOffset + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1));
@@ -1355,11 +1363,7 @@ void downloadFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer) {
 	}
 	
 	// Check for CUDA Errors
-	cudaError_t cudaError = cudaGetLastError();
-	if (cudaError != cudaSuccess) {
-		printf("CUDA Error in function downloadFrame: %s\n", cudaGetErrorString(cudaError));
-		exit(1);
-	}
+	checkCudaError("downloadFrame");
 }
 
 /*
@@ -1399,11 +1403,7 @@ void processFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const
 	}
 
 	// Check for CUDA Errors
-	cudaError_t cudaError = cudaGetLastError();
-	if (cudaError != cudaSuccess) {
-		printf("CUDA Error in function processFrame: %s\n", cudaGetErrorString(cudaError));
-		exit(1);
-	}
+	checkCudaError("processFrame");
 }
 
 /*
@@ -1494,11 +1494,7 @@ void calculateOpticalFlow(struct OpticalFlowCalc *ofc, unsigned int iNumIteratio
 	}
 
 	// Check for CUDA Errors
-	cudaError_t cudaError = cudaGetLastError();
-	if (cudaError != cudaSuccess) {
-		printf("CUDA Error in function calculateOpticalFlow: %s\n", cudaGetErrorString(cudaError));
-		exit(1);
-	}
+	checkCudaError("calculateOpticalFlow");
 }
 
 /*
@@ -1627,11 +1623,7 @@ void warpFrames(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode
 	if (outputMode != 0) cudaStreamSynchronize(ofc->m_csWarpStream2);
 
 	// Check for CUDA Errors
-	cudaError_t cudaError = cudaGetLastError();
-	if (cudaError != cudaSuccess) {
-		printf("CUDA Error in function warpFrames: %s\n", cudaGetErrorString(cudaError));
-		exit(1);
-	}
+	checkCudaError("warpFrames");
 }
 
 /*
@@ -1659,11 +1651,7 @@ void blendFrames(struct OpticalFlowCalc *ofc, float fScalar) {
 	cudaStreamSynchronize(ofc->m_csWarpStream1);
 
 	// Check for CUDA Errors
-	cudaError_t cudaError = cudaGetLastError();
-	if (cudaError != cudaSuccess) {
-		printf("CUDA Error in function blendFrames: %s\n", cudaGetErrorString(cudaError));
-		exit(1);
-	}
+	checkCudaError("blendFrames");
 }
 
 /*
@@ -1686,11 +1674,7 @@ void insertFrame(struct OpticalFlowCalc *ofc) {
 	cudaStreamSynchronize(ofc->m_csWarpStream1);
 
 	// Check for CUDA Errors
-	cudaError_t cudaError = cudaGetLastError();
-	if (cudaError != cudaSuccess) {
-		printf("CUDA Error in function insertFrame: %s\n", cudaGetErrorString(cudaError));
-		exit(1);
-	}
+	checkCudaError("insertFrame");
 }
 
 /*
@@ -1763,11 +1747,7 @@ void sideBySideFrame(struct OpticalFlowCalc *ofc, float fScalar, const unsigned 
 	cudaStreamSynchronize(ofc->m_csWarpStream1);
 
 	// Check for CUDA Errors
-	cudaError_t cudaError = cudaGetLastError();
-	if (cudaError != cudaSuccess) {
-		printf("CUDA Error in function sideBySideFrame: %s\n", cudaGetErrorString(cudaError));
-		exit(1);
-	}
+	checkCudaError("sideBySideFrame");
 }
 
 /*
@@ -1790,11 +1770,7 @@ void drawFlowAsHSV(struct OpticalFlowCalc *ofc, const float blendScalar) {
 	cudaStreamSynchronize(ofc->m_csWarpStream1);
 
 	// Check for CUDA Errors
-	cudaError_t cudaError = cudaGetLastError();
-	if (cudaError != cudaSuccess) {
-		printf("CUDA Error in function drawFlowAsHSV: %s\n", cudaGetErrorString(cudaError));
-		exit(1);
-	}
+	checkCudaError("drawFlowAsHSV");
 }
 
 /*
@@ -1816,11 +1792,7 @@ void drawFlowAsGreyscale(struct OpticalFlowCalc *ofc) {
 	cudaStreamSynchronize(ofc->m_csWarpStream1);
 
 	// Check for CUDA Errors
-	cudaError_t cudaError = cudaGetLastError();
-	if (cudaError != cudaSuccess) {
-		printf("CUDA Error in function drawFlowAsGreyscale: %s\n", cudaGetErrorString(cudaError));
-		exit(1);
-	}
+	checkCudaError("drawFlowAsGreyscale");
 }
 
 /*
@@ -1838,11 +1810,7 @@ void flipFlow(struct OpticalFlowCalc *ofc) {
 	cudaStreamSynchronize(ofc->m_csOFCStream1);
 
 	// Check for CUDA Errors
-	cudaError_t cudaError = cudaGetLastError();
-	if (cudaError != cudaSuccess) {
-		printf("CUDA Error in function flipFlow: %s\n", cudaGetErrorString(cudaError));
-		exit(1);
-	}
+	checkCudaError("flipFlow");
 }
 
 /*
@@ -1891,11 +1859,7 @@ void blurFlowArrays(struct OpticalFlowCalc *ofc) {
 	}
 
 	// Check for CUDA Errors
-	cudaError_t cudaError = cudaGetLastError();
-	if (cudaError != cudaSuccess) {
-		printf("CUDA Error in function blurFlowArrays: %s\n", cudaGetErrorString(cudaError));
-		exit(1);
-	}
+	checkCudaError("blurFlowArrays");
 }
 
 /*
@@ -2077,9 +2041,9 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 		ofc->m_frameHDR[0] = createGPUArrayUS(1.5 * dimY * dimX);
 		ofc->m_frameHDR[1] = createGPUArrayUS(1.5 * dimY * dimX);
 		ofc->m_frameHDR[2] = createGPUArrayUS(1.5 * dimY * dimX);
-		ofc->m_blurredFrameHDR[0] = createGPUArrayUS(1.5 * dimY * dimX);
-		ofc->m_blurredFrameHDR[1] = createGPUArrayUS(1.5 * dimY * dimX);
-		ofc->m_blurredFrameHDR[2] = createGPUArrayUS(1.5 * dimY * dimX);
+		ofc->m_blurredFrameHDR[0] = createGPUArrayUS(dimY * dimX);
+		ofc->m_blurredFrameHDR[1] = createGPUArrayUS(dimY * dimX);
+		ofc->m_blurredFrameHDR[2] = createGPUArrayUS(dimY * dimX);
 		ofc->m_warpedFrame12HDR = createGPUArrayUS(1.5 * dimY * dimX);
 		ofc->m_warpedFrame21HDR = createGPUArrayUS(1.5 * dimY * dimX);
 		ofc->m_outputFrameHDR = createGPUArrayUS(1.5 * dimY * dimX);
@@ -2087,9 +2051,9 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 		ofc->m_frameSDR[0] = createGPUArrayUC(1.5 * dimY * dimX);
 		ofc->m_frameSDR[1] = createGPUArrayUC(1.5 * dimY * dimX);
 		ofc->m_frameSDR[2] = createGPUArrayUC(1.5 * dimY * dimX);
-		ofc->m_blurredFrameSDR[0] = createGPUArrayUC(1.5 * dimY * dimX);
-		ofc->m_blurredFrameSDR[1] = createGPUArrayUC(1.5 * dimY * dimX);
-		ofc->m_blurredFrameSDR[2] = createGPUArrayUC(1.5 * dimY * dimX);
+		ofc->m_blurredFrameSDR[0] = createGPUArrayUC(dimY * dimX);
+		ofc->m_blurredFrameSDR[1] = createGPUArrayUC(dimY * dimX);
+		ofc->m_blurredFrameSDR[2] = createGPUArrayUC(dimY * dimX);
 		ofc->m_warpedFrame12SDR = createGPUArrayUC(1.5 * dimY * dimX);
 		ofc->m_warpedFrame21SDR = createGPUArrayUC(1.5 * dimY * dimX);
 		ofc->m_outputFrameSDR = createGPUArrayUC(1.5 * dimY * dimX);
@@ -2125,10 +2089,10 @@ template __global__ void convertNV12toYUV420PKernel(unsigned short* outputFrame,
 
 template __global__ void convertYUV420PtoNV12Kernel(unsigned char* outputFrame, const unsigned char* inputFrame, const unsigned int dimY, 
 										   const unsigned int dimX, const unsigned int halfDimY, 
-										   const unsigned int halfDimX, const unsigned int channelIdxOffset, const unsigned int secondChannelIdxOffset);
+										   const unsigned int halfDimX, const unsigned int channelIdxOffset);
 template __global__ void convertYUV420PtoNV12Kernel(unsigned short* outputFrame, const unsigned short* inputFrame, const unsigned int dimY, 
 										   const unsigned int dimX, const unsigned int halfDimY, 
-										   const unsigned int halfDimX, const unsigned int channelIdxOffset, const unsigned int secondChannelIdxOffset);
+										   const unsigned int halfDimX, const unsigned int channelIdxOffset);
 
 template __global__ void processFrameKernel(const unsigned char* frame, unsigned char* outputFrame,
                                  const unsigned int dimY,
