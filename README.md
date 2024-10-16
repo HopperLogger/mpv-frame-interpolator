@@ -24,14 +24,14 @@ The compilation is the same as for the [mpv](https://github.com/mpv-player/mpv) 
 
 ### The recommended way:
 1. Install the [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads)
-2. git clone https://github.com/mpv-player/mpv-build.git
-3. git clone https://github.com/HopperLogger/mpv-frame-interpolator.git
-4. mv ~/mpv-frame-interpolator ~/mpv
-5. mv ~/mpv ~/mpv-build
-6. cd mpv-build
-7. ./rebuild -j8
-8. sudo ./install
-9. To use it in your terminal, run: /usr/local/bin/mpv /path/to/video --vf=HopperRender _-hwdec=nvdec_
+2. `git clone https://github.com/mpv-player/mpv-build.git`
+3. `git clone https://github.com/HopperLogger/mpv-frame-interpolator.git`
+4. `mv ~/mpv-frame-interpolator ~/mpv`
+5. `mv ~/mpv ~/mpv-build`
+6. `cd mpv-build`
+7. `./rebuild -j8`
+8. `sudo ./install`
+9. To use it in your terminal, run: `/usr/local/bin/mpv /path/to/video --vf=HopperRender _-hwdec=nvdec_`
 10. To use it in [SMPlayer](https://www.smplayer.info/), install SMPlayer via your distro's software manager or download it from the website.
 11. In the SMPlayer preferences, set the path to the multimedia engine to '/usr/local/bin/mpv'
 12. Goto Advanced->MPlayer/mpv and enter '--vf=HopperRender' in the options field.
@@ -39,7 +39,39 @@ The compilation is the same as for the [mpv](https://github.com/mpv-player/mpv) 
 
 That's it! You can now play a video with SMPlayer and HopperRender will interpolate it to your monitor's native refresh-rate.
 
-### Settings
+## Troubleshooting
+- The following are a few libraries recommended for propper mpv and ffmpeg compilation:
+```
+sudo apt-get update
+sudo apt-get install build-essential pkg-config \
+                     yasm nasm libx264-dev libx265-dev \
+                     libfdk-aac-dev libvpx-dev libopus-dev \
+                     libnuma-dev libass-dev libfreetype6-dev \
+                     libasound2-dev libavcodec-dev libavfilter-dev \
+                     libavformat-dev libavutil-dev libdrm-dev \
+                     libegl1-mesa-dev libjack-jackd2-dev libjpeg-dev \
+                     liblcms2-dev liblua5.2-dev libpulse-dev \
+                     librubberband-dev libsdl2-dev libswresample-dev \
+                     libswscale-dev libuchardet-dev libva-dev \
+                     libvdpau-dev libwayland-dev libx11-dev \
+                     libxext-dev libxinerama-dev libxkbcommon-dev \
+                     libxrandr-dev libxv-dev zlib1g-dev \
+                     libbluray-dev libdvdnav-dev libdvdread-dev \
+                     libgbm-dev libjpeg-dev libmp3lame-dev \
+                     libopus-dev libplacebo-dev libshaderc-dev \
+                     libsmbclient-dev libvulkan-dev libx264-dev \
+                     libx265-dev libxcb-shm0-dev libxcb-xfixes0-dev \
+                     libxvidcore-dev libzimg-dev spirv-cross
+```
+- If you're having trouble with getting nvdec hardware decoding to run, try the following:
+```
+git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git
+cd nv-codec-headers
+sudo make install
+```
+- Make sure not to move, rename, or delete the mpv-build folder, as the filter depends on the AppIndicator python script to be at the path `~/mpv-build/mpv/video/filter/HopperRender/HopperRenderSettingsApplet.py`
+
+## Settings
 You can access the filter status and settings when playing back a video with HopperRender by right clicking on the HopperRender icon in the pannel _(tested on Linux Mint)_.
 
 - You can activate and deactivate the interpolation
