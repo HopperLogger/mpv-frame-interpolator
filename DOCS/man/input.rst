@@ -2187,8 +2187,7 @@ Property list
     Number of MKV editions.
 
 ``edition-list``
-    List of editions, current entry marked. Currently, the raw property value
-    is useless.
+    List of editions, current entry marked.
 
     This has a number of sub-properties. Replace ``N`` with the 0-based edition
     index.
@@ -3089,14 +3088,25 @@ Property list
                 "id"        MPV_FORMAT_INT64
 
 ``track-list``
-    List of audio/video/sub tracks, current entry marked. Currently, the raw
-    property value is useless.
+    List of audio/video/sub tracks, current entry marked.
 
     This has a number of sub-properties. Replace ``N`` with the 0-based track
     index.
 
     ``track-list/count``
         Total number of tracks.
+
+    ``track-list/video``
+        The list of video tracks. This is only usable for printing and its value
+        can't be retrieved.
+
+    ``track-list/audio``
+        The list of audio tracks. This is only usable for printing and its value
+        can't be retrieved.
+
+    ``track-list/sub``
+        The list of sub tracks. This is only usable for printing and its value
+        can't be retrieved.
 
     ``track-list/N/id``
         The ID as it's used for ``--sid``/``--aid``/``--vid``. This is unique
@@ -3318,8 +3328,7 @@ Property list
     first one is returned.
 
 ``chapter-list`` (RW)
-    List of chapters, current entry marked. Currently, the raw property value
-    is useless.
+    List of chapters, current entry marked.
 
     This has a number of sub-properties. Replace ``N`` with the 0-based chapter
     index.
