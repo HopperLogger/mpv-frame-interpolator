@@ -72,78 +72,46 @@ __global__ void processFrameKernel(const T* frame, T* outputFrame,
 	}
 }
 
-// Kernel that blurs a frame
+// Kernel that blurs a frame along the X direction
 template <typename T>
-__global__ void blurFrameKernel(const T* frameArray, T* blurredFrameArray, 
-								const unsigned char kernelSize, const unsigned char chacheSize, const unsigned char boundsOffset, 
-								const unsigned char avgEntriesPerThread, const unsigned short remainder, const char lumStart,
-								const unsigned char lumEnd, const unsigned short lumPixelCount, const unsigned short dimY, const unsigned short dimX,
-								const unsigned int realDimX) {
-	// Shared memory for the frame to prevent multiple global memory accesses
-	extern __shared__ unsigned int sharedFrameArray[];
-
-	// Current entry to be computed by the thread
+__global__ void blurFrameKernelHorizontal(const T* inputFrame, T* blurredFrame, const unsigned char kernelSize,
+										  const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX) {
 	const unsigned short cx = blockIdx.x * blockDim.x + threadIdx.x;
 	const unsigned short cy = blockIdx.y * blockDim.y + threadIdx.y;
 
-	// Check if the current thread is supposed to perform calculations
 	if (cy >= dimY || cx >= realDimX) {
 		return;
 	}
 
-	const unsigned short trX = blockIdx.x * blockDim.x;
-	const unsigned short trY = blockIdx.y * blockDim.y;
-	unsigned char offsetX;
-	unsigned char offsetY;
-	int newX;
-	int newY;
-
-    // Calculate the number of entries to fill for this thread
-    const unsigned short threadIndex = threadIdx.y * blockDim.x + threadIdx.x;
-    const unsigned char entriesToFill = avgEntriesPerThread + (threadIndex < remainder ? 1 : 0);
-
-    // Calculate the starting index for this thread
-    unsigned short startIndex = 0;
-    for (unsigned short i = 0; i < threadIndex; ++i) {
-        startIndex += avgEntriesPerThread + (i < remainder ? 1 : 0);
-    }
-
-    // Fill the shared memory for this thread
-    for (unsigned short i = 0; i < entriesToFill; ++i) {
-		offsetX = (startIndex + i) % chacheSize;
-		offsetY = (startIndex + i) / chacheSize;
-		newX = trX - boundsOffset + offsetX;
-		newY = trY - boundsOffset + offsetY;
-		if (newY < dimY && newY >= 0 && newX < realDimX && newX >= 0) {
-			sharedFrameArray[startIndex + i] = frameArray[newY * dimX + newX];
-		} else {
-			sharedFrameArray[startIndex + i] = 0;
+	unsigned int blurredPixel = 0;
+	for (char x = -kernelSize / 2; x <= kernelSize / 2; ++x) {
+		if ((cx + x) >= 0 && (cx + x) < dimX) {
+			blurredPixel += inputFrame[cy * dimX + cx + x];
 		}
 	}
 
-    // Ensure all threads have finished loading before continuing
-    __syncthreads();
+	blurredFrame[cy * dimX + cx] = blurredPixel / kernelSize;
+}
 
-	// Don't blur the edges of the frame
-	if (cy < kernelSize / 2 || cy >= dimY - kernelSize / 2 || cx < kernelSize / 2 || cx >= realDimX - kernelSize / 2) {
-		blurredFrameArray[cy * dimX + cx] = 0;
+// Kernel that blurs a frame along the Y direction
+template <typename T>
+__global__ void blurFrameKernelVertical(const T* inputFrame, T* blurredFrame, const unsigned char kernelSize,
+										const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX) {
+	const unsigned short cx = blockIdx.x * blockDim.x + threadIdx.x;
+	const unsigned short cy = blockIdx.y * blockDim.y + threadIdx.y;
+
+	if (cy >= dimY || cx >= realDimX) {
 		return;
 	}
 
 	unsigned int blurredPixel = 0;
-
-	// Collect the sum of the surrounding pixels
-	for (char y = lumStart; y < lumEnd; y++) {
-		for (char x = lumStart; x < lumEnd; x++) {
-			if ((cy + y) < dimY && (cy + y) >= 0 && (cx + x) < realDimX && (cx + x) >= 0) {
-				blurredPixel += sharedFrameArray[(threadIdx.y + boundsOffset + y) * chacheSize + threadIdx.x + boundsOffset + x];
-			} else {
-				blurredPixel += sharedFrameArray[(threadIdx.y + boundsOffset) * chacheSize + threadIdx.x + boundsOffset];
-			}
+	for (char y = -kernelSize / 2; y <= kernelSize / 2; ++y) {
+		if ((cy + y) >= 0 && (cy + y) < dimY) {
+			blurredPixel += inputFrame[(cy + y) * dimX + cx];
 		}
 	}
-	blurredPixel /= lumPixelCount;
-	blurredFrameArray[cy * dimX + cx] = blurredPixel;
+
+	blurredFrame[cy * dimX + cx] = blurredPixel / kernelSize;
 }
 
 // Kernel that sets the initial offset array
@@ -1215,18 +1183,6 @@ void blurFrameArray(struct OpticalFlowCalc *ofc, const void* frame, void* blurre
 		cudaMemcpy(blurredFrame, frame, (ofc->m_bIsHDR ? 2 : 1) * ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
 		return;
 	}
-
-	// Calculate useful constants
-	const unsigned char boundsOffset = kernelSize >> 1;
-	const unsigned char cacheSize = kernelSize + (boundsOffset << 1);
-	const size_t sharedMemSize = cacheSize * cacheSize * sizeof(unsigned int);
-	const unsigned short totalThreads = max(kernelSize * kernelSize, 1);
-    const unsigned short totalEntries = cacheSize * cacheSize;
-    const unsigned char avgEntriesPerThread = totalEntries / totalThreads;
-	const unsigned short remainder = totalEntries % totalThreads;
-	const char lumStart = -(kernelSize >> 1);
-	const unsigned char lumEnd = (kernelSize >> 1);
-	const unsigned short lumPixelCount = (lumEnd - lumStart) * (lumEnd - lumStart);
 	
 	// Calculate grid and thread dimensions
 	const unsigned int numBlocksX = max(static_cast<int>(ceil(static_cast<double>(ofc->m_iDimX) / kernelSize)), 1);
@@ -1236,12 +1192,18 @@ void blurFrameArray(struct OpticalFlowCalc *ofc, const void* frame, void* blurre
 
 	// Launch kernel based on HDR/SDR type
 	if (ofc->m_bIsHDR) {
-		blurFrameKernel <<<gridDim, threadDim, sharedMemSize, ofc->m_csWarpStream1>>> (
-			static_cast<const unsigned short*>(frame), static_cast<unsigned short*>(blurredFrame), kernelSize, cacheSize, boundsOffset, avgEntriesPerThread, remainder, lumStart, lumEnd, lumPixelCount, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
+		blurFrameKernelHorizontal <<<gridDim, threadDim, 0, ofc->m_csWarpStream1>>> (
+			static_cast<const unsigned short*>(frame), static_cast<unsigned short*>(blurredFrame), kernelSize, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
+		cudaStreamSynchronize(ofc->m_csWarpStream1);
+		blurFrameKernelVertical <<<gridDim, threadDim, 0, ofc->m_csWarpStream1>>> (
+			static_cast<const unsigned short*>(frame), static_cast<unsigned short*>(blurredFrame), kernelSize, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
 		cudaStreamSynchronize(ofc->m_csWarpStream1);
 	} else {
-		blurFrameKernel <<<gridDim, threadDim, sharedMemSize, ofc->m_csWarpStream1>>> (
-			static_cast<const unsigned char*>(frame), static_cast<unsigned char*>(blurredFrame), kernelSize, cacheSize, boundsOffset, avgEntriesPerThread, remainder, lumStart, lumEnd, lumPixelCount, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
+		blurFrameKernelHorizontal <<<gridDim, threadDim, 0, ofc->m_csWarpStream1>>> (
+			static_cast<const unsigned char*>(frame), static_cast<unsigned char*>(blurredFrame), kernelSize, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
+		cudaStreamSynchronize(ofc->m_csWarpStream1);
+		blurFrameKernelVertical <<<gridDim, threadDim, 0, ofc->m_csWarpStream1>>> (
+			static_cast<const unsigned char*>(frame), static_cast<unsigned char*>(blurredFrame), kernelSize, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
 		cudaStreamSynchronize(ofc->m_csWarpStream1);
 	}
 
@@ -2101,14 +2063,19 @@ template __global__ void processFrameKernel(const unsigned short* frame, unsigne
                                  const unsigned int dimY,
                                  const unsigned int dimX, const unsigned int realDimX, const float blackLevel, const float whiteLevel, const float maxVal);
 
-template __global__ void blurFrameKernel(const unsigned char* frameArray, unsigned char* blurredFrameArray, 
-								const unsigned char kernelSize, const unsigned char chacheSize, const unsigned char boundsOffset, 
-								const unsigned char avgEntriesPerThread, const unsigned short remainder, const char lumStart,
-								const unsigned char lumEnd, const unsigned short lumPixelCount, const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX);
-template __global__ void blurFrameKernel(const unsigned short* frameArray, unsigned short* blurredFrameArray, 
-								const unsigned char kernelSize, const unsigned char chacheSize, const unsigned char boundsOffset, 
-								const unsigned char avgEntriesPerThread, const unsigned short remainder, const char lumStart,
-								const unsigned char lumEnd, const unsigned short lumPixelCount, const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX);
+template __global__ void blurFrameKernelHorizontal(const unsigned short* frameArray, unsigned short* tempArray, 
+										  const unsigned char kernelSize,
+										const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX);
+template __global__ void blurFrameKernelHorizontal(const unsigned char* frameArray, unsigned char* tempArray, 
+										  const unsigned char kernelSize,
+										const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX);
+
+template __global__ void blurFrameKernelVertical(const unsigned short* frameArray, unsigned short* tempArray, 
+										  const unsigned char kernelSize,
+										const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX);
+template __global__ void blurFrameKernelVertical(const unsigned char* frameArray, unsigned char* tempArray, 
+										  const unsigned char kernelSize,
+										const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX);
 
 template __global__ void calcDeltaSums(unsigned int* summedUpDeltaArray, const unsigned char* frame1, const unsigned char* frame2,
 							  const int* offsetArray, const unsigned int layerIdxOffset, const unsigned int directionIdxOffset,
