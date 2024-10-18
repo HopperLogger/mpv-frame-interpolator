@@ -396,14 +396,15 @@ static void append_terminal_line(struct mp_log *log, int lev,
     bstr_xappend(root, term_msg, text);
 
     const unsigned char *cut_pos = NULL;
+    int ellipsis_width = 1;
     int width = term_disp_width(bstr_splice(*term_msg, start, term_msg->len),
-                                term_w - 3, &cut_pos);
+                                term_w - ellipsis_width, &cut_pos);
     if (cut_pos) {
         int new_len = cut_pos - term_msg->start;
         bstr rem = {(unsigned char *)cut_pos, term_msg->len - new_len};
         term_msg->len = new_len;
 
-        bstr_xappend(root, term_msg, bstr0("..."));
+        bstr_xappend(root, term_msg, bstr0("\xE2\x80\xA6"));
 
         while (rem.len) {
             if (bstr_eatstart0(&rem, "\033[")) {
@@ -419,7 +420,7 @@ static void append_terminal_line(struct mp_log *log, int lev,
         }
 
         bstr_xappend(root, term_msg, bstr0("\n"));
-        width += 3;
+        width += ellipsis_width;
     }
     *line_w = root->isatty[term_msg_fileno(root, lev)]
                 ? width : 0;
@@ -525,7 +526,7 @@ static void write_term_msg(struct mp_log *log, int lev, bstr text, bstr *out)
         if (print_term) {
             int line_w;
             append_terminal_line(log, lev, line, &root->term_msg_tmp, &line_w,
-                                 clip ? term_w : INT_MAX);
+                                 clip && term_w ? term_w : INT_MAX);
             term_msg_lines += (!line_w || !term_w)
                                 ? 1 : (line_w + term_w - 1) / term_w;
         }
@@ -536,7 +537,7 @@ static void write_term_msg(struct mp_log *log, int lev, bstr text, bstr *out)
         int line_w = 0;
         if (str.len && print_term)
             append_terminal_line(log, lev, str, &root->term_msg_tmp, &line_w,
-                                 bstr_eatstart0(&str, TERM_MSG_0) ? term_w : INT_MAX);
+                                 bstr_eatstart0(&str, TERM_MSG_0) && term_w ? term_w : INT_MAX);
         term_msg_lines += !term_w ? (str.len ? 1 : 0)
                                   : (line_w + term_w - 1) / term_w;
     } else if (str.len) {
@@ -590,16 +591,15 @@ void mp_msg_va(struct mp_log *log, int lev, const char *format, va_list va)
     } else {
         write_term_msg(log, lev, root->buffer, &root->term_msg);
 
-        root->term_status_msg.len = 0;
-        if (lev != MSGL_STATUS && root->status_line.len && root->status_log &&
-            is_status_output(root, lev) && test_terminal_level(root->status_log, MSGL_STATUS))
-        {
-            write_term_msg(root->status_log, MSGL_STATUS, root->status_line,
-                           &root->term_status_msg);
-        }
-
         FILE *stream = term_msg_fp(root, lev);
         if (root->term_msg.len) {
+            root->term_status_msg.len = 0;
+            if (lev != MSGL_STATUS && root->status_line.len && root->status_log &&
+                is_status_output(root, lev) && test_terminal_level(root->status_log, MSGL_STATUS))
+            {
+                write_term_msg(root->status_log, MSGL_STATUS, root->status_line,
+                               &root->term_status_msg);
+            }
             fwrite(root->term_msg.start, root->term_msg.len, 1, stream);
             if (root->term_status_msg.len)
                 fwrite(root->term_status_msg.start, root->term_status_msg.len, 1, stream);
