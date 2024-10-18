@@ -22,7 +22,7 @@
 #define PTS60FPS 0.01666666666666666666666666666667 // The target time between frames for 60 FPS video
 #define INITIAL_RESOLUTION_SCALAR 2 // The initial resolution scalar (0: Full resolution, 1: Half resolution, 2: Quarter resolution, 3: Eighth resolution, 4: Sixteenth resolution, ...)
 #define INITIAL_NUM_STEPS 10 // The initial number of steps executed to find the ideal offset (limits the maximum offset distance per iteration)
-#define FRAME_BLUR_KERNEL_SIZE 16 // The size of the blur kernel used to blur the source frames before calculating the optical flow
+#define FRAME_BLUR_KERNEL_SIZE 64 // The size of the blur kernel used to blur the source frames before calculating the optical flow
 #define FLOW_BLUR_KERNEL_SIZE 32 // The size of the blur kernel used to blur the offset calculated by the optical flow
 #define NUM_ITERATIONS 0 // Number of iterations to use in the optical flow calculation (0: As many as possible)
 #define SPREAD_CORES 0 // Whether or not to spread the threads over the available cores (0: Disabled, 1: SPREAD, 2: SINGLE)
@@ -43,7 +43,7 @@ typedef enum FrameOutput {
     WarpedFrame12,
     WarpedFrame21,
 	BlendedFrame,
-	HSprivlow,
+	HSVFlow,
 	GreyFlow,
 	BlurredFrames,
 	SideBySide1,
@@ -169,7 +169,7 @@ void vf_HopperRender_process_AppIndicator_command(struct priv *priv, int code) {
 			priv->m_foFrameOutput = BlendedFrame;
 			break;
 		case 4:
-			priv->m_foFrameOutput = HSprivlow;
+			priv->m_foFrameOutput = HSVFlow;
 			break;
 		case 5:
 			priv->m_foFrameOutput = GreyFlow;
@@ -245,6 +245,17 @@ void vf_HopperRender_process_AppIndicator_command(struct priv *priv, int code) {
 			break;
 		case 18:
 			vf_HopperRender_adjust_frame_scalar(priv, 5);
+			break;
+		default:
+			if (code >= 100 && code < 200) {
+				priv->m_iFrameBlurKernelSize = code - 100;
+			} else if (code >= 200 && code < 300) {
+				priv->m_iFlowBlurKernelSize = code - 200;
+			} else if (code >= 300 && code < 400) {
+				priv->m_iNumIterations = code - 300;
+			} else if (code >= 400 && code < 500) {
+				priv->m_iNumSteps = code - 400;
+			}
 			break;
 	}
 }
@@ -514,7 +525,7 @@ void vf_HopperRender_interpolate_frame(struct priv *priv, unsigned char** planes
 	if (priv->m_iIntFrameNum < 100) gettimeofday(&priv->m_teWarpCalcStart[priv->m_iIntFrameNum], NULL);
 	
 	// Warp frames
-	if (priv->m_foFrameOutput != HSprivlow && 
+	if (priv->m_foFrameOutput != HSVFlow && 
 		priv->m_foFrameOutput != BlurredFrames) {
 		priv->ofc->warpFrames(priv->ofc, fScalar, priv->m_foFrameOutput);
 	}
@@ -526,7 +537,7 @@ void vf_HopperRender_interpolate_frame(struct priv *priv, unsigned char** planes
 	}
 	
 	// Draw the flow as an HSV image
-	if (priv->m_foFrameOutput == HSprivlow) {
+	if (priv->m_foFrameOutput == HSVFlow) {
 		priv->ofc->drawFlowAsHSV(priv->ofc, 0.5f);
 	// Draw the flow as a greyscale image
 	} else if (priv->m_foFrameOutput == GreyFlow) {
@@ -742,7 +753,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 
     // Update the GPU arrays
     gettimeofday(&priv->m_teOFCCalcStart, NULL);
-    priv->ofc->updateFrame(priv->ofc, img->planes, priv->m_iFrameBlurKernelSize, priv->m_foFrameOutput == BlurredFrames);
+    priv->ofc->updateFrame(priv->ofc, img->planes, priv->m_iFrameBlurKernelSize, priv->m_iFlowBlurKernelSize >> priv->m_cResolutionScalar, priv->m_foFrameOutput == BlurredFrames);
 	
 	// Don't interpolate the first three frames (as we need three frames in the buffer to interpolate)
     if (priv->m_isInterpolationState == Active && (priv->m_iFrameCounter > 3 || priv->m_foFrameOutput == SideBySide2)) {

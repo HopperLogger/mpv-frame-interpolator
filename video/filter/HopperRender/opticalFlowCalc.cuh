@@ -10,7 +10,7 @@ extern "C" {
 
 typedef struct OpticalFlowCalc {
 	void (*free)(struct OpticalFlowCalc *ofc);
-	void (*updateFrame)(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const unsigned int kernelSize, const bool directOutput);
+	void (*updateFrame)(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const unsigned int frameKernelSize, const unsigned int flowKernelSize, const bool directOutput);
 	void (*downloadFrame)(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer);
 	void (*processFrame)(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const bool firstFrame);
 	void (*blurFrameArray)(struct OpticalFlowCalc *ofc, const void* frame, void* blurredFrame,
