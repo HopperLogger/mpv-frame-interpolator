@@ -10,6 +10,15 @@ FIFO_PATH = "/tmp/hopperrender" # FIFO used to comunicate with the video filter
 BUFFER_SIZE = 512               # Size of the buffer used to read from the FIFO
 UPDATE_INTERVAL = 1/60          # Interval at which the update function will be called
 
+# Slider callback functions
+def on_frame_blur_slider_change(slider):
+    value = int(slider.get_value())
+    print(value + 100, flush=True)
+
+def on_flow_blur_slider_change(slider):
+    value = int(slider.get_value())
+    print(value + 200, flush=True)
+
 # Callback functions for the radio items
 def on_warped_frame12_activate(widget):
     if widget.get_active():
@@ -92,7 +101,7 @@ def quit_app(_):
 # Main class for the AppIndicator
 class HopperRenderSettings:
     def __init__(self):
-        self.fd = os.open(FIFO_PATH, os.O_RDONLY | os.O_NONBLOCK) # Open the FIFO for communication with the HopperRender filter
+        self.fd = os.open(FIFO_PATH, os.O_RDONLY | os.O_NONBLOCK)  # Open the FIFO for communication with the HopperRender filter
 
         # Create the AppIndicator
         script_dir = os.path.dirname(os.path.realpath(__file__))
@@ -131,6 +140,11 @@ class HopperRenderSettings:
         main_menu.append(scalar_item)
         scalar_menu = Gtk.Menu()
         scalar_item.set_submenu(scalar_menu)
+
+                # Adding a new menu item to open the slider window
+        slider_item = Gtk.MenuItem(label="Open Sliders")
+        slider_item.connect("activate", self.open_slider_window)
+        main_menu.append(slider_item)
 
         # Frame output radio items
         frame_output_group = None
@@ -245,12 +259,43 @@ class HopperRenderSettings:
         main_menu.show_all()
 
         indicator.set_menu(main_menu)
-        GLib.idle_add(self.update) # Add the update function that will listen on the FIFO for changes
+        GLib.idle_add(self.update)  # Add the update function that will listen on the FIFO for changes
         Gtk.main()
+
+    # Function to open a new window with a slider
+    def open_slider_window(self, source):
+        # Create a new window
+        self.window = Gtk.Window(title="Slider Window")
+        self.window.set_default_size(300, 200)
+
+        # Create a box to contain the slider
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.window.add(vbox)
+
+        # Create a horizontal slider
+        frame_blur_label = Gtk.Label(label="Frame Blur")
+        self.frame_blur_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+        self.frame_blur_slider.set_value(16)
+        self.frame_blur_slider.connect("value-changed", on_frame_blur_slider_change)
+
+        # Create a horizontal slider
+        flow_blur_label = Gtk.Label(label="Flow Blur")
+        self.flow_blur_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
+        self.flow_blur_slider.set_value(32)
+        self.flow_blur_slider.connect("value-changed", on_flow_blur_slider_change)
+
+        # Add the slider to the box
+        vbox.pack_start(frame_blur_label, True, True, 0)
+        vbox.pack_start(self.frame_blur_slider, True, True, 0)
+        vbox.pack_start(flow_blur_label, True, True, 0)
+        vbox.pack_start(self.flow_blur_slider, True, True, 0)
+
+        # Show all components
+        self.window.show_all()
 
     # Update function that listens on the FIFO for changes
     def update(self):
-        sleep(UPDATE_INTERVAL) # Reduce the CPU usage by only refreshing every intermediate frame (assuming we are running on a 60hz display)
+        sleep(UPDATE_INTERVAL)  # Reduce the CPU usage by only refreshing every intermediate frame (assuming we are running on a 60hz display)
         try:
             data = os.read(self.fd, BUFFER_SIZE)
             if data:
