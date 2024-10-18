@@ -25,17 +25,18 @@ The compilation is the same as for the [mpv](https://github.com/mpv-player/mpv) 
 ### The recommended way:
 1. Install the [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads)
 2. `git clone https://github.com/mpv-player/mpv-build.git`
-3. `git clone https://github.com/HopperLogger/mpv-frame-interpolator.git`
-4. `mv ~/mpv-frame-interpolator ~/mpv`
-5. `mv ~/mpv ~/mpv-build`
-6. `cd mpv-build`
-7. `./rebuild -j8`
-8. `sudo ./install`
-9. To use it in your terminal, run: `/usr/local/bin/mpv /path/to/video --vf=HopperRender _-hwdec=nvdec_`
-10. To use it in [SMPlayer](https://www.smplayer.info/), install SMPlayer via your distro's software manager or download it from the website.
-11. In the SMPlayer preferences, set the path to the multimedia engine to '/usr/local/bin/mpv'
-12. Goto Advanced->MPlayer/mpv and enter '--vf=HopperRender' in the options field.
-13. (Optionally) goto Performance and select 'nvdec' for hardware decoding _(if it's available on your system)_.
+3. `cd mpv-build`
+4. `./rebuild -j8`
+5. `git clone https://github.com/HopperLogger/mpv-frame-interpolator.git`
+6. `rm -r -f mpv`
+7. `mv mpv-frame-interpolator mpv`
+8. `./build -j8`
+9. `sudo ./install`
+10. To use it in your terminal, run: `/usr/local/bin/mpv /path/to/video --vf=HopperRender _-hwdec=nvdec_`
+11. To use it in [SMPlayer](https://www.smplayer.info/), install SMPlayer via your distro's software manager or download it from the website.
+12. In the SMPlayer preferences, set the path to the multimedia engine to '/usr/local/bin/mpv'
+13. Goto Advanced->MPlayer/mpv and enter '--vf=HopperRender' in the options field.
+14. (Optionally) goto Performance and select 'nvdec' for hardware decoding _(if it's available on your system)_.
 
 That's it! You can now play a video with SMPlayer and HopperRender will interpolate it to your monitor's native refresh-rate.
 
