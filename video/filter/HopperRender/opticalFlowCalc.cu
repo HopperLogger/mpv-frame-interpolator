@@ -28,7 +28,7 @@ __global__ void convertNV12toYUV420PKernel(T* outputFrame, const T* inputFrame, 
 	if (cy < halfDimY && cx < dimX) {
 		// U Channel
 		if (!(cx & 1)) {
-			outputFrame[channelIdxOffset + cy * halfDimX + (cx >> 1)] = inputFrame[channelIdxOffset + cy * dimX + cx];
+			outputFrame[cy * halfDimX + (cx >> 1)] = inputFrame[channelIdxOffset + cy * dimX + cx];
 		// V Channel
 		} else {
 			outputFrame[secondChannelIdxOffset + cy * halfDimX + (cx >> 1)] = inputFrame[channelIdxOffset + cy * dimX + cx];
@@ -1251,9 +1251,9 @@ void updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const u
 	// YUV420P format
 	} else if (ofc->m_iFMT == YUV420P_FMT) {
 		cudaMemcpy(ofc->m_frameSDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyHostToDevice);
-		cudaMemcpy(ofc->m_blurredFrameSDR[0], pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), cudaMemcpyHostToDevice);
-		cudaMemcpy(ofc->m_blurredFrameSDR[0] + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), cudaMemcpyHostToDevice);
-		convertYUV420PtoNV12Kernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_frameSDR[0], ofc->m_blurredFrameSDR[0], ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset);
+		cudaMemcpy(ofc->m_tempFrameSDR, pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), cudaMemcpyHostToDevice);
+		cudaMemcpy(ofc->m_tempFrameSDR + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), cudaMemcpyHostToDevice);
+		convertYUV420PtoNV12Kernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_frameSDR[0], ofc->m_tempFrameSDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset);
 		cudaStreamSynchronize(ofc->m_csWarpStream1);
 	} else {
 		printf("HopperRender does not support this video format: %d\n", ofc->m_iFMT);
@@ -1317,10 +1317,10 @@ void downloadFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer) {
 	// YUV420P format
 	} else if (ofc->m_iFMT == YUV420P_FMT) {
 		cudaMemcpy(pOutBuffer[0], ofc->m_outputFrameSDR, ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyDeviceToHost);
-		convertNV12toYUV420PKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_warpedFrame12SDR, ofc->m_outputFrameSDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset, ofc->m_iChannelIdxOffset + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1));
+		convertNV12toYUV420PKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_tempFrameSDR, ofc->m_outputFrameSDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1));
 		cudaStreamSynchronize(ofc->m_csWarpStream1);
-		cudaMemcpy(pOutBuffer[1], ofc->m_warpedFrame12SDR + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), cudaMemcpyDeviceToHost);
-		cudaMemcpy(pOutBuffer[2], ofc->m_warpedFrame12SDR + (ofc->m_iDimY * ofc->m_iDimX + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1)), (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), cudaMemcpyDeviceToHost);
+		cudaMemcpy(pOutBuffer[1], ofc->m_tempFrameSDR, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), cudaMemcpyDeviceToHost);
+		cudaMemcpy(pOutBuffer[2], ofc->m_tempFrameSDR + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), cudaMemcpyDeviceToHost);
 	} else {
 		printf("HopperRender does not support this video format: %d\n", ofc->m_iFMT);
 		exit(1);
@@ -1801,13 +1801,13 @@ void blurFlowArrays(struct OpticalFlowCalc *ofc) {
 		cudaMemcpy(ofc->m_blurredOffsetArray21[1], ofc->m_offsetArray21, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(int), cudaMemcpyDeviceToDevice);
 	} else {
 		// Launch kernels
-		blurKernelHorizontal <<<gridBF, threadsBF, 0, ofc->m_csWarpStream1>>> (
+		blurKernelHorizontal <<<gridBF, threadsBF, 0, ofc->m_csOFCStream1>>> (
 			ofc->m_offsetArray12, ofc->m_blurredOffsetArray12[1], ofc->m_iFlowBlurKernelSize, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLowDimX);
-		blurKernelHorizontal <<<gridBF, threadsBF, 0, ofc->m_csWarpStream1>>> (
+		blurKernelHorizontal <<<gridBF, threadsBF, 0, ofc->m_csOFCStream1>>> (
 			ofc->m_offsetArray12 + ofc->m_iDirectionIdxOffset, ofc->m_blurredOffsetArray12[1] + ofc->m_iLayerIdxOffset, ofc->m_iFlowBlurKernelSize, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLowDimX);
-		blurKernelHorizontal <<<gridBF, threadsBF, 0, ofc->m_csWarpStream2>>> (
+		blurKernelHorizontal <<<gridBF, threadsBF, 0, ofc->m_csOFCStream2>>> (
 			ofc->m_offsetArray21, ofc->m_blurredOffsetArray21[1], ofc->m_iFlowBlurKernelSize, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLowDimX);
-		blurKernelHorizontal <<<gridBF, threadsBF, 0, ofc->m_csWarpStream2>>> (
+		blurKernelHorizontal <<<gridBF, threadsBF, 0, ofc->m_csOFCStream2>>> (
 			ofc->m_offsetArray21 + ofc->m_iLayerIdxOffset, ofc->m_blurredOffsetArray21[1] + ofc->m_iLayerIdxOffset, ofc->m_iFlowBlurKernelSize, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLowDimX);
 
 		// Synchronize streams to ensure completion
@@ -1815,13 +1815,13 @@ void blurFlowArrays(struct OpticalFlowCalc *ofc) {
 		cudaStreamSynchronize(ofc->m_csOFCStream2);
 
 		// Launch kernels
-		blurKernelVertical <<<gridBF, threadsBF, 0, ofc->m_csWarpStream1>>> (
+		blurKernelVertical <<<gridBF, threadsBF, 0, ofc->m_csOFCStream1>>> (
 			ofc->m_offsetArray12, ofc->m_blurredOffsetArray12[1], ofc->m_iFlowBlurKernelSize, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLowDimX);
-		blurKernelVertical <<<gridBF, threadsBF, 0, ofc->m_csWarpStream1>>> (
+		blurKernelVertical <<<gridBF, threadsBF, 0, ofc->m_csOFCStream1>>> (
 			ofc->m_offsetArray12 + ofc->m_iDirectionIdxOffset, ofc->m_blurredOffsetArray12[1] + ofc->m_iLayerIdxOffset, ofc->m_iFlowBlurKernelSize, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLowDimX);
-		blurKernelVertical <<<gridBF, threadsBF, 0, ofc->m_csWarpStream2>>> (
+		blurKernelVertical <<<gridBF, threadsBF, 0, ofc->m_csOFCStream2>>> (
 			ofc->m_offsetArray21, ofc->m_blurredOffsetArray21[1], ofc->m_iFlowBlurKernelSize, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLowDimX);
-		blurKernelVertical <<<gridBF, threadsBF, 0, ofc->m_csWarpStream2>>> (
+		blurKernelVertical <<<gridBF, threadsBF, 0, ofc->m_csOFCStream2>>> (
 			ofc->m_offsetArray21 + ofc->m_iLayerIdxOffset, ofc->m_blurredOffsetArray21[1] + ofc->m_iLayerIdxOffset, ofc->m_iFlowBlurKernelSize, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLowDimX);
 
 		// Synchronize streams to ensure completion
@@ -2028,6 +2028,7 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 		ofc->m_warpedFrame12SDR = createGPUArrayUC(1.5 * dimY * dimX);
 		ofc->m_warpedFrame21SDR = createGPUArrayUC(1.5 * dimY * dimX);
 		ofc->m_outputFrameSDR = createGPUArrayUC(1.5 * dimY * dimX);
+		ofc->m_tempFrameSDR = createGPUArrayUC((dimY / 2) * dimX);
 	}
 	ofc->m_offsetArray12 = createGPUArrayI(2 * 5 * dimY * dimX);
 	ofc->m_offsetArray21 = createGPUArrayI(2 * dimY * dimX);
