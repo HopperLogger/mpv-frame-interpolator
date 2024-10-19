@@ -33,6 +33,7 @@
 #define MIN_NUM_STEPS 4 // The minimum number of calculation steps (if below this, resolution will be decreased or calculation disabled)
 #define MAX_NUM_STEPS 15 // The maximum number of calculation steps (if reached, resolution will be increased or steps will be kept at this number)
 #define MAX_NUM_BUFFERED_IMG 50 // The maximum number of buffered images allowed to be in the image pool
+#define DUMP_IMAGES 1 // Whether or not to dump the images to disk (0: Disabled, 1: Enabled)
 
 typedef struct {
     pid_t pid;
@@ -548,6 +549,20 @@ void vf_HopperRender_interpolate_frame(struct priv *priv, unsigned char** planes
 	} else if (priv->m_foFrameOutput == SideBySide2) {
 	    priv->ofc->sideBySideFrame(priv->ofc, fScalar, priv->m_iFrameCounter);
 	}
+
+	// Save the result to a file
+	if (DUMP_IMAGES) {
+		// Get the home directory from the environment
+		const char *home = getenv("HOME");
+		if (home == NULL) {
+			// Handle error if HOME is not set
+			fprintf(stderr, "HOME environment variable is not set.\n");
+			return 1;
+		}
+		char path[32];
+		snprintf(path, sizeof(path), "%s/dump/%d.%d.bin", home, priv->m_iFrameCounter, priv->m_iIntFrameNum);
+		priv->ofc->saveImage(priv->ofc, path);
+	}
 	
 	// Download the result to the output buffer
 	priv->ofc->downloadFrame(priv->ofc, planes);
@@ -836,7 +851,7 @@ void *vf_HopperRender_start_AppIndicator_script(void *arg) {
 		}
 
 		// Create a buffer to store the full path
-		char full_path[512]; // Adjust buffer size accordingly
+		char full_path[512];
 		snprintf(full_path, sizeof(full_path), "%s/mpv-build/mpv/video/filter/HopperRender/HopperRenderSettingsApplet.py", home);
 
 		// Use the constructed path in execlp
