@@ -24,6 +24,7 @@ typedef struct OpticalFlowCalc {
 	void (*sideBySideFrame)(struct OpticalFlowCalc *ofc, float fScalar, const unsigned int frameCounter);
 	void (*drawFlowAsHSV)(struct OpticalFlowCalc *ofc, const float blendScalar);
 	void (*drawFlowAsGreyscale)(struct OpticalFlowCalc *ofc);
+	void (*saveImage)(struct OpticalFlowCalc *ofc, const char* filePath);
 
 	// Video properties
 	unsigned int m_iDimX; // Width of the frame
@@ -90,6 +91,7 @@ typedef struct OpticalFlowCalc {
 	unsigned char* m_warpedFrame21SDR; // Array containing the warped frame (frame 2 to frame 1)
 	unsigned short* m_warpedFrame21HDR; // Array containing the warped frame (frame 2 to frame 1)
 	unsigned char* m_tempFrameSDR; // Temporary array for the output frame
+	unsigned char* m_imageArrayCPU; // Array containing the image data
 } OpticalFlowCalc;
 
 /*

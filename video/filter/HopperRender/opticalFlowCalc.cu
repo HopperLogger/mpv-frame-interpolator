@@ -1834,6 +1834,40 @@ void blurFlowArrays(struct OpticalFlowCalc *ofc) {
 }
 
 /*
+* Saves an image to a file
+*
+* @param ofc: Pointer to the optical flow calculator
+* @param filename: Path to the image file
+*/
+void saveImage(struct OpticalFlowCalc *ofc, const char* filePath) {
+	// We don't save HDR images
+	if (ofc->m_bIsHDR)
+		return;
+
+	// Copy the image array to the CPU
+	size_t dataSize = 1.5 * ofc->m_iDimY * ofc->m_iDimX;
+	cudaMemcpy(ofc->m_imageArrayCPU, ofc->m_outputFrameSDR, dataSize, cudaMemcpyDeviceToHost);
+
+	// Open file in binary write mode
+    FILE *file = fopen(filePath, "wb");
+    if (file == NULL) {
+        perror("Error opening file");
+        return;
+    }
+
+    // Write the array to the file
+    size_t written = fwrite(ofc->m_imageArrayCPU, sizeof(unsigned char), dataSize, file);
+    if (written != dataSize) {
+        perror("Error writing to file");
+        fclose(file);
+        return;
+    }
+
+    // Close the file
+    fclose(file);
+}
+
+/*
 * Creates a new GPUArray of type unsigned char
 *
 * @param size: Number of entries in the array
@@ -1925,6 +1959,7 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ofc->sideBySideFrame = sideBySideFrame;
 	ofc->drawFlowAsHSV = drawFlowAsHSV;
 	ofc->drawFlowAsGreyscale = drawFlowAsGreyscale;
+	ofc->saveImage = saveImage;
 
 	// Video properties
 	ofc->m_iDimX = dimX;
@@ -2028,7 +2063,8 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 		ofc->m_warpedFrame12SDR = createGPUArrayUC(1.5 * dimY * dimX);
 		ofc->m_warpedFrame21SDR = createGPUArrayUC(1.5 * dimY * dimX);
 		ofc->m_outputFrameSDR = createGPUArrayUC(1.5 * dimY * dimX);
-		ofc->m_tempFrameSDR = createGPUArrayUC((dimY / 2) * dimX);
+		ofc->m_tempFrameSDR = createGPUArrayUC((dimY / 2) * realDimX);
+		ofc->m_imageArrayCPU = (unsigned char*)malloc(1.5 * dimY * dimX);
 	}
 	ofc->m_offsetArray12 = createGPUArrayI(2 * 5 * dimY * dimX);
 	ofc->m_offsetArray21 = createGPUArrayI(2 * dimY * dimX);
