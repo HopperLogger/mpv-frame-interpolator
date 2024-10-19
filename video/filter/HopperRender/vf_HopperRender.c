@@ -33,7 +33,7 @@
 #define MIN_NUM_STEPS 4 // The minimum number of calculation steps (if below this, resolution will be decreased or calculation disabled)
 #define MAX_NUM_STEPS 15 // The maximum number of calculation steps (if reached, resolution will be increased or steps will be kept at this number)
 #define MAX_NUM_BUFFERED_IMG 50 // The maximum number of buffered images allowed to be in the image pool
-#define DUMP_IMAGES 1 // Whether or not to dump the images to disk (0: Disabled, 1: Enabled)
+#define DUMP_IMAGES 0 // Whether or not to dump the images to disk (0: Disabled, 1: Enabled)
 
 typedef struct {
     pid_t pid;
