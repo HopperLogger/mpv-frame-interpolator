@@ -22,7 +22,7 @@
 #define PTS60FPS 0.01666666666666666666666666666667 // The target time between frames for 60 FPS video
 #define INITIAL_RESOLUTION_SCALAR 2 // The initial resolution scalar (0: Full resolution, 1: Half resolution, 2: Quarter resolution, 3: Eighth resolution, 4: Sixteenth resolution, ...)
 #define INITIAL_NUM_STEPS 10 // The initial number of steps executed to find the ideal offset (limits the maximum offset distance per iteration)
-#define FRAME_BLUR_KERNEL_SIZE 64 // The size of the blur kernel used to blur the source frames before calculating the optical flow
+#define FRAME_BLUR_KERNEL_SIZE 16 // The size of the blur kernel used to blur the source frames before calculating the optical flow
 #define FLOW_BLUR_KERNEL_SIZE 32 // The size of the blur kernel used to blur the offset calculated by the optical flow
 #define NUM_ITERATIONS 0 // Number of iterations to use in the optical flow calculation (0: As many as possible)
 #define SPREAD_CORES 0 // Whether or not to spread the threads over the available cores (0: Disabled, 1: SPREAD, 2: SINGLE)
@@ -90,6 +90,7 @@ struct priv {
 	struct OpticalFlowCalc* ofc; // Optical flow calculator struct
 	unsigned char m_cResolutionScalar; // Determines which resolution scalar will be used for the optical flow calculation (0: Full resolution, 1: Half resolution, 2: Quarter resolution, 3: Eighth resolution, 4: Sixteenth resolution, ...)
 	unsigned int m_iNumSteps; // Number of steps executed to find the ideal offset (limits the maximum offset distance per iteration)
+	double m_dScalar; // The scalar used to determine the position between frame1 and frame2
 
 	// Frame output
 	struct mp_image_pool *m_miSWPool; // The software image pool used to store the source frames
@@ -155,6 +156,7 @@ void vf_HopperRender_process_AppIndicator_command(struct priv *priv, int code) {
 		case 0:
 			if (priv->m_isInterpolationState != Deactivated) {
 				priv->m_isInterpolationState = Deactivated;
+				priv->m_iIntFrameNum = 0;
 			} else {
 				priv->m_isInterpolationState = Active;
 			}
@@ -382,14 +384,15 @@ static void vf_HopperRender_command(struct mp_filter *f, struct mp_filter_comman
 	// Speed change event
 	if (cmd->type == MP_FILTER_COMMAND_TEXT) {
 		priv->m_dPlaybackSpeed = cmd->speed;
-	}
+		priv->m_dSourceFrameTime = 1.0 / (priv->m_dSourceFPS * priv->m_dPlaybackSpeed);
 	
-	// If the source is already at or above 60 FPS, we don't need interpolation
-	if (priv->m_dSourceFrameTime <= priv->m_dTargetPTS) {
-		priv->m_isInterpolationState = NotNeeded;
-	// Reset the state either because the fps/speed change now requires interpolation, or we could now be fast enough to interpolate
-	} else if (priv->m_isInterpolationState != Deactivated) {
-		priv->m_isInterpolationState = Active;
+		// If the source is already at or above 60 FPS, we don't need interpolation
+		if (priv->m_dSourceFrameTime <= priv->m_dTargetPTS) {
+			priv->m_isInterpolationState = NotNeeded;
+		// Reset the state either because the fps/speed change now requires interpolation, or we could now be fast enough to interpolate
+		} else if (priv->m_isInterpolationState != Deactivated) {
+			priv->m_isInterpolationState = Active;
+		}
 	}
 }
 
@@ -505,9 +508,9 @@ static void vf_HopperRender_auto_adjust_settings(struct priv *priv) {
 *
 * @param priv: The video filter private data
 * @param planes: The planes of the output frame
-* @param fScalar: The scalar used to interpolate the frames
 */
-void vf_HopperRender_interpolate_frame(struct priv *priv, unsigned char** planes, float fScalar)
+static int i = 0;
+void vf_HopperRender_interpolate_frame(struct priv *priv, unsigned char** planes)
 {
 	if (priv->m_iIntFrameNum == 0) {
 		// Swap the blurred offset arrays
@@ -528,13 +531,13 @@ void vf_HopperRender_interpolate_frame(struct priv *priv, unsigned char** planes
 	// Warp frames
 	if (priv->m_foFrameOutput != HSVFlow && 
 		priv->m_foFrameOutput != BlurredFrames) {
-		priv->ofc->warpFrames(priv->ofc, fScalar, priv->m_foFrameOutput);
+		priv->ofc->warpFrames(priv->ofc, priv->m_dScalar, priv->m_foFrameOutput);
 	}
 	
 	// Blend the frames together
 	if (priv->m_foFrameOutput == BlendedFrame || 
 		priv->m_foFrameOutput == SideBySide1) {
-		priv->ofc->blendFrames(priv->ofc, fScalar);
+		priv->ofc->blendFrames(priv->ofc, priv->m_dScalar);
 	}
 	
 	// Draw the flow as an HSV image
@@ -547,7 +550,7 @@ void vf_HopperRender_interpolate_frame(struct priv *priv, unsigned char** planes
 	} else if (priv->m_foFrameOutput == SideBySide1) {
 		priv->ofc->insertFrame(priv->ofc);
 	} else if (priv->m_foFrameOutput == SideBySide2) {
-	    priv->ofc->sideBySideFrame(priv->ofc, fScalar, priv->m_iFrameCounter);
+	    priv->ofc->sideBySideFrame(priv->ofc, priv->m_dScalar, priv->m_iFrameCounter);
 	}
 
 	// Save the result to a file
@@ -560,7 +563,8 @@ void vf_HopperRender_interpolate_frame(struct priv *priv, unsigned char** planes
 			return 1;
 		}
 		char path[32];
-		snprintf(path, sizeof(path), "%s/dump/%d.%d.bin", home, priv->m_iFrameCounter, priv->m_iIntFrameNum);
+		snprintf(path, sizeof(path), "%s/dump/%d.bin", home, i);
+		i++;
 		priv->ofc->saveImage(priv->ofc, path);
 	}
 	
@@ -573,6 +577,11 @@ void vf_HopperRender_interpolate_frame(struct priv *priv, unsigned char** planes
 		priv->m_iIntFrameNum == priv->m_iNumIntFrames - 1 && 
 		!TEST_MODE) {
 		vf_HopperRender_auto_adjust_settings(priv);
+	}
+
+	priv->m_dScalar += priv->m_dTargetPTS / priv->m_dSourceFrameTime;
+	if (priv->m_dScalar >= 1.0) {
+		priv->m_dScalar -= 1.0;
 	}
 }
 
@@ -698,7 +707,7 @@ struct mp_image *vf_HopperRender_get_image(struct mp_filter *f, int frameNum) {
 * @param f: The video filter instance
 * @param fScalar: The scalar used to interpolate the frames
 */
-static void vf_HopperRender_process_intermediate_frame(struct mp_filter *f, float fScalar)
+static void vf_HopperRender_process_intermediate_frame(struct mp_filter *f)
 {
 	struct priv *priv = f->priv;
 
@@ -706,7 +715,7 @@ static void vf_HopperRender_process_intermediate_frame(struct mp_filter *f, floa
 	struct mp_frame frame = {.type = MP_FRAME_VIDEO, .data = img};
 	
     // Generate the interpolated frame
-    vf_HopperRender_interpolate_frame(priv, img->planes, fScalar);
+    vf_HopperRender_interpolate_frame(priv, img->planes);
 	
     // Update playback timestamp
     priv->m_dCurrPlaybackPTS += priv->m_dTargetPTS * priv->m_dPlaybackSpeed;
@@ -755,7 +764,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
     // Update timestamps and source information
 	priv->m_iFrameCounter += 1;
 	priv->m_dCurrSourcePTS = img->pts;
-    if (priv->m_iFrameCounter <= 4) {
+    if (priv->m_iFrameCounter <= 4 || priv->m_isInterpolationState != Active) {
         priv->m_dCurrPlaybackPTS = img->pts; // The first four frames we take the original PTS (see output: 1.0, 2.0, 3.0, 4.0, 4.1, ...)
     } else {
         priv->m_dCurrPlaybackPTS += priv->m_dTargetPTS * priv->m_dPlaybackSpeed; // The rest of the frames we increase in 60fps steps
@@ -763,7 +772,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 	img->pts = priv->m_dCurrPlaybackPTS;
     priv->m_dSourceFPS = img->nominal_fps;
     priv->m_dSourceFrameTime = 1.0 / (priv->m_dSourceFPS * priv->m_dPlaybackSpeed);
-    priv->m_iNumIntFrames = fmax(ceil((priv->m_dSourceFrameTime + priv->m_dCurrSourcePTS - priv->m_dCurrPlaybackPTS) / priv->m_dTargetPTS), 1.0);
+	priv->m_iNumIntFrames = (int)floor((1.0 - priv->m_dScalar) / (priv->m_dTargetPTS / priv->m_dSourceFrameTime)) + 1;
 	vf_HopperRender_check_hwpool_size(f, priv->m_iNumIntFrames - 1);
 
     // Update the GPU arrays
@@ -772,7 +781,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 	
 	// Don't interpolate the first three frames (as we need three frames in the buffer to interpolate)
     if (priv->m_isInterpolationState == Active && (priv->m_iFrameCounter > 3 || priv->m_foFrameOutput == SideBySide2)) {
-		vf_HopperRender_interpolate_frame(priv, img->planes, 0.0f);
+		vf_HopperRender_interpolate_frame(priv, img->planes);
         priv->m_iIntFrameNum = 1;
         mp_filter_internal_mark_progress(f);
     } else {
@@ -792,12 +801,9 @@ static void vf_HopperRender_process(struct mp_filter *f)
 {
     struct priv *priv = f->priv;
 
-    // Calculate the scalar for the interpolation
-    float fScalar = fmax(fmin((float)(priv->m_iIntFrameNum) / (float)(priv->m_iNumIntFrames), 1.0f), 0.0f);
-
     // Process intermediate frames if needed
     if (priv->m_iIntFrameNum > 0 && mp_pin_in_needs_data(f->ppins[1])) {
-        vf_HopperRender_process_intermediate_frame(f, fScalar);
+        vf_HopperRender_process_intermediate_frame(f);
         return;
     }
 
@@ -932,6 +938,7 @@ static void vf_HopperRender_reset(struct mp_filter *f)
     struct priv *priv = f->priv;
     priv->m_iFrameCounter = 0;
 	priv->m_iIntFrameNum = 0;
+	priv->m_dScalar = 0.0;
 }
 
 // Filter definition
@@ -999,6 +1006,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 	// Optical Flow calculation
 	priv->m_cResolutionScalar = INITIAL_RESOLUTION_SCALAR;
 	priv->m_iNumSteps = INITIAL_NUM_STEPS;
+	priv->m_dScalar = 0.0;
 
 	// Frame output
 	priv->m_miSWPool = NULL;
