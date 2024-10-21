@@ -74,44 +74,71 @@ __global__ void processFrameKernel(const T* frame, T* outputFrame,
 
 // Kernel that blurs a 2D plane along the X direction
 template <typename T>
-__global__ void blurKernelHorizontal(const T* input, T* output, const unsigned char kernelSize,
-										  const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX) {
+__global__ void blurFrameKernel(const T* frameArray, T* blurredFrameArray, 
+								const unsigned char kernelSize, const unsigned char chacheSize, const unsigned char boundsOffset, 
+								const unsigned char avgEntriesPerThread, const unsigned short remainder, const char lumStart,
+								const unsigned char lumEnd, const unsigned short lumPixelCount, const unsigned short dimY, const unsigned short dimX,
+								const unsigned int realDimX) {
+	// Shared memory for the frame to prevent multiple global memory accesses
+	extern __shared__ unsigned int sharedFrameArray[];
+	// Current entry to be computed by the thread
 	const unsigned short cx = blockIdx.x * blockDim.x + threadIdx.x;
 	const unsigned short cy = blockIdx.y * blockDim.y + threadIdx.y;
 
+	// Check if the current thread is supposed to perform calculations
 	if (cy >= dimY || cx >= realDimX) {
 		return;
 	}
 
-	int blurredPixel = 0;
-	for (char x = -kernelSize / 2; x <= kernelSize / 2; ++x) {
-		if ((cx + x) >= 0 && (cx + x) < dimX) {
-			blurredPixel += input[cy * dimX + cx + x];
+	const unsigned short trX = blockIdx.x * blockDim.x;
+	const unsigned short trY = blockIdx.y * blockDim.y;
+	unsigned char offsetX;
+	unsigned char offsetY;
+	int newX;
+	int newY;
+    // Calculate the number of entries to fill for this thread
+    const unsigned short threadIndex = threadIdx.y * blockDim.x + threadIdx.x;
+    const unsigned char entriesToFill = avgEntriesPerThread + (threadIndex < remainder ? 1 : 0);
+    // Calculate the starting index for this thread
+    unsigned short startIndex = 0;
+    for (unsigned short i = 0; i < threadIndex; ++i) {
+        startIndex += avgEntriesPerThread + (i < remainder ? 1 : 0);
+    }
+    // Fill the shared memory for this thread
+    for (unsigned short i = 0; i < entriesToFill; ++i) {
+		offsetX = (startIndex + i) % chacheSize;
+		offsetY = (startIndex + i) / chacheSize;
+		newX = trX - boundsOffset + offsetX;
+		newY = trY - boundsOffset + offsetY;
+		if (newY < dimY && newY >= 0 && newX < realDimX && newX >= 0) {
+			sharedFrameArray[startIndex + i] = frameArray[newY * dimX + newX];
+		} else {
+			sharedFrameArray[startIndex + i] = 0;
 		}
 	}
 
-	output[cy * dimX + cx] = blurredPixel / kernelSize;
-}
+    // Ensure all threads have finished loading before continuing
+    __syncthreads();
 
-// Kernel that blurs a 2D plane along the Y direction
-template <typename T>
-__global__ void blurKernelVertical(const T* input, T* output, const unsigned char kernelSize,
-										const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX) {
-	const unsigned short cx = blockIdx.x * blockDim.x + threadIdx.x;
-	const unsigned short cy = blockIdx.y * blockDim.y + threadIdx.y;
-
-	if (cy >= dimY || cx >= realDimX) {
+	// Don't blur the edges of the frame
+	if (cy < kernelSize / 2 || cy >= dimY - kernelSize / 2 || cx < kernelSize / 2 || cx >= realDimX - kernelSize / 2) {
+		blurredFrameArray[cy * dimX + cx] = 0;
 		return;
 	}
 
-	int blurredPixel = 0;
-	for (char y = -kernelSize / 2; y <= kernelSize / 2; ++y) {
-		if ((cy + y) >= 0 && (cy + y) < dimY) {
-			blurredPixel += input[(cy + y) * dimX + cx];
+	unsigned int blurredPixel = 0;
+	// Collect the sum of the surrounding pixels
+	for (char y = lumStart; y < lumEnd; y++) {
+		for (char x = lumStart; x < lumEnd; x++) {
+			if ((cy + y) < dimY && (cy + y) >= 0 && (cx + x) < realDimX && (cx + x) >= 0) {
+				blurredPixel += sharedFrameArray[(threadIdx.y + boundsOffset + y) * chacheSize + threadIdx.x + boundsOffset + x];
+			} else {
+				blurredPixel += sharedFrameArray[(threadIdx.y + boundsOffset) * chacheSize + threadIdx.x + boundsOffset];
+			}
 		}
 	}
-
-	output[cy * dimX + cx] = blurredPixel / kernelSize;
+	blurredPixel /= lumPixelCount;
+	blurredFrameArray[cy * dimX + cx] = blurredPixel;
 }
 
 // Kernel that sets the initial offset array
@@ -750,7 +777,7 @@ __global__ void blurFlowKernel(const int* flowArray, int* blurredFlowArray,
 		blurredOffset /= pixelCount;
 		blurredFlowArray[cz * lowDimY * lowDimX + cy * lowDimX + cx] = blurredOffset;
 	}
-	
+
 }
 
 // Kernel that cleans a flow array
@@ -1103,7 +1130,7 @@ __global__ void convertFlowToGreyscaleKernel(const int* flowArray, T* outputFram
 
 	// Y Channel
 	if (cz == 0 && cy < dimY && cx < realDimX) {
-		outputFrame[cy * dimX + cx] = isHDR ? min((abs(x) + abs(y)) << (4 + fmtScalar), maxVal) : min((abs(x) + abs(y)) << 3, maxVal);
+		outputFrame[cy * dimX + cx] = isHDR ? min((abs(x) + abs(y)) << (4 + fmtScalar), maxVal) : min((abs(x) + abs(y)) << 2, maxVal);
 	// U/V Channels
 	} else if (cz == 1 && cy < (dimY >> 1) && cx < realDimX) {
 		outputFrame[channelIdxOffset + cy * dimX + cx] = middleValue;
@@ -1183,7 +1210,18 @@ void blurFrameArray(struct OpticalFlowCalc *ofc, const void* frame, void* blurre
 		cudaMemcpy(blurredFrame, frame, (ofc->m_bIsHDR ? 2 : 1) * ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
 		return;
 	}
-	
+	// Calculate useful constants
+	const unsigned char boundsOffset = kernelSize >> 1;
+	const unsigned char cacheSize = kernelSize + (boundsOffset << 1);
+	const size_t sharedMemSize = cacheSize * cacheSize * sizeof(unsigned int);
+	const unsigned short totalThreads = max(kernelSize * kernelSize, 1);
+    const unsigned short totalEntries = cacheSize * cacheSize;
+    const unsigned char avgEntriesPerThread = totalEntries / totalThreads;
+	const unsigned short remainder = totalEntries % totalThreads;
+	const char lumStart = -(kernelSize >> 1);
+	const unsigned char lumEnd = (kernelSize >> 1);
+	const unsigned short lumPixelCount = (lumEnd - lumStart) * (lumEnd - lumStart);
+
 	// Calculate grid and thread dimensions
 	const unsigned int numBlocksX = max(static_cast<int>(ceil(static_cast<double>(ofc->m_iDimX) / min(kernelSize, 32))), 1);
 	const unsigned int numBlocksY = max(static_cast<int>(ceil(static_cast<double>(ofc->m_iDimY) / min(kernelSize, 32))), 1);
@@ -1192,18 +1230,12 @@ void blurFrameArray(struct OpticalFlowCalc *ofc, const void* frame, void* blurre
 
 	// Launch kernel based on HDR/SDR type
 	if (ofc->m_bIsHDR) {
-		blurKernelHorizontal <<<gridDim, threadDim, 0, ofc->m_csWarpStream1>>> (
-			static_cast<const unsigned short*>(frame), static_cast<unsigned short*>(blurredFrame), kernelSize, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
-		cudaStreamSynchronize(ofc->m_csWarpStream1);
-		blurKernelVertical <<<gridDim, threadDim, 0, ofc->m_csWarpStream1>>> (
-			static_cast<const unsigned short*>(frame), static_cast<unsigned short*>(blurredFrame), kernelSize, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
+		blurFrameKernel <<<gridDim, threadDim, sharedMemSize, ofc->m_csWarpStream1>>> (
+			static_cast<const unsigned short*>(frame), static_cast<unsigned short*>(blurredFrame), kernelSize, cacheSize, boundsOffset, avgEntriesPerThread, remainder, lumStart, lumEnd, lumPixelCount, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
 		cudaStreamSynchronize(ofc->m_csWarpStream1);
 	} else {
-		blurKernelHorizontal <<<gridDim, threadDim, 0, ofc->m_csWarpStream1>>> (
-			static_cast<const unsigned char*>(frame), static_cast<unsigned char*>(blurredFrame), kernelSize, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
-		cudaStreamSynchronize(ofc->m_csWarpStream1);
-		blurKernelVertical <<<gridDim, threadDim, 0, ofc->m_csWarpStream1>>> (
-			static_cast<const unsigned char*>(frame), static_cast<unsigned char*>(blurredFrame), kernelSize, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
+		blurFrameKernel <<<gridDim, threadDim, sharedMemSize, ofc->m_csWarpStream1>>> (
+			static_cast<const unsigned char*>(frame), static_cast<unsigned char*>(blurredFrame), kernelSize, cacheSize, boundsOffset, avgEntriesPerThread, remainder, lumStart, lumEnd, lumPixelCount, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
 		cudaStreamSynchronize(ofc->m_csWarpStream1);
 	}
 
@@ -1783,12 +1815,23 @@ void flipFlow(struct OpticalFlowCalc *ofc) {
 * @param ofc: Pointer to the optical flow calculator
 */
 void blurFlowArrays(struct OpticalFlowCalc *ofc) {
+	const unsigned char boundsOffset = ofc->m_iFlowBlurKernelSize >> 1;
+	const unsigned char chacheSize = ofc->m_iFlowBlurKernelSize + (boundsOffset << 1);
+	const size_t sharedMemSize = chacheSize * chacheSize * sizeof(int);
+	const unsigned short totalThreads = max(ofc->m_iFlowBlurKernelSize * ofc->m_iFlowBlurKernelSize, 1);
+    const unsigned short totalEntries = chacheSize * chacheSize;
+    const unsigned char avgEntriesPerThread = totalEntries / totalThreads;
+	const unsigned short remainder = totalEntries % totalThreads;
+	const char start = -(ofc->m_iFlowBlurKernelSize >> 1);
+	const unsigned char end = (ofc->m_iFlowBlurKernelSize >> 1);
+	const unsigned short pixelCount = (end - start) * (end - start);
+
 	// Calculate the number of blocks needed
 	const unsigned int NUM_BLOCKS_X = max(static_cast<int>(ceil(static_cast<double>(ofc->m_iLowDimX) / min(ofc->m_iFlowBlurKernelSize, 32))), 1);
 	const unsigned int NUM_BLOCKS_Y = max(static_cast<int>(ceil(static_cast<double>(ofc->m_iLowDimY) / min(ofc->m_iFlowBlurKernelSize, 32))), 1);
 
 	// Use dim3 structs for block and grid size
-	dim3 gridBF(NUM_BLOCKS_X, NUM_BLOCKS_Y, 1);
+	dim3 gridBF(NUM_BLOCKS_X, NUM_BLOCKS_Y, 2);
 	dim3 threadsBF(min(ofc->m_iFlowBlurKernelSize, 32), min(ofc->m_iFlowBlurKernelSize, 32), 1);
 
 	// No need to blur the flow if the kernel size is less than 4
@@ -1801,28 +1844,10 @@ void blurFlowArrays(struct OpticalFlowCalc *ofc) {
 		cudaMemcpy(ofc->m_blurredOffsetArray21[1], ofc->m_offsetArray21, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(int), cudaMemcpyDeviceToDevice);
 	} else {
 		// Launch kernels
-		blurKernelHorizontal <<<gridBF, threadsBF, 0, ofc->m_csOFCStream1>>> (
-			ofc->m_offsetArray12, ofc->m_blurredOffsetArray12[1], ofc->m_iFlowBlurKernelSize, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLowDimX);
-		blurKernelHorizontal <<<gridBF, threadsBF, 0, ofc->m_csOFCStream1>>> (
-			ofc->m_offsetArray12 + ofc->m_iDirectionIdxOffset, ofc->m_blurredOffsetArray12[1] + ofc->m_iLayerIdxOffset, ofc->m_iFlowBlurKernelSize, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLowDimX);
-		blurKernelHorizontal <<<gridBF, threadsBF, 0, ofc->m_csOFCStream2>>> (
-			ofc->m_offsetArray21, ofc->m_blurredOffsetArray21[1], ofc->m_iFlowBlurKernelSize, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLowDimX);
-		blurKernelHorizontal <<<gridBF, threadsBF, 0, ofc->m_csOFCStream2>>> (
-			ofc->m_offsetArray21 + ofc->m_iLayerIdxOffset, ofc->m_blurredOffsetArray21[1] + ofc->m_iLayerIdxOffset, ofc->m_iFlowBlurKernelSize, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLowDimX);
-
-		// Synchronize streams to ensure completion
-		cudaStreamSynchronize(ofc->m_csOFCStream1);
-		cudaStreamSynchronize(ofc->m_csOFCStream2);
-
-		// Launch kernels
-		blurKernelVertical <<<gridBF, threadsBF, 0, ofc->m_csOFCStream1>>> (
-			ofc->m_offsetArray12, ofc->m_blurredOffsetArray12[1], ofc->m_iFlowBlurKernelSize, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLowDimX);
-		blurKernelVertical <<<gridBF, threadsBF, 0, ofc->m_csOFCStream1>>> (
-			ofc->m_offsetArray12 + ofc->m_iDirectionIdxOffset, ofc->m_blurredOffsetArray12[1] + ofc->m_iLayerIdxOffset, ofc->m_iFlowBlurKernelSize, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLowDimX);
-		blurKernelVertical <<<gridBF, threadsBF, 0, ofc->m_csOFCStream2>>> (
-			ofc->m_offsetArray21, ofc->m_blurredOffsetArray21[1], ofc->m_iFlowBlurKernelSize, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLowDimX);
-		blurKernelVertical <<<gridBF, threadsBF, 0, ofc->m_csOFCStream2>>> (
-			ofc->m_offsetArray21 + ofc->m_iLayerIdxOffset, ofc->m_blurredOffsetArray21[1] + ofc->m_iLayerIdxOffset, ofc->m_iFlowBlurKernelSize, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLowDimX);
+		blurFlowKernel << <gridBF, threadsBF, sharedMemSize, ofc->m_csOFCStream1 >> > (ofc->m_offsetArray12, ofc->m_blurredOffsetArray12[1], ofc->m_iFlowBlurKernelSize, chacheSize, boundsOffset, avgEntriesPerThread, remainder, start, end, pixelCount, ofc->m_iNumLayers, ofc->m_iLowDimY, ofc->m_iLowDimX);
+		blurFlowKernel << <gridBF, threadsBF, sharedMemSize, ofc->m_csOFCStream2 >> > (ofc->m_offsetArray21, ofc->m_blurredOffsetArray21[1], ofc->m_iFlowBlurKernelSize, chacheSize, boundsOffset, avgEntriesPerThread, remainder, start, end, pixelCount, 1, ofc->m_iLowDimY, ofc->m_iLowDimX);
+		//cleanFlowKernel << <m_lowGrid16x16x1, m_threads16x16x2, 0, blurStream1 >> > (m_offsetArray12, m_blurredOffsetArray12, m_iLowDimY, m_iLowDimX);
+		//cleanFlowKernel << <m_lowGrid16x16x1, m_threads16x16x2, 0, blurStream2 >> > (m_offsetArray21, m_blurredOffsetArray21, m_iLowDimY, m_iLowDimX);
 
 		// Synchronize streams to ensure completion
 		cudaStreamSynchronize(ofc->m_csOFCStream1);
@@ -1837,7 +1862,7 @@ void blurFlowArrays(struct OpticalFlowCalc *ofc) {
 * Saves an image to a file
 *
 * @param ofc: Pointer to the optical flow calculator
-* @param filename: Path to the image file
+* @param filePath: Path to the image file
 */
 void saveImage(struct OpticalFlowCalc *ofc, const char* filePath) {
 	// We don't save HDR images
@@ -2109,25 +2134,14 @@ template __global__ void processFrameKernel(const unsigned short* frame, unsigne
                                  const unsigned int dimY,
                                  const unsigned int dimX, const unsigned int realDimX, const float blackLevel, const float whiteLevel, const float maxVal);
 
-template __global__ void blurKernelHorizontal(const int* input, int* output,
-										  const unsigned char kernelSize,
-										const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX);
-template __global__ void blurKernelHorizontal(const unsigned short* input, unsigned short* output, 
-										  const unsigned char kernelSize,
-										const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX);
-template __global__ void blurKernelHorizontal(const unsigned char* input, unsigned char* output, 
-										  const unsigned char kernelSize,
-										const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX);
-
-template __global__ void blurKernelVertical(const int* input, int* output, 
-										  const unsigned char kernelSize,
-										const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX);
-template __global__ void blurKernelVertical(const unsigned short* input, unsigned short* output, 
-										  const unsigned char kernelSize,
-										const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX);
-template __global__ void blurKernelVertical(const unsigned char* input, unsigned char* output, 
-										  const unsigned char kernelSize,
-										const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX);
+template __global__ void blurFrameKernel(const unsigned char* frameArray, unsigned char* blurredFrameArray, 
+								const unsigned char kernelSize, const unsigned char chacheSize, const unsigned char boundsOffset, 
+								const unsigned char avgEntriesPerThread, const unsigned short remainder, const char lumStart,
+								const unsigned char lumEnd, const unsigned short lumPixelCount, const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX);
+template __global__ void blurFrameKernel(const unsigned short* frameArray, unsigned short* blurredFrameArray, 
+								const unsigned char kernelSize, const unsigned char chacheSize, const unsigned char boundsOffset, 
+								const unsigned char avgEntriesPerThread, const unsigned short remainder, const char lumStart,
+								const unsigned char lumEnd, const unsigned short lumPixelCount, const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX);
 
 template __global__ void calcDeltaSums(unsigned int* summedUpDeltaArray, const unsigned char* frame1, const unsigned char* frame2,
 							  const int* offsetArray, const unsigned int layerIdxOffset, const unsigned int directionIdxOffset,
