@@ -14,18 +14,17 @@
 #include <math.h>
 #include <sys/stat.h>
 
+#include "common/msg.h"
 #include "filters/filter_internal.h"
 #include "filters/user_filters.h"
 #include "video/mp_image_pool.h"
 #include "opticalFlowCalc.cuh"
 
-#define PTS60FPS 0.01666666666666666666666666666667 // The target time between frames for 60 FPS video
 #define INITIAL_RESOLUTION_SCALAR 2 // The initial resolution scalar (0: Full resolution, 1: Half resolution, 2: Quarter resolution, 3: Eighth resolution, 4: Sixteenth resolution, ...)
 #define INITIAL_NUM_STEPS 10 // The initial number of steps executed to find the ideal offset (limits the maximum offset distance per iteration)
 #define FRAME_BLUR_KERNEL_SIZE 16 // The size of the blur kernel used to blur the source frames before calculating the optical flow
 #define FLOW_BLUR_KERNEL_SIZE 32 // The size of the blur kernel used to blur the offset calculated by the optical flow
 #define NUM_ITERATIONS 0 // Number of iterations to use in the optical flow calculation (0: As many as possible)
-#define SPREAD_CORES 0 // Whether or not to spread the threads over the available cores (0: Disabled, 1: SPREAD, 2: SINGLE)
 #define TEST_MODE 0 // Enables or disables automatic settings change to allow accurate performance testing (0: Disabled, 1: Enabled)
 #define AUTO_FRAME_SCALE 0 // Whether to automatically reduce/increase the calculation resolution depending on performance (0: Disabled, 1: Enabled)
 #define AUTO_STEPS_ADJUST 0 // Whether to automatically reduce/increase the number of calculation steps depending on performance (0: Disabled, 1: Enabled)
@@ -113,13 +112,18 @@ struct priv {
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
+// Prototypes
+void *vf_HopperRender_optical_flow_calc_thread(void *arg);
+void *vf_HopperRender_start_AppIndicator_script(void *arg);
+
 /*
 * Applies the new resolution scalar to the optical flow calculator
 *
 * @param priv: The video filter private data
 * @param newResolutionScalar: The new resolution scalar to apply
 */
-static void vf_HopperRender_adjust_frame_scalar(struct priv *priv, const unsigned char newResolutionScalar) {
+static void vf_HopperRender_adjust_frame_scalar(struct priv *priv, const unsigned char newResolutionScalar)
+{
 	// Here we just adjust all the variables that are affected by the new resolution scalar
 	priv->m_cResolutionScalar = newResolutionScalar;
 	priv->ofc->m_iFlowBlurKernelSize = priv->m_iFlowBlurKernelSize >> priv->m_cResolutionScalar;
@@ -150,7 +154,8 @@ static void vf_HopperRender_adjust_frame_scalar(struct priv *priv, const unsigne
 * @param priv: The video filter private data
 * @param code: The received command code
 */
-void vf_HopperRender_process_AppIndicator_command(struct priv *priv, int code) {
+static void vf_HopperRender_process_AppIndicator_command(struct priv *priv, int code)
+{
 	switch (code) {
 		// **** Activation Status ****
 		case 0:
@@ -268,18 +273,8 @@ void vf_HopperRender_process_AppIndicator_command(struct priv *priv, int code) {
 *
 * @param arg: The video filter private data (struct priv)
 */
-void *vf_HopperRender_optical_flow_calc_thread(void *arg) {
-	// Ensure the thread runs on the correct core
-	if (SPREAD_CORES) {
-		cpu_set_t cpuset;
-		int worker_core = 0;
-		CPU_ZERO(&cpuset);
-		CPU_SET(worker_core, &cpuset);
-		pthread_t thread = pthread_self();
-		pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
-	}
-	printf("[HopperRender] OFC thread running on CPU %d\n", sched_getcpu());
-
+void *vf_HopperRender_optical_flow_calc_thread(void *arg)
+{
     sigset_t set;
     int sig;
 	struct priv *priv = (struct priv*)arg;
@@ -378,22 +373,24 @@ static void vf_HopperRender_init(struct priv *priv, int dimY, int dimX, int real
 * @param f: The video filter instance
 * @param cmd: The command to process
 */
-static void vf_HopperRender_command(struct mp_filter *f, struct mp_filter_command *cmd) {
+static bool vf_HopperRender_command(struct mp_filter *f, struct mp_filter_command *cmd)
+{
 	struct priv *priv = f->priv;
 
 	// Speed change event
 	if (cmd->type == MP_FILTER_COMMAND_TEXT) {
 		priv->m_dPlaybackSpeed = cmd->speed;
 		priv->m_dSourceFrameTime = 1.0 / (priv->m_dSourceFPS * priv->m_dPlaybackSpeed);
-	
-		// If the source is already at or above 60 FPS, we don't need interpolation
-		if (priv->m_dSourceFrameTime <= priv->m_dTargetPTS) {
-			priv->m_isInterpolationState = NotNeeded;
-		// Reset the state either because the fps/speed change now requires interpolation, or we could now be fast enough to interpolate
-		} else if (priv->m_isInterpolationState != Deactivated) {
-			priv->m_isInterpolationState = Active;
-		}
 	}
+
+	// If the source is already at or above 60 FPS, we don't need interpolation
+	if (priv->m_dSourceFrameTime <= priv->m_dTargetPTS) {
+		priv->m_isInterpolationState = NotNeeded;
+	// Reset the state either because the fps/speed change now requires interpolation, or we could now be fast enough to interpolate
+	} else if (priv->m_isInterpolationState != Deactivated) {
+		priv->m_isInterpolationState = Active;
+	}
+	return true;
 }
 
 /*
@@ -401,7 +398,8 @@ static void vf_HopperRender_command(struct mp_filter *f, struct mp_filter_comman
 *
 * @param priv: The video filter private data
 */
-static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv, double warpCalcDurations[100], double currTotalWarpDuration) {
+static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv, double warpCalcDurations[100], double currTotalWarpDuration)
+{
 	char buffer2[512];
 	memset(buffer2, 0, sizeof(buffer2));
     int offset = snprintf(buffer2, sizeof(buffer2), 
@@ -426,9 +424,12 @@ static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv, double
 /*
 * Adjust optical flow calculation settings for optimal performance and quality
 *
-* @param priv: The video filter private data
+* @param f: The video filter instance
 */
-static void vf_HopperRender_auto_adjust_settings(struct priv *priv) {
+static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f)
+{
+	struct priv *priv = f->priv;
+
 	// Calculate the calculation durations
 	double warpCalcDurations[100];
 	double currTotalWarpDuration = 0.0;
@@ -449,10 +450,7 @@ static void vf_HopperRender_auto_adjust_settings(struct priv *priv) {
 	* Calculation took too long
 	*/
 	if ((currTotalCalcDuration + currTotalCalcDuration * 0.7) > dSourceFrameTimeMS) {
-		//mp_msg(MSGT_privILTER, MSGL_INFO, 
-		//	"Calculation took too long %.3f ms AVG SFT: %.3f NumSteps: %d",
-        //     priv->m_dCurrCalcDuration, dSourceFrameTimeMS, priv->m_iNumSteps);
-		if (LOG_PERFORMANCE) printf("[HopperRender] Calculation took too long %.3f ms AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, dSourceFrameTimeMS, priv->m_iNumSteps, priv->m_cResolutionScalar);
+		if (LOG_PERFORMANCE) MP_TRACE(f, "[HopperRender] Calculation took too long %.3f ms AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, dSourceFrameTimeMS, priv->m_iNumSteps, priv->m_cResolutionScalar);
 
 		// Decrease the number of steps to reduce calculation time
 		if (AUTO_STEPS_ADJUST && priv->m_iNumSteps > MIN_NUM_STEPS) {
@@ -478,10 +476,7 @@ static void vf_HopperRender_auto_adjust_settings(struct priv *priv) {
 	* We have left over capacity
 	*/
 	} else if ((currTotalCalcDuration + currTotalCalcDuration * 0.9) < dSourceFrameTimeMS) {
-		//mp_msg(MSGT_privILTER, MSGL_INFO, 
-		//	"Calculation has capacity %.3f ms AVG SFT: %.3f NumSteps: %d",
-        //     priv->m_dCurrCalcDuration, dSourceFrameTimeMS, priv->m_iNumSteps);
-		if (LOG_PERFORMANCE) printf("[HopperRender] Calculation has capacity %.3f ms AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, dSourceFrameTimeMS, priv->m_iNumSteps, priv->m_cResolutionScalar);
+		if (LOG_PERFORMANCE) MP_TRACE(f, "[HopperRender] Calculation has capacity %.3f ms AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, dSourceFrameTimeMS, priv->m_iNumSteps, priv->m_cResolutionScalar);
 
 		// Increase the frame scalar if we have enough leftover capacity
 		if (AUTO_FRAME_SCALE && priv->m_cResolutionScalar > 0 && priv->m_iNumSteps >= MAX_NUM_STEPS) {
@@ -496,22 +491,21 @@ static void vf_HopperRender_auto_adjust_settings(struct priv *priv) {
 	* Calculation takes as long as it should
 	*/
 	} else {
-		//mp_msg(MSGT_privILTER, MSGL_INFO, 
-		//	"Calculation took %.3f ms AVG SFT: %.3f NumSteps: %d",
-        //     priv->m_dCurrCalcDuration, dSourceFrameTimeMS, priv->m_iNumSteps);
-		if (LOG_PERFORMANCE) printf("[HopperRender] Calculation took %.3f ms AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, dSourceFrameTimeMS, priv->m_iNumSteps, priv->m_cResolutionScalar);
+		if (LOG_PERFORMANCE) MP_TRACE(f, "[HopperRender] Calculation took %.3f ms AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, dSourceFrameTimeMS, priv->m_iNumSteps, priv->m_cResolutionScalar);
 	}
 }
 
 /*
 * Coordinates the optical flow calc thread and generates the interpolated frames
 *
-* @param priv: The video filter private data
+* @param f: The video filter instance
 * @param planes: The planes of the output frame
 */
-static int i = 0;
-void vf_HopperRender_interpolate_frame(struct priv *priv, unsigned char** planes)
+static int dump_iter = 0;
+static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char** planes)
 {
+	struct priv *priv = f->priv;
+
 	if (priv->m_iIntFrameNum == 0) {
 		// Swap the blurred offset arrays
 		int* temp0 = priv->ofc->m_blurredOffsetArray12[0];
@@ -558,13 +552,13 @@ void vf_HopperRender_interpolate_frame(struct priv *priv, unsigned char** planes
 		// Get the home directory from the environment
 		const char *home = getenv("HOME");
 		if (home == NULL) {
-			// Handle error if HOME is not set
-			fprintf(stderr, "HOME environment variable is not set.\n");
-			return 1;
+			MP_ERR(f, "HOME environment variable is not set.\n");
+			mp_filter_internal_mark_failed(f);
+			return;
 		}
 		char path[32];
-		snprintf(path, sizeof(path), "%s/dump/%d.bin", home, i);
-		i++;
+		snprintf(path, sizeof(path), "%s/dump/%d.bin", home, dump_iter);
+		dump_iter++;
 		priv->ofc->saveImage(priv->ofc, path);
 	}
 	
@@ -576,7 +570,7 @@ void vf_HopperRender_interpolate_frame(struct priv *priv, unsigned char** planes
 	if (priv->m_foFrameOutput != BlurredFrames && 
 		priv->m_iIntFrameNum == priv->m_iNumIntFrames - 1 && 
 		!TEST_MODE) {
-		vf_HopperRender_auto_adjust_settings(priv);
+		vf_HopperRender_auto_adjust_settings(f);
 	}
 
 	priv->m_dScalar += priv->m_dTargetPTS / priv->m_dSourceFrameTime;
@@ -609,7 +603,7 @@ static void vf_HopperRender_redirect_AppIndicator_command(struct priv *priv)
 * @param f: The video filter instance
 * @param numFrames: The number of images that should be in the pool
 */
-void vf_HopperRender_check_hwpool_size(struct mp_filter *f, int numFrames)
+static void vf_HopperRender_check_hwpool_size(struct mp_filter *f, int numFrames)
 {
 	struct priv *priv = f->priv;
 
@@ -621,24 +615,24 @@ void vf_HopperRender_check_hwpool_size(struct mp_filter *f, int numFrames)
 	if (priv->m_iHWPoolSize >= numFrames)
 		return;
 
-	printf("[HopperRender] Adding %d images to the hw pool\n", numFrames - priv->m_iHWPoolSize);
+	MP_INFO(f, "[HopperRender] Adding %zu images to the hw pool\n", numFrames - priv->m_iHWPoolSize);
 
 	for (int i = priv->m_iHWPoolSize; i < numFrames; i++) {
 		AVFrame *av_frame = av_frame_alloc();
 		if (!av_frame)
-			return NULL;
+			return;
 		if (av_hwframe_get_buffer(priv->m_miRefImage->hwctx, av_frame, 0) < 0) {
 			av_frame_free(&av_frame);
-			return NULL;
+			return;
 		}
 		struct mp_image *dst = mp_image_from_av_frame(av_frame);
 		av_frame_free(&av_frame);
 		if (!dst)
-			return NULL;
+			return;
 
 		if (dst->w < priv->m_miRefImage->w || dst->h < priv->m_miRefImage->h) {
 			talloc_free(dst);
-			return NULL;
+			return;
 		}
 
 		mp_image_set_size(dst, priv->m_miRefImage->w, priv->m_miRefImage->h);
@@ -656,7 +650,8 @@ void vf_HopperRender_check_hwpool_size(struct mp_filter *f, int numFrames)
 * @param f: The video filter instance
 * @param frameNum: The frame number to yield
 */
-struct mp_image *vf_HopperRender_get_image(struct mp_filter *f, int frameNum) {
+static struct mp_image *vf_HopperRender_get_image(struct mp_filter *f, int frameNum)
+{
 	struct priv *priv = f->priv;
 
 	// If we are processing software images, we can just use the software image pool
@@ -668,7 +663,7 @@ struct mp_image *vf_HopperRender_get_image(struct mp_filter *f, int frameNum) {
 
 	// If we are processing hardware images, we return a new ref to one of the images in the hardware pool
 	if (frameNum < 0 || frameNum >= priv->m_iHWPoolSize) {
-		printf("[HopperRender] Invalid frame number\n");
+		MP_ERR(f, "[HopperRender] Invalid frame number\n");
 		mp_filter_internal_mark_failed(f);
 		return NULL;
 	}
@@ -715,7 +710,7 @@ static void vf_HopperRender_process_intermediate_frame(struct mp_filter *f)
 	struct mp_frame frame = {.type = MP_FRAME_VIDEO, .data = img};
 	
     // Generate the interpolated frame
-    vf_HopperRender_interpolate_frame(priv, img->planes);
+    vf_HopperRender_interpolate_frame(f, img->planes);
 	
     // Update playback timestamp
     priv->m_dCurrPlaybackPTS += priv->m_dTargetPTS * priv->m_dPlaybackSpeed;
@@ -772,7 +767,13 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 	img->pts = priv->m_dCurrPlaybackPTS;
     priv->m_dSourceFPS = img->nominal_fps;
     priv->m_dSourceFrameTime = 1.0 / (priv->m_dSourceFPS * priv->m_dPlaybackSpeed);
-	priv->m_iNumIntFrames = (int)floor((1.0 - priv->m_dScalar) / (priv->m_dTargetPTS / priv->m_dSourceFrameTime)) + 1;
+	if (priv->m_isInterpolationState == Active) {
+		priv->m_iNumIntFrames = (int)floor((1.0 - priv->m_dScalar) / (priv->m_dTargetPTS / priv->m_dSourceFrameTime)) + 1;
+	} else {
+		priv->m_iNumIntFrames = 1;
+	}
+
+	// Check if we need to fill the hw image pool
 	vf_HopperRender_check_hwpool_size(f, priv->m_iNumIntFrames - 1);
 
     // Update the GPU arrays
@@ -781,7 +782,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 	
 	// Don't interpolate the first three frames (as we need three frames in the buffer to interpolate)
     if (priv->m_isInterpolationState == Active && (priv->m_iFrameCounter > 3 || priv->m_foFrameOutput == SideBySide2)) {
-		vf_HopperRender_interpolate_frame(priv, img->planes);
+		vf_HopperRender_interpolate_frame(f, img->planes);
         priv->m_iIntFrameNum = 1;
         mp_filter_internal_mark_progress(f);
     } else {
@@ -812,7 +813,7 @@ static void vf_HopperRender_process(struct mp_filter *f)
         vf_HopperRender_process_new_source_frame(f);
     }
 
-	/* printf("[HopperRender] FN: %d - IN: %d - PTS: %f - PPTS: %f - Delta: %f\n",
+	/* MP_TRACE(f, "[HopperRender] FN: %d - IN: %d - PTS: %f - PPTS: %f - Delta: %f\n",
            priv->m_iFrameCounter, priv->m_iIntFrameNum, 
            priv->m_dCurrSourcePTS + priv->m_dTargetPTS * priv->m_dPlaybackSpeed * priv->m_iIntFrameNum,
            priv->m_dCurrPlaybackPTS, 
@@ -824,7 +825,8 @@ static void vf_HopperRender_process(struct mp_filter *f)
 *
 * @param arg: The thread data
 */
-void *vf_HopperRender_start_AppIndicator_script(void *arg) {
+void *vf_HopperRender_start_AppIndicator_script(void *arg)
+{
 	ThreadData *data = (ThreadData *)arg;
     if (pipe(data->pipe_fd) == -1) {
         perror("pipe");
@@ -834,15 +836,6 @@ void *vf_HopperRender_start_AppIndicator_script(void *arg) {
     data->pid = fork();
     if (data->pid == 0) {
         // Child process
-		if (SPREAD_CORES) {
-			cpu_set_t cpuset;
-			int worker_core = SPREAD_CORES ? 2 : 0;
-			CPU_ZERO(&cpuset);
-			CPU_SET(worker_core, &cpuset);
-			pthread_t thread = pthread_self();
-			pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
-		}
-		printf("[HopperRender] AppIndicator thread running on CPU %d\n", sched_getcpu());
         close(data->pipe_fd[0]); // Close read end
         dup2(data->pipe_fd[1], STDOUT_FILENO); // Redirect stdout to pipe
         dup2(data->pipe_fd[1], STDERR_FILENO); // Redirect stderr to pipe
@@ -853,7 +846,7 @@ void *vf_HopperRender_start_AppIndicator_script(void *arg) {
 		if (home == NULL) {
 			// Handle error if HOME is not set
 			fprintf(stderr, "HOME environment variable is not set.\n");
-			return 1;
+			return NULL;
 		}
 
 		// Create a buffer to store the full path
@@ -885,13 +878,16 @@ void *vf_HopperRender_start_AppIndicator_script(void *arg) {
             pthread_exit(NULL);
         }
     }
-    return NULL;
+	return NULL;
 }
 
 /*
 * Terminates the AppIndicator widget
+*
+* @param data: The thread data
 */
-void vf_HopperRender_terminate_AppIndicator_script(ThreadData *data) {
+static void vf_HopperRender_terminate_AppIndicator_script(ThreadData *data)
+{
     if (data->pid > 0) {
         // Send SIGINT signal to the process to terminate it
         if (kill(data->pid, SIGINT) == -1) {
@@ -907,9 +903,10 @@ void vf_HopperRender_terminate_AppIndicator_script(ThreadData *data) {
 /*
 * Frees the video filter.
 *
-* @param priv: The video filter instance
+* @param f: The video filter instance
 */
-static void vf_HopperRender_uninit(struct mp_filter *f) {
+static void vf_HopperRender_uninit(struct mp_filter *f)
+{
     struct priv *priv = f->priv;
 	mp_image_unrefp(&priv->m_miRefImage);
 	for (int i = 0; i < priv->m_iHWPoolSize; i++) {
@@ -952,27 +949,49 @@ static const struct mp_filter_info vf_HopperRender_filter = {
 };
 
 /*
-* Creates the video filter and intializes the private data.
+* Creates the video filter and initializes the private data.
 *
 * @param parent: The parent filter
 * @param options: The filter options
 */
 static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *options)
 {
+	// Create the video filter
     struct mp_filter *f = mp_filter_create(parent, &vf_HopperRender_filter);
     if (!f) {
         talloc_free(options);
         return NULL;
     }
+	struct priv *priv = f->priv;
 
+	// Create the fifo for the AppIndicator widget if it doesn't exist
+	char *fifo = "/tmp/hopperrender";
+	if (access(fifo, F_OK) == -1) {
+        if (mkfifo(fifo, 0666) != 0) {
+			MP_ERR(f, "Failed to create pipe for HopperRender.\n");
+			talloc_free(options);
+			return NULL;
+        }
+    }
+
+	// Start the AppIndicator widget
+	pthread_t thread;
+	priv->m_iAppIndicatorFileDesc = -1;
+	pthread_create(&thread, NULL, vf_HopperRender_start_AppIndicator_script, &priv->m_tdAppIndicatorThreadData);
+	pthread_detach(thread);
+	sleep(1);
+	priv->m_iAppIndicatorFileDesc = open(fifo, O_WRONLY);
+    if (priv->m_iAppIndicatorFileDesc == -1) {
+		MP_ERR(f, "Failed to open AppIndicator FIFO.\n");
+        talloc_free(options);
+        return NULL;
+    }
+
+	// Connect the input and output pins
     mp_filter_add_pin(f, MP_PIN_IN, "in");
     mp_filter_add_pin(f, MP_PIN_OUT, "out");
 
-    struct priv *priv = f->priv;
-    priv->ofc = calloc(1, sizeof(struct OpticalFlowCalc));
-
 	// Thread data
-	priv->m_iAppIndicatorFileDesc = -1;
 	priv->m_ptOFCThreadID = 0;
 
     // Settings
@@ -985,7 +1004,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
     double display_fps = 60.0;
     if (info) {
         if (info->get_display_fps)
-            display_fps = info->get_display_fps(info);
+            display_fps = info->get_display_fps(info); // Set the target FPS to the display FPS
     }
 	priv->m_dTargetPTS = 1.0 / display_fps;
 
@@ -1021,39 +1040,8 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 	priv->m_isInterpolationState = Active;
 	priv->m_dOFCCalcDuration = 0.0;
 
-	// ######################################
-	// #### LAUNCH AppIndicator WIDGET ######
-	// ######################################
-	pthread_t thread;
-	char *fifo = "/tmp/hopperrender";
-	if (access(fifo, F_OK) == -1) {
-        if (mkfifo(fifo, 0666) != 0) {
-            perror("Failed to create pipe");
-            exit(EXIT_FAILURE);
-        }
-    }
-
-	pthread_create(&thread, NULL, vf_HopperRender_start_AppIndicator_script, &priv->m_tdAppIndicatorThreadData);
-	pthread_detach(thread);
-	sleep(1);
-	priv->m_iAppIndicatorFileDesc = open(fifo, O_WRONLY);
-    if (priv->m_iAppIndicatorFileDesc == -1) {
-        perror("Failed to open AppIndicator FIFO");
-        exit(EXIT_FAILURE);
-    }
-
-	// ##############################
-	// #### SET CPU AFFINITY #######
-	// ##############################
-	if (SPREAD_CORES) {
-		cpu_set_t cpuset;
-		int worker_core = SPREAD_CORES ? 1 : 0;
-		CPU_ZERO(&cpuset);
-		CPU_SET(worker_core, &cpuset);
-		thread = pthread_self();
-		pthread_setaffinity_np(thread, sizeof(cpu_set_t), &cpuset);
-	}
-	printf("[HopperRender] Warp thread running on CPU %d\n", sched_getcpu());
+	// Optical Flow calculator
+	priv->ofc = calloc(1, sizeof(struct OpticalFlowCalc));
 
     return f;
 }
