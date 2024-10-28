@@ -65,7 +65,17 @@ sudo apt-get install build-essential pkg-config \
                      libxvidcore-dev libzimg-dev spirv-cross
 ```
 - If you're having trouble with getting nvdec hardware decoding to run, try the following:
+
+### Ubuntu/Debian:
 ```
+sudo apt install libffnvcodec-dev
+git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git
+cd nv-codec-headers
+sudo make install
+``` 
+### Arch Linux:
+```
+sudo pacman -S ffnvcodec-headers
 git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git
 cd nv-codec-headers
 sudo make install
