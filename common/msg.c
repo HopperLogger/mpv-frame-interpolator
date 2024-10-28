@@ -401,12 +401,17 @@ static void append_terminal_line(struct mp_log *log, int lev,
                                 term_w - ellipsis_width, &cut_pos);
     if (cut_pos) {
         int new_len = cut_pos - term_msg->start;
-        bstr rem = {(unsigned char *)cut_pos, term_msg->len - new_len};
+        bstr rem = bstrdup(NULL, (bstr){(unsigned char *)cut_pos, term_msg->len - new_len});
+        void *ptr = rem.start;
         term_msg->len = new_len;
 
         bstr_xappend(root, term_msg, bstr0(".."));
 
         while (rem.len) {
+            if (bstr_eatstart0(&rem, "\n")) {
+                bstr_xappend(root, term_msg, bstr0("\n"));
+                continue;
+            }
             if (bstr_eatstart0(&rem, "\033[")) {
                 bstr_xappend(root, term_msg, bstr0("\033["));
 
@@ -418,12 +423,11 @@ static void append_terminal_line(struct mp_log *log, int lev,
             }
             rem = bstr_cut(rem, 1);
         }
+        talloc_free(ptr);
 
-        bstr_xappend(root, term_msg, bstr0("\n"));
         width += ellipsis_width;
     }
-    *line_w = root->isatty[term_msg_fileno(root, lev)]
-                ? width : 0;
+    *line_w = root->isatty[term_msg_fileno(root, lev)] ? width : 0;
 }
 
 static struct mp_log_buffer_entry *log_buffer_read(struct mp_log_buffer *buffer)
@@ -535,9 +539,10 @@ static void write_term_msg(struct mp_log *log, int lev, bstr text, bstr *out)
 
     if (lev == MSGL_STATUS) {
         int line_w = 0;
+        bool clip = bstr_eatstart0(&str, TERM_MSG_0);
         if (str.len && print_term)
             append_terminal_line(log, lev, str, &root->term_msg_tmp, &line_w,
-                                 bstr_eatstart0(&str, TERM_MSG_0) && term_w ? term_w : INT_MAX);
+                                 clip && term_w ? term_w : INT_MAX);
         term_msg_lines += !term_w ? (str.len ? 1 : 0)
                                   : (line_w + term_w - 1) / term_w;
     } else if (str.len) {

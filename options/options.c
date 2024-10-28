@@ -415,6 +415,10 @@ const struct m_sub_options mp_osd_render_sub_opts = {
         {"osd-bar-h", OPT_FLOAT(osd_bar_h), M_RANGE(0.1, 50)},
         {"osd-bar-outline-size", OPT_FLOAT(osd_bar_outline_size), M_RANGE(0, 1000.0)},
         {"osd-bar-border-size", OPT_ALIAS("osd-bar-outline-size")},
+        {"osd-bar-marker-scale", OPT_FLOAT(osd_bar_marker_scale), M_RANGE(0, 100.0)},
+        {"osd-bar-marker-min-size", OPT_FLOAT(osd_bar_marker_min_size), M_RANGE(0, 1000.0)},
+        {"osd-bar-marker-style", OPT_CHOICE(osd_bar_marker_style,
+            {"none", 0}, {"triangle", 1}, {"line", 2})},
         {"osd", OPT_SUBSTRUCT(osd_style, osd_style_conf)},
         {"osd-scale", OPT_FLOAT(osd_scale), M_RANGE(0, 100)},
         {"osd-scale-by-window", OPT_BOOL(osd_scale_by_window)},
@@ -427,6 +431,9 @@ const struct m_sub_options mp_osd_render_sub_opts = {
         .osd_bar_w = 75.0,
         .osd_bar_h = 3.125,
         .osd_bar_outline_size = 0.5,
+        .osd_bar_marker_scale = 1.3,
+        .osd_bar_marker_min_size = 1.6,
+        .osd_bar_marker_style = 1,
         .osd_scale = 1,
         .osd_scale_by_window = true,
     },
@@ -557,6 +564,7 @@ static const m_option_t mp_opts[] = {
     {"scripts", OPT_PATHLIST(script_files), .flags = M_OPT_FILE},
     {"script", OPT_CLI_ALIAS("scripts-append")},
     {"script-opts", OPT_KEYVALUELIST(script_opts)},
+    {"script-opt", OPT_CLI_ALIAS("script-opts-append")},
     {"load-scripts", OPT_BOOL(auto_load_scripts)},
 #endif
 #if HAVE_JAVASCRIPT

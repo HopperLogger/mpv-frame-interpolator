@@ -416,10 +416,21 @@ static bool test_path(struct pl_parser *p, char *path, int autocreate)
     if (autocreate & AUTO_ANY)
         return true;
 
-    if (!strcmp(path, p->real_stream->path))
+    bstr bpath = bstr0(path);
+    bstr bstream_path = bstr0(p->real_stream->path);
+
+    // When opening a file from cwd, 'path' starts with "./" while stream->path
+    // matches what the user passed as arg. So it may or not not contain ./.
+    // Strip it from both to make the comparison work.
+    if (!mp_path_is_absolute(bstream_path)) {
+        bstr_eatstart0(&bpath, "./");
+        bstr_eatstart0(&bstream_path, "./");
+    }
+
+    if (!bstrcmp(bpath, bstream_path))
         return true;
 
-    bstr ext = bstr_get_ext(bstr0(path));
+    bstr ext = bstr_get_ext(bpath);
     if (autocreate & AUTO_VIDEO && str_in_list(ext, p->mp_opts->video_exts))
         return true;
     if (autocreate & AUTO_AUDIO && str_in_list(ext, p->mp_opts->audio_exts))
@@ -534,8 +545,7 @@ static int parse_dir(struct pl_parser *p)
             }
             break;
         }
-        int flags = STREAM_ORIGIN_DIRECT | STREAM_READ | STREAM_LOCAL_FS_ONLY |
-                    STREAM_LESS_NOISE;
+        int flags = STREAM_READ_FILE_FLAGS_DEFAULT;
         bstr dir = mp_dirname(p->real_stream->url);
         if (!dir.len)
             autocreate = AUTO_NONE;
