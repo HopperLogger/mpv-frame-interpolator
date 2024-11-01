@@ -323,7 +323,7 @@ extern void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, con
 /*
 * Initializes the video filter.
 *
-* @param priv: The video filter private data
+* @param f: The video filter instance
 * @param dimY: The height of the video
 * @param dimX: The stride width of the video
 * @param realDimX: The real width of the video (not the stride width!)
@@ -331,8 +331,17 @@ extern void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, con
 *
 * @return: The result of the configuration
 */
-static void vf_HopperRender_init(struct priv *priv, int dimY, int dimX, int realDimX, enum mp_imgfmt fmt)
+static void vf_HopperRender_init(struct mp_filter *f, int dimY, int dimX, int realDimX, enum mp_imgfmt fmt)
 {
+	struct priv *priv = f->priv;
+
+	// Check if the format is supported (We suport YUV420P, NV12, CUDA, and YUV420P10)
+	if (fmt != IMGFMT_CUDA && fmt != IMGFMT_420P && fmt != 1118 && fmt != IMGFMT_NV12) {
+		MP_ERR(f, "[HopperRender] Only CUDA and VDPAU formats are supported!\n");
+		mp_filter_internal_mark_failed(f);
+		return;
+	}
+
 	priv->m_iDimX = dimX;
 	priv->m_iDimY = dimY;
 	priv->m_fmt = fmt;
@@ -752,7 +761,8 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
     if (!priv->m_bInitialized) {
 		priv->m_bIsHDR = (img->imgfmt == 1118) || img->params.hw_subfmt == IMGFMT_P010;
 		priv->m_miRefImage = mp_image_new_ref(img);
-        vf_HopperRender_init(priv, img->h, img->stride[0] / (priv->m_bIsHDR ? 2 : 1), img->w, img->imgfmt);
+		int stride = (img->imgfmt == IMGFMT_CUDA) ? img->stride[0] / (priv->m_bIsHDR ? 2 : 1) : img->w;
+        vf_HopperRender_init(f, img->h, stride, img->w, img->imgfmt);
         priv->m_bInitialized = true;
     }
 
