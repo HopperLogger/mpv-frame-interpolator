@@ -44,6 +44,7 @@
 #include "common/playlist.h"
 #include "options/options.h"
 #include "options/m_property.h"
+#include "input/input.h"
 
 #include "stream/stream.h"
 
@@ -79,8 +80,7 @@ void mp_parse_cfgfiles(struct MPContext *mpctx)
     talloc_free(p2);
 
     char *section = NULL;
-    bool encoding = opts->encode_opts &&
-        opts->encode_opts->file && opts->encode_opts->file[0];
+    bool encoding = opts->encode_opts->file && opts->encode_opts->file[0];
     // In encoding mode, we don't want to apply normal config options.
     // So we "divert" normal options into a separate section, and the diverted
     // section is never used - unless maybe it's explicitly referenced from an
@@ -92,8 +92,10 @@ void mp_parse_cfgfiles(struct MPContext *mpctx)
 
     load_all_cfgfiles(mpctx, section, "mpv.conf|config");
 
-    if (encoding)
+    if (encoding) {
         m_config_set_profile(mpctx->mconfig, SECT_ENCODE, 0);
+        mp_input_enable_section(mpctx->input, "encode", MP_INPUT_EXCLUSIVE);
+    }
 }
 
 static int try_load_config(struct MPContext *mpctx, const char *file, int flags,
