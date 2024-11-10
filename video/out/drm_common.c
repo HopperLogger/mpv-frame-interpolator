@@ -59,6 +59,9 @@
 #define ACQUIRE_SIGNAL SIGUSR2
 #define MAX_CONNECTOR_NAME_LEN 20
 
+#define DRM_PRIM_FACTOR 50000
+#define DRM_MIN_LUMA_FACTOR 10000
+
 static int vt_switcher_pipe[2];
 
 static int drm_connector_opt_help(struct mp_log *log, const struct m_option *opt,
@@ -133,6 +136,12 @@ static const char *connector_names[] = {
     "Writeback", // DRM_MODE_CONNECTOR_WRITEBACK
     "SPI",       // DRM_MODE_CONNECTOR_SPI
     "USB",       // DRM_MODE_CONNECTOR_USB
+};
+
+static int eotf_map[PL_COLOR_TRC_COUNT] = {
+    [PL_COLOR_TRC_BT_1886] = HDMI_EOTF_TRADITIONAL_GAMMA_SDR,
+    [PL_COLOR_TRC_PQ] = HDMI_EOTF_SMPTE_ST2084,
+    [PL_COLOR_TRC_HLG] = HDMI_EOTF_BT_2100_HLG,
 };
 
 struct drm_mode_spec {
@@ -443,6 +452,14 @@ void vo_drm_release_crtc(struct vo_drm_state *drm)
 }
 
 /* libdrm */
+static void destroy_hdr_blob(struct vo_drm_state *drm)
+{
+    if (drm->hdr.blob_id) {
+        drmModeDestroyPropertyBlob(drm->fd, drm->hdr.blob_id);
+        drm->hdr.blob_id = 0;
+    }
+}
+
 static void get_connector_name(const drmModeConnector *connector,
                                char ret[MAX_CONNECTOR_NAME_LEN])
 {
@@ -494,6 +511,18 @@ static drmModeConnector *get_first_connected_connector(const drmModeRes *res,
         drmModeFreeConnector(connector);
     }
     return NULL;
+}
+
+static void restore_sdr(struct vo_drm_state *drm)
+{
+    struct drm_atomic_context *atomic_ctx = drm->atomic_context;
+    if (!atomic_ctx)
+        return;
+
+    vo_drm_set_hdr_metadata(drm->vo, true);
+    int ret = drmModeAtomicCommit(drm->fd, atomic_ctx->request, DRM_MODE_ATOMIC_ALLOW_MODESET, drm);
+    if (ret)
+        MP_VERBOSE(drm, "Failed to commit atomic request: %s\n", mp_strerror(ret));
 }
 
 static bool setup_connector(struct vo_drm_state *drm, const drmModeRes *res,
@@ -585,6 +614,83 @@ static bool setup_crtc(struct vo_drm_state *drm, const drmModeRes *res)
 success:
     MP_VERBOSE(drm, "Selected Encoder %u with CRTC %u\n",
                drm->encoder->encoder_id, drm->crtc_id);
+    return true;
+}
+
+static void setup_edid(struct vo_drm_state *drm)
+{
+    drmModePropertyBlobRes *blob = NULL;
+    for (int i = 0; i < drm->connector->count_props; ++i) {
+        drmModePropertyRes *prop = drmModeGetProperty(drm->fd, drm->connector->props[i]);
+        if (prop && strcmp(prop->name, "EDID") == 0)
+            blob = drmModeGetPropertyBlob(drm->fd, drm->connector->prop_values[i]);
+        drmModeFreeProperty(prop);
+        if (blob)
+            break;
+    }
+    if (!blob) {
+        MP_VERBOSE(drm, "Unable to get EDID blob from connector.\n");
+        return;
+    }
+
+    drm->info = di_info_parse_edid(blob->data, blob->length);
+    if (!drm->info) {
+        MP_VERBOSE(drm, "Failed to parse EDID info: %s\n", mp_strerror(errno));
+        goto done;
+    }
+
+    const struct di_edid *edid = di_info_get_edid(drm->info);
+    if (!edid) {
+        MP_VERBOSE(drm, "Failed to get EDID info: %s\n", mp_strerror(errno));
+        goto done;
+    }
+
+    drm->chromaticity = di_edid_get_chromaticity_coords(edid);
+
+    const struct di_edid_cta *cta;
+    const struct di_edid_ext *const *exts = di_edid_get_extensions(edid);
+    while (*exts && !(cta = di_edid_ext_get_cta(*exts++)));
+
+    if (!cta) {
+        MP_VERBOSE(drm, "Unable to find CTA-861 extension block.\n");
+        goto done;
+    }
+
+    const struct di_cta_data_block *const *blocks = di_edid_cta_get_data_blocks(cta);
+    for (int i = 0; *blocks && blocks[i]; ++i) {
+        if (!drm->colorimetry)
+            drm->colorimetry = di_cta_data_block_get_colorimetry(blocks[i]);
+        if (!drm->hdr_static_metadata)
+            drm->hdr_static_metadata = di_cta_data_block_get_hdr_static_metadata(blocks[i]);
+        if (drm->colorimetry && drm->hdr_static_metadata)
+            break;
+    }
+
+done:
+    if (blob)
+        drmModeFreePropertyBlob(blob);
+}
+
+static bool target_params_supported_by_display(struct vo_drm_state *drm)
+{
+    if (!drm->chromaticity || !drm->colorimetry || !drm->hdr_static_metadata)
+        return false;
+
+    const struct di_cta_hdr_static_metadata_block *hdr_static_metadata = drm->hdr_static_metadata;
+    enum pl_color_transfer trc = drm->target_params.color.transfer;
+
+    if (!pl_color_transfer_is_hdr(trc) && !hdr_static_metadata->eotfs->traditional_sdr)
+        return false;
+
+    if (pl_color_transfer_is_hdr(trc) && !drm->colorimetry->bt2020_rgb)
+        return false;
+
+    if (trc == PL_COLOR_TRC_PQ && !hdr_static_metadata->eotfs->pq)
+        return false;
+
+    if (trc == PL_COLOR_TRC_HLG && !hdr_static_metadata->eotfs->hlg)
+        return false;
+
     return true;
 }
 
@@ -1005,6 +1111,8 @@ bool vo_drm_init(struct vo *vo)
     if (!setup_mode(drm))
         goto err;
 
+    setup_edid(drm);
+
     // Universal planes allows accessing all the planes (including primary)
     if (drmSetClientCap(drm->fd, DRM_CLIENT_CAP_UNIVERSAL_PLANES, 1)) {
         MP_ERR(drm, "Failed to set Universal planes capability\n");
@@ -1047,6 +1155,12 @@ void vo_drm_uninit(struct vo *vo)
     if (!drm)
         return;
 
+    restore_sdr(drm);
+    destroy_hdr_blob(drm);
+
+    if (drm->info)
+        di_info_destroy(drm->info);
+
     vo_drm_release_crtc(drm);
     if (drm->vt_switcher_active)
         vt_switcher_destroy(&drm->vt_switcher);
@@ -1061,9 +1175,8 @@ void vo_drm_uninit(struct vo *vo)
         drmModeFreeEncoder(drm->encoder);
         drm->encoder = NULL;
     }
-    if (drm->atomic_context) {
+    if (drm->atomic_context)
         drm_atomic_destroy_context(drm->atomic_context);
-    }
 
     close(drm->fd);
     talloc_free(drm);
@@ -1240,6 +1353,53 @@ static int drm_validate_mode_opt(struct mp_log *log, const struct m_option *opt,
 double vo_drm_get_display_fps(struct vo_drm_state *drm)
 {
     return mode_get_Hz(&drm->mode.mode);
+}
+
+bool vo_drm_set_hdr_metadata(struct vo *vo, bool force_sdr)
+{
+    struct vo_drm_state *drm = vo->drm;
+    struct mp_image_params target_params = vo_get_target_params(vo);
+    if (!force_sdr && (pl_color_space_equal(&target_params.color, &drm->target_params.color) ||
+        !target_params.w || !target_params.h))
+        return false;
+
+    destroy_hdr_blob(drm);
+    drm->target_params = target_params;
+    drm->supported_colorspace = target_params_supported_by_display(drm);
+    bool use_sdr = !drm->supported_colorspace || force_sdr;
+
+    // For any HDR, the BT2020 drm colorspace is the only one that works in practice.
+    struct drm_atomic_context *atomic_ctx = drm->atomic_context;
+    int colorspace = !use_sdr && pl_color_space_is_hdr(&drm->target_params.color) ?
+                     DRM_MODE_COLORIMETRY_BT2020_RGB : DRM_MODE_COLORIMETRY_DEFAULT;
+    drm_object_set_property(atomic_ctx->request, atomic_ctx->connector, "Colorspace", colorspace);
+
+    const struct pl_hdr_metadata *hdr = &target_params.color.hdr;
+    struct hdr_output_metadata metadata = {
+        .metadata_type = HDMI_STATIC_METADATA_TYPE1,
+        .hdmi_metadata_type1.metadata_type = HDMI_STATIC_METADATA_TYPE1,
+
+        .hdmi_metadata_type1.eotf = use_sdr ? HDMI_EOTF_TRADITIONAL_GAMMA_SDR : eotf_map[target_params.color.transfer],
+
+        .hdmi_metadata_type1.display_primaries[0].x = lrintf(hdr->prim.red.x * DRM_PRIM_FACTOR),
+        .hdmi_metadata_type1.display_primaries[0].y = lrintf(hdr->prim.red.y * DRM_PRIM_FACTOR),
+        .hdmi_metadata_type1.display_primaries[1].x = lrintf(hdr->prim.green.x * DRM_PRIM_FACTOR),
+        .hdmi_metadata_type1.display_primaries[1].y = lrintf(hdr->prim.green.y * DRM_PRIM_FACTOR),
+        .hdmi_metadata_type1.display_primaries[2].x = lrintf(hdr->prim.blue.x * DRM_PRIM_FACTOR),
+        .hdmi_metadata_type1.display_primaries[2].y = lrintf(hdr->prim.blue.y * DRM_PRIM_FACTOR),
+
+        .hdmi_metadata_type1.white_point.x = lrintf(hdr->prim.white.x * DRM_PRIM_FACTOR),
+        .hdmi_metadata_type1.white_point.y = lrintf(hdr->prim.white.y * DRM_PRIM_FACTOR),
+
+        .hdmi_metadata_type1.min_display_mastering_luminance = lrintf(hdr->min_luma * DRM_MIN_LUMA_FACTOR),
+        .hdmi_metadata_type1.max_display_mastering_luminance = hdr->max_luma,
+
+        .hdmi_metadata_type1.max_cll = hdr->max_cll,
+        .hdmi_metadata_type1.max_fall = hdr->max_fall,
+    };
+    drmModeCreatePropertyBlob(drm->fd, &metadata, sizeof(metadata), &drm->hdr.blob_id);
+    drm_object_set_property(atomic_ctx->request, atomic_ctx->connector, "HDR_OUTPUT_METADATA", drm->hdr.blob_id);
+    return true;
 }
 
 void vo_drm_set_monitor_par(struct vo *vo)

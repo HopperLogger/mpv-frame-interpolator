@@ -1427,8 +1427,7 @@ static int parse_config(struct input_ctx *ictx, bool builtin, bstr data,
         char *name = bstrdup0(NULL, keyname);
         int keys[MP_MAX_KEY_DOWN];
         int num_keys = 0;
-        if (!mp_input_get_keys_from_string(name, MP_MAX_KEY_DOWN, &num_keys, keys))
-        {
+        if (!mp_input_get_keys_from_string(name, MP_MAX_KEY_DOWN, &num_keys, keys)) {
             talloc_free(name);
             MP_ERR(ictx, "Unknown key '%.*s' at %s\n", BSTR_P(keyname), cur_loc);
             continue;
@@ -1643,44 +1642,23 @@ void mp_input_run_cmd(struct input_ctx *ictx, const char **cmd)
     input_unlock(ictx);
 }
 
-void mp_input_bind_key(struct input_ctx *ictx, int key, bstr command)
+bool mp_input_bind_key(struct input_ctx *ictx, const char *key, bstr command,
+                       const char *desc)
 {
+    char *name = talloc_strdup(NULL, key);
+    int keys[MP_MAX_KEY_DOWN];
+    int num_keys = 0;
+    if (!mp_input_get_keys_from_string(name, MP_MAX_KEY_DOWN, &num_keys, keys)) {
+        talloc_free(name);
+        return false;
+    }
+    talloc_free(name);
+
     input_lock(ictx);
-    struct cmd_bind_section *bs = get_bind_section(ictx, (bstr){0});
-    struct cmd_bind *bind = NULL;
-
-    for (int n = 0; n < bs->num_binds; n++) {
-        struct cmd_bind *b = &bs->binds[n];
-        if (bind_matches_key(b, 1, &key) && b->is_builtin == false) {
-            bind = b;
-            break;
-        }
-    }
-
-    if (!bind) {
-        struct cmd_bind empty = {{0}};
-        MP_TARRAY_APPEND(bs, bs->binds, bs->num_binds, empty);
-        bind = &bs->binds[bs->num_binds - 1];
-    }
-
-    bind_dealloc(bind);
-
-    *bind = (struct cmd_bind) {
-        .cmd = bstrdup0(bs->binds, command),
-        .location = talloc_strdup(bs->binds, "keybind-command"),
-        .owner = bs,
-        .is_builtin = false,
-        .num_keys = 1,
-    };
-    memcpy(bind->keys, &key, 1 * sizeof(bind->keys[0]));
-    if (mp_msg_test(ictx->log, MSGL_DEBUG)) {
-        char *s = mp_input_get_key_combo_name(&key, 1);
-        MP_TRACE(ictx, "add:section='%.*s' key='%s'%s cmd='%s' location='%s'\n",
-                 BSTR_P(bind->owner->section), s, bind->is_builtin ? " builtin" : "",
-                 bind->cmd, bind->location);
-        talloc_free(s);
-    }
+    bind_keys(ictx, false, (bstr){0}, keys, num_keys, command,
+              "keybind-command", desc);
     input_unlock(ictx);
+    return true;
 }
 
 struct mpv_node mp_input_get_bindings(struct input_ctx *ictx)

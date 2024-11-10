@@ -2533,6 +2533,22 @@ Subtitles
     ``complex`` is the default. If libass hasn't been compiled against HarfBuzz,
     libass silently reverts to ``simple``.
 
+``--sub-ass-prune-delay=<-1|seconds>``
+    Set the delay for automatic pruning of events from memory in libass. When
+    enabled, subtitle events are removed from memory once their end timestamp is
+    older than the specified delay.
+
+    :-1:        disables automatic pruning (default).
+    :seconds:   specify how many seconds after an event is no longer displayed
+                should the pruning occur. ``0`` prunes events as soon as they're
+                off screen.
+
+    .. note::
+
+        This breaks sub-seek and subtitle rendering when changing play-direction
+        from forward to backward during runtime for events that were already
+        "seen" and need to be rendered again, if those events got pruned.
+
 ``--sub-ass-styles=<filename>``
     Load all SSA/ASS styles found in the specified file and use them for
     rendering text subtitles. The syntax of the file is exactly like the ``[V4
@@ -2545,7 +2561,8 @@ Subtitles
 ``--sub-ass-override=<no|yes|scale|force|strip>``
     Control whether user style overrides should be applied. Note that all of
     these overrides try to be somewhat smart about figuring out whether or not
-    a subtitle is considered a "sign".
+    a subtitle is considered a "sign" and try to be as non-destructive as
+    possible.
 
     :no:    Render subtitles as specified by the subtitle scripts, without
             overrides.
@@ -2554,7 +2571,8 @@ Subtitles
             rendering.
     :scale: Like ``yes``, but also apply ``--sub-scale`` (default).
     :force: Like ``yes``, but also force all ``--sub-*`` options. Can break
-            rendering easily.
+            rendering easily. Certain options aren't overridden if they can
+            potentially be too destructive.
     :strip: Radically strip all ASS tags and styles from the subtitle. This
             is equivalent to the old ``--no-ass`` / ``--no-sub-ass`` options.
 
@@ -6327,6 +6345,48 @@ them.
     The shader name is the base part of the shader filename, without the
     extension. (``--vo=gpu-next`` only)
 
+    Some parameters are filled automatically if the shader requests them.
+    Currently following parameters are available:
+
+    ``PTS``
+        PTS of the current frame in seconds.
+
+    ``chroma_offset_x``
+        chroma offset to the reference plane in x direction.
+
+    ``chroma_offset_y``
+        chroma offset to the reference plane in y direction.
+
+    ``min_luma``
+        Minimum luminance value (in cd/m²).
+
+    ``max_luma``
+        Maximum luminance value (in cd/m²).
+
+    ``max_cll``
+        Maximum Content Light Level (in cd/m²).
+
+    ``max_fall``
+        Maximum Frame Average Light Level (in cd/m²).
+
+    ``scene_max_r``
+        Maximum scene light level of the red channel (in cd/m²).
+
+    ``scene_max_g``
+        Maximum scene light level of the green channel (in cd/m²).
+
+    ``scene_max_b``
+        Maximum scene light level of the blue channel (in cd/m²).
+
+    ``scene_avg``
+        Average scene light level (in cd/m²).
+
+    ``max_pq_y``
+        Maximum PQ luminance (in PQ, 0-1).
+
+    ``avg_pq_y``
+        Average PQ luminance (in PQ, 0-1).
+
 ``--deband``
     Enable the debanding algorithm. This greatly reduces the amount of visible
     banding, blocking and other quantization artifacts, at the expense of
@@ -6770,6 +6830,7 @@ them.
     Automatically configure the output colorspace of the display to pass
     through the input values of the stream (e.g. for HDR passthrough), if
     possible. Requires a supporting driver and ``--vo=gpu-next``.
+    (Default: ``yes``)
 
 ``--target-prim=<value>``
     Specifies the primaries of the display. Video colors will be adapted to

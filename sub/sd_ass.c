@@ -247,6 +247,10 @@ static void assobjects_init(struct sd *sd)
     ass_set_check_readorder(ctx->ass_track, sd->opts->sub_clear_on_seek ? 0 : 1);
 #endif
 
+#if LIBASS_VERSION >= 0x01703010
+    ass_configure_prune(ctx->ass_track, sd->opts->ass_prune_delay * 1000.0);
+#endif
+
     enable_output(sd, true);
 }
 
@@ -533,6 +537,9 @@ static void configure_ass(struct sd *sd, struct mp_osd_res *dim,
                             | ASS_OVERRIDE_BIT_COLORS
                             | ASS_OVERRIDE_BIT_BORDER
                             | ASS_OVERRIDE_BIT_SELECTIVE_FONT_SCALE;
+#if LIBASS_VERSION >= 0x01703020
+        set_force_flags |= ASS_OVERRIDE_BIT_BLUR;
+#endif
     }
     if (shared_opts->ass_style_override[sd->order] == ASS_STYLE_OVERRIDE_SCALE)
         set_force_flags |= ASS_OVERRIDE_BIT_SELECTIVE_FONT_SCALE;

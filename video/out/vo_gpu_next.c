@@ -206,6 +206,7 @@ const struct m_sub_options gl_next_conf = {
     .defaults = &(struct gl_next_opts) {
         .border_background = BACKGROUND_COLOR,
         .inter_preserve = true,
+        .target_hint = true,
     },
     .size = sizeof(struct gl_next_opts),
     .change_flags = UPDATE_VIDEO,
@@ -913,6 +914,9 @@ static void update_tm_viz(struct pl_color_map_params *params,
     params->visualize_hue = M_PI / 4.0;
 }
 
+static void update_hook_opts_dynamic(struct priv *p, const struct pl_hook *hook,
+                                     const struct mp_image *mpi);
+
 static void draw_frame(struct vo *vo, struct vo_frame *frame)
 {
     struct priv *p = vo->priv;
@@ -987,8 +991,12 @@ static void draw_frame(struct vo *vo, struct vo_frame *frame)
         p->last_id = id;
     }
 
+    bool pass_colorspace = false;
+    struct pl_color_space hint;
     if (p->next_opts->target_hint && frame->current) {
-        struct pl_color_space hint = frame->current->params.color;
+        hint = frame->current->params.color;
+        if (p->ra_ctx->fns->pass_colorspace && p->ra_ctx->fns->pass_colorspace(p->ra_ctx))
+            pass_colorspace = true;
         if (opts->target_prim)
             hint.primaries = opts->target_prim;
         if (opts->target_trc)
@@ -996,7 +1004,8 @@ static void draw_frame(struct vo *vo, struct vo_frame *frame)
         if (opts->target_peak)
             hint.hdr.max_luma = opts->target_peak;
         apply_target_contrast(p, &hint);
-        pl_swapchain_colorspace_hint(p->sw, &hint);
+        if (!pass_colorspace)
+            pl_swapchain_colorspace_hint(p->sw, &hint);
     } else if (!p->next_opts->target_hint) {
         pl_swapchain_colorspace_hint(p->sw, NULL);
     }
@@ -1118,6 +1127,10 @@ static void draw_frame(struct vo *vo, struct vo_frame *frame)
             // temporary memory that is only valid for this `pl_queue_update`.
             ((uint64_t *) mix.signatures)[i] ^= fp->osd_sync << 48;
         }
+
+        // Update dynamic hook parameters
+        for (int i = 0; i < pars->params.num_hooks; i++)
+            update_hook_opts_dynamic(p, p->hooks[i], frame->current);
     }
 
     // Render frame
@@ -1135,7 +1148,7 @@ static void draw_frame(struct vo *vo, struct vo_frame *frame)
                         ? swframe.fbo->params.format->name : NULL,
         .w = mp_rect_w(p->dst),
         .h = mp_rect_h(p->dst),
-        .color = target.color,
+        .color = pass_colorspace ? hint : target.color,
         .repr = target.repr,
         .rotate = target.rotation,
     };
@@ -2068,6 +2081,46 @@ static void update_lut(struct priv *p, struct user_lut *lut)
     }
     talloc_free(fname);
     talloc_free(lutdata.start);
+}
+
+static void update_hook_opts_dynamic(struct priv *p, const struct pl_hook *hook,
+                                     const struct mp_image *mpi)
+{
+    float chroma_offset_x, chroma_offset_y;
+    pl_chroma_location_offset(mpi->params.chroma_location,
+                              &chroma_offset_x, &chroma_offset_y);
+    const struct {
+        const char *name;
+        double value;
+    } opts[] = {
+        {             "PTS", mpi->pts                           },
+        { "chroma_offset_x", chroma_offset_x                    },
+        { "chroma_offset_y", chroma_offset_y                    },
+        {        "min_luma", mpi->params.color.hdr.min_luma     },
+        {        "max_luma", mpi->params.color.hdr.max_luma     },
+        {         "max_cll", mpi->params.color.hdr.max_cll      },
+        {        "max_fall", mpi->params.color.hdr.max_fall     },
+        {     "scene_max_r", mpi->params.color.hdr.scene_max[0] },
+        {     "scene_max_g", mpi->params.color.hdr.scene_max[1] },
+        {     "scene_max_b", mpi->params.color.hdr.scene_max[2] },
+        {       "scene_avg", mpi->params.color.hdr.scene_avg    },
+        {        "max_pq_y", mpi->params.color.hdr.max_pq_y     },
+        {        "avg_pq_y", mpi->params.color.hdr.avg_pq_y     },
+    };
+
+    for (int i = 0; i < hook->num_parameters; i++) {
+        const struct pl_hook_par *hp = &hook->parameters[i];
+        for (int n = 0; n < MP_ARRAY_SIZE(opts); n++) {
+            if (strcmp(hp->name, opts[n].name) != 0)
+                continue;
+
+            switch (hp->type) {
+                case PL_VAR_FLOAT: hp->data->f = opts[n].value; break;
+                case PL_VAR_SINT:  hp->data->i = lrint(opts[n].value); break;
+                case PL_VAR_UINT:  hp->data->u = lrint(opts[n].value); break;
+            }
+        }
+    }
 }
 
 static void update_hook_opts(struct priv *p, char **opts, const char *shaderpath,

@@ -1111,8 +1111,6 @@ static void update_maximized_state(struct vo_w32_state *w32, bool leaving_fullsc
     if (w32->parent)
         return;
 
-    update_window_style(w32);
-
     // Apply the maximized state on leaving fullscreen.
     if (w32->current_fs && !leaving_fullscreen)
         return;
@@ -1141,6 +1139,8 @@ static void update_maximized_state(struct vo_w32_state *w32, bool leaving_fullsc
             ShowWindow(w32->window, SW_SHOWNOACTIVATE);
         }
     }
+
+    update_window_style(w32);
 
     if (toggle && !w32->current_fs && !w32->opts->window_maximized) {
         w32->windowrc = w32->prev_windowrc;
@@ -1174,8 +1174,7 @@ static void update_window_state(struct vo_w32_state *w32)
 
     SetWindowPos(w32->window, w32->opts->ontop ? HWND_TOPMOST : HWND_NOTOPMOST,
                  wr.left, wr.top, rect_w(wr), rect_h(wr),
-                 SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOOWNERZORDER |
-                 (!w32->win_force_pos ? SWP_NOMOVE : 0));
+                 SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOOWNERZORDER);
 
     // Unmaximize the window if a size change is requested because SetWindowPos
     // doesn't change the window maximized state.
@@ -1945,8 +1944,13 @@ static void window_reconfig(struct vo_w32_state *w32, bool force)
     w32->o_dheight = vo->dheight;
 
     if (!w32->parent && (!w32->window_bounds_initialized || force)) {
-        SetRect(&w32->windowrc, geo.win.x0, geo.win.y0,
-                geo.win.x0 + vo->dwidth, geo.win.y0 + vo->dheight);
+        int x0 = geo.win.x0;
+        int y0 = geo.win.y0;
+        if (!w32->opts->geometry.xy_valid && w32->window_bounds_initialized) {
+            x0 = w32->windowrc.left;
+            y0 = w32->windowrc.top;
+        }
+        SetRect(&w32->windowrc, x0, y0, x0 + vo->dwidth, y0 + vo->dheight);
         w32->prev_windowrc = w32->windowrc;
         w32->window_bounds_initialized = true;
         w32->win_force_pos = geo.flags & VO_WIN_FORCE_POS;

@@ -216,7 +216,9 @@ static int invoke_hook_handler(struct MPContext *mpctx, struct hook_handler *h)
     char *name = mp_tprintf(22, "@%"PRIi64, h->client_id);
     int r = mp_client_send_event(mpctx, name, reply_id, MPV_EVENT_HOOK, m);
     if (r < 0) {
-        MP_WARN(mpctx, "Sending hook command failed. Removing hook.\n");
+        MP_MSG(mpctx, mp_client_id_exists(mpctx, h->client_id) ? MSGL_WARN : MSGL_V,
+               "Failed sending hook command %s/%s. Removing hook.\n", h->client,
+               h->type);
         hook_remove(mpctx, h);
         mp_wakeup_core(mpctx); // repeat next iteration to finish
     }
@@ -6557,7 +6559,7 @@ static void cmd_delete_watch_later_config(void *p)
     struct MPContext *mpctx = cmd->mpctx;
 
     char *filename = cmd->args[0].v.s;
-    if (filename && !*filename)
+    if (filename && !filename[0])
         filename = NULL;
     mp_delete_watch_later_conf(mpctx, filename);
 }
@@ -6620,7 +6622,7 @@ static void cmd_key(void *p)
     } else {
         int code = mp_input_get_key_from_name(key_name);
         if (code < 0) {
-            MP_ERR(mpctx, "%s is not a valid input name.\n", key_name);
+            MP_ERR(mpctx, "'%s' is not a valid input name.\n", key_name);
             cmd->success = false;
             return;
         }
@@ -6634,14 +6636,15 @@ static void cmd_key_bind(void *p)
     struct mp_cmd_ctx *cmd = p;
     struct MPContext *mpctx = cmd->mpctx;
 
-    int code = mp_input_get_key_from_name(cmd->args[0].v.s);
-    if (code < 0) {
-        MP_ERR(mpctx, "%s is not a valid input name.\n", cmd->args[0].v.s);
-        cmd->success = false;
-        return;
-    }
+    const char *key = cmd->args[0].v.s;
     const char *target_cmd = cmd->args[1].v.s;
-    mp_input_bind_key(mpctx->input, code, bstr0(target_cmd));
+    const char *comment = cmd->args[2].v.s;
+    if (comment && !comment[0])
+        comment = NULL;
+    if (!mp_input_bind_key(mpctx->input, key, bstr0(target_cmd), comment)) {
+        MP_ERR(mpctx, "'%s' is not a valid input name.\n", key);
+        cmd->success = false;
+    }
 }
 
 static void cmd_apply_profile(void *p)
@@ -7252,7 +7255,8 @@ const struct mp_cmd_def mp_cmds[] = {
                                 {"single", 0}, {"double", 1}),
                                 .flags = MP_CMD_OPT_ARG}}},
     { "keybind", cmd_key_bind, { {"name", OPT_STRING(v.s)},
-                                 {"cmd", OPT_STRING(v.s)} }},
+                                 {"cmd", OPT_STRING(v.s)},
+                                 {"comment", OPT_STRING(v.s), .flags = MP_CMD_OPT_ARG} }},
     { "keypress", cmd_key, { {"name", OPT_STRING(v.s)},
                              {"scale", OPT_DOUBLE(v.d), OPTDEF_DOUBLE(1)} },
         .priv = &(const int){0}},
