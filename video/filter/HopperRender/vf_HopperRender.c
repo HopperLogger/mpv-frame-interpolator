@@ -671,13 +671,12 @@ static struct mp_image *vf_HopperRender_get_image(struct mp_filter *f, int frame
 	}
 
 	// If we are processing hardware images, we return a new ref to one of the images in the hardware pool
-	if (frameNum < 0 || frameNum >= priv->m_iHWPoolSize) {
+	/* if (frameNum < 0 || frameNum >= priv->m_iHWPoolSize) {
 		MP_ERR(f, "[HopperRender] Invalid frame number\n");
 		mp_filter_internal_mark_failed(f);
 		return NULL;
-	}
+	} */
 
-	// TEMP BEGIN
 	AVFrame *av_frame = av_frame_alloc();
 	if (!av_frame)
 		return NULL;
@@ -700,9 +699,8 @@ static struct mp_image *vf_HopperRender_get_image(struct mp_filter *f, int frame
 	mp_image_copy_attributes(dst, priv->m_miRefImage);
 
 	return dst;
-	// TEMP END
 
-	return mp_image_new_ref(priv->m_miHWPool[frameNum]);
+	//return mp_image_new_ref(priv->m_miHWPool[frameNum]);
 }
 
 /*
@@ -784,7 +782,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 	}
 
 	// Check if we need to fill the hw image pool
-	vf_HopperRender_check_hwpool_size(f, priv->m_iNumIntFrames - 1);
+	//vf_HopperRender_check_hwpool_size(f, priv->m_iNumIntFrames - 1);
 
     // Update the GPU arrays
     gettimeofday(&priv->m_teOFCCalcStart, NULL);

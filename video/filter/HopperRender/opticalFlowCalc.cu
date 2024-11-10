@@ -1272,9 +1272,9 @@ void updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const u
 	// YUV420P10 format
 	} else if (ofc->m_bIsHDR) {
 		cudaMemcpy(ofc->m_frameHDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), cudaMemcpyHostToDevice);
-		cudaMemcpy(ofc->m_blurredFrameHDR[0], pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), cudaMemcpyHostToDevice);
-		cudaMemcpy(ofc->m_blurredFrameHDR[0] + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), cudaMemcpyHostToDevice);
-		convertYUV420PtoNV12Kernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_frameHDR[0], ofc->m_blurredFrameHDR[0], ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset);
+		cudaMemcpy(ofc->m_tempFrameHDR, pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), cudaMemcpyHostToDevice);
+		cudaMemcpy(ofc->m_tempFrameHDR + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), cudaMemcpyHostToDevice);
+		convertYUV420PtoNV12Kernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_frameHDR[0], ofc->m_tempFrameHDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset);
 		cudaStreamSynchronize(ofc->m_csWarpStream1);
 	// NV12 format
 	} else if (ofc->m_iFMT == CUDA_FMT) {
@@ -1338,10 +1338,10 @@ void downloadFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer) {
 	// YUV420P10 format
 	} else if (ofc->m_bIsHDR) {
 		cudaMemcpy(pOutBuffer[0], ofc->m_outputFrameHDR, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), cudaMemcpyDeviceToHost);
-		convertNV12toYUV420PKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_warpedFrame12HDR, ofc->m_outputFrameHDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset, ofc->m_iChannelIdxOffset + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1));
+		convertNV12toYUV420PKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_tempFrameHDR, ofc->m_outputFrameHDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1));
 		cudaStreamSynchronize(ofc->m_csWarpStream1);
-		cudaMemcpy(pOutBuffer[1], ofc->m_warpedFrame12HDR + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1) * sizeof(unsigned short), cudaMemcpyDeviceToHost);
-		cudaMemcpy(pOutBuffer[2], ofc->m_warpedFrame12HDR + (ofc->m_iDimY * ofc->m_iDimX + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1)), (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1) * sizeof(unsigned short), cudaMemcpyDeviceToHost);
+		cudaMemcpy(pOutBuffer[1], ofc->m_tempFrameHDR, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1) * sizeof(unsigned short), cudaMemcpyDeviceToHost);
+		cudaMemcpy(pOutBuffer[2], ofc->m_tempFrameHDR + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1) * sizeof(unsigned short), cudaMemcpyDeviceToHost);
 	// NV12 format
 	} else if (ofc->m_iFMT == CUDA_FMT) {
 		cudaMemcpy(pOutBuffer[0], ofc->m_outputFrameSDR, ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
@@ -1370,23 +1370,21 @@ void downloadFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer) {
 * @param firstFrame: Whether this is the first frame
 */
 void processFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const bool firstFrame) {
-	// If no shader is applied, we can simply copy the frame
-	if (ofc->m_fBlackLevel == 0.0f && ofc->m_fWhiteLevel == 255.0f) {
-		if (ofc->m_bIsHDR) {
+	if (ofc->m_bIsHDR) {
+		if (ofc->m_fBlackLevel == 0.0f && ofc->m_fWhiteLevel == 1023.0f) {
 			cudaMemcpy(ofc->m_outputFrameHDR, firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1], ofc->m_iDimY * ofc->m_iDimX * 3, cudaMemcpyDeviceToDevice);
 			downloadFrame(ofc, pOutBuffer);
 		} else {
-			cudaMemcpy(ofc->m_outputFrameSDR, firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1], ofc->m_iDimY * ofc->m_iDimX * 1.5, cudaMemcpyDeviceToDevice);
-			downloadFrame(ofc, pOutBuffer);
-		}
-	} else {
-		// Otherwise we need to apply the shader
-		if (ofc->m_bIsHDR) {
 			processFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1],
 													ofc->m_outputFrameHDR,
 													ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
 			cudaStreamSynchronize(ofc->m_csWarpStream1);
 			cudaMemcpy(ofc->m_outputFrameHDR + ofc->m_iChannelIdxOffset, (firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1]) + ofc->m_iChannelIdxOffset, ofc->m_iDimY * (ofc->m_iDimX >> 1) * sizeof(unsigned short), cudaMemcpyDeviceToDevice);
+			downloadFrame(ofc, pOutBuffer);
+		}
+	} else {
+		if (ofc->m_fBlackLevel == 0.0f && ofc->m_fWhiteLevel == 255.0f) {
+			cudaMemcpy(ofc->m_outputFrameSDR, firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1], ofc->m_iDimY * ofc->m_iDimX * 1.5, cudaMemcpyDeviceToDevice);
 			downloadFrame(ofc, pOutBuffer);
 		} else {
 			processFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1],
@@ -2078,6 +2076,7 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 		ofc->m_warpedFrame12HDR = createGPUArrayUS(1.5 * dimY * dimX);
 		ofc->m_warpedFrame21HDR = createGPUArrayUS(1.5 * dimY * dimX);
 		ofc->m_outputFrameHDR = createGPUArrayUS(1.5 * dimY * dimX);
+		ofc->m_tempFrameHDR = createGPUArrayUS((dimY / 2) * realDimX);
 	} else {
 		ofc->m_frameSDR[0] = createGPUArrayUC(1.5 * dimY * dimX);
 		ofc->m_frameSDR[1] = createGPUArrayUC(1.5 * dimY * dimX);
