@@ -1137,6 +1137,22 @@ __global__ void convertFlowToGreyscaleKernel(const int* flowArray, T* outputFram
 	}
 }
 
+// Kernel that draws a vertical line at the specified position
+__global__ void tearingTestKernel(unsigned char* outputFrame, const unsigned int xPos, const unsigned int width, const unsigned int dimY, const unsigned int dimX) {
+	// Current entry to be computed by the thread
+	const unsigned int cx = blockIdx.x * blockDim.x + threadIdx.x;
+	const unsigned int cy = blockIdx.y * blockDim.y + threadIdx.y;
+
+	// Y Channel
+	if (cy < dimY && cx < dimX) {
+		if (cx >= xPos && cx < (xPos + width)) {
+			outputFrame[cy * dimX + cx] = 255;
+		} else {
+			outputFrame[cy * dimX + cx] = 0;
+		}
+	}
+}
+
 /*
 * Frees the memory of the optical flow calculator
 *
@@ -1331,6 +1347,8 @@ void updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const u
 * @param pOutBuffer: Pointer to the output buffer
 */
 void downloadFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer) {
+	ofc->m_iFrameOutputCounter++;
+
 	// P010 format
 	if (ofc->m_bIsHDR && ofc->m_iFMT == CUDA_FMT) {
 		cudaMemcpy(pOutBuffer[0], ofc->m_outputFrameHDR, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), cudaMemcpyDeviceToDevice);
@@ -1891,6 +1909,17 @@ void saveImage(struct OpticalFlowCalc *ofc, const char* filePath) {
 }
 
 /*
+* Performs a tearing test on the output frame
+*
+* @param ofc: Pointer to the optical flow calculator
+*/
+void tearingTest(struct OpticalFlowCalc *ofc) {
+	cudaMemset(ofc->m_outputFrameSDR + ofc->m_iChannelIdxOffset, 128, (ofc->m_iDimY >> 1) * ofc->m_iDimX);
+	tearingTestKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1 >> >(ofc->m_outputFrameSDR, (ofc->m_iFrameOutputCounter * 5) % ofc->m_iDimX, 10, ofc->m_iDimY, ofc->m_iDimX);
+	cudaStreamSynchronize(ofc->m_csWarpStream1);
+}
+
+/*
 * Creates a new GPUArray of type unsigned char
 *
 * @param size: Number of entries in the array
@@ -1983,6 +2012,7 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ofc->drawFlowAsHSV = drawFlowAsHSV;
 	ofc->drawFlowAsGreyscale = drawFlowAsGreyscale;
 	ofc->saveImage = saveImage;
+	ofc->tearingTest = tearingTest;
 
 	// Video properties
 	ofc->m_iDimX = dimX;
@@ -2015,6 +2045,7 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ofc->m_iLayerIdxOffset = ofc->m_iLowDimY * ofc->m_iLowDimX;
 	ofc->m_iChannelIdxOffset = ofc->m_iDimY * ofc->m_iDimX;
 	ofc->m_iFlowBlurKernelSize = flowBlurKernelSize;
+	ofc->m_iFrameOutputCounter = 0;
 
 	// Girds
 	ofc->m_lowGrid32x32x1.x = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimX) / 32.0), 1.0));
