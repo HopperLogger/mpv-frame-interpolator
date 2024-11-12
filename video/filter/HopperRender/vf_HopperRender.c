@@ -47,7 +47,8 @@ typedef enum FrameOutput {
 	GreyFlow,
 	BlurredFrames,
 	SideBySide1,
-	SideBySide2
+	SideBySide2,
+	TearingTest
 } FrameOutput;
 
 typedef enum InterpolationState {
@@ -253,6 +254,9 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv, int 
 			break;
 		case 18:
 			vf_HopperRender_adjust_frame_scalar(priv, 5);
+			break;
+		case 19:
+			priv->m_foFrameOutput = TearingTest;
 			break;
 		default:
 			if (code >= 100 && code < 200) {
@@ -515,7 +519,7 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 {
 	struct priv *priv = f->priv;
 
-	if (priv->m_iIntFrameNum == 0) {
+	if (priv->m_iIntFrameNum == 0 && priv->m_foFrameOutput != TearingTest && priv->m_foFrameOutput != BlurredFrames) {
 		// Swap the blurred offset arrays
 		int* temp0 = priv->ofc->m_blurredOffsetArray12[0];
 		priv->ofc->m_blurredOffsetArray12[0] = priv->ofc->m_blurredOffsetArray12[1];
@@ -533,7 +537,9 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 	
 	// Warp frames
 	if (priv->m_foFrameOutput != HSVFlow && 
-		priv->m_foFrameOutput != BlurredFrames) {
+		priv->m_foFrameOutput != BlurredFrames &&
+		priv->m_foFrameOutput != GreyFlow &&
+		priv->m_foFrameOutput != TearingTest) {
 		priv->ofc->warpFrames(priv->ofc, priv->m_dScalar, priv->m_foFrameOutput);
 	}
 	
@@ -554,6 +560,8 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 		priv->ofc->insertFrame(priv->ofc);
 	} else if (priv->m_foFrameOutput == SideBySide2) {
 	    priv->ofc->sideBySideFrame(priv->ofc, priv->m_dScalar, priv->m_iFrameCounter);
+	} else if (priv->m_foFrameOutput == TearingTest) {
+		priv->ofc->tearingTest(priv->ofc);
 	}
 
 	// Save the result to a file
@@ -786,13 +794,16 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 
     // Update the GPU arrays
     gettimeofday(&priv->m_teOFCCalcStart, NULL);
-    priv->ofc->updateFrame(priv->ofc, img->planes, priv->m_iFrameBlurKernelSize, priv->m_iFlowBlurKernelSize >> priv->m_cResolutionScalar, priv->m_foFrameOutput == BlurredFrames);
+	if (priv->m_foFrameOutput != TearingTest)
+    	priv->ofc->updateFrame(priv->ofc, img->planes, priv->m_iFrameBlurKernelSize, priv->m_iFlowBlurKernelSize >> priv->m_cResolutionScalar, priv->m_foFrameOutput == BlurredFrames);
 	
 	// Don't interpolate the first three frames (as we need three frames in the buffer to interpolate)
     if (priv->m_isInterpolationState == Active && (priv->m_iFrameCounter > 3 || priv->m_foFrameOutput == SideBySide2)) {
 		vf_HopperRender_interpolate_frame(f, img->planes);
-        priv->m_iIntFrameNum = 1;
-        mp_filter_internal_mark_progress(f);
+		if (priv->m_iNumIntFrames > 1) {
+        	priv->m_iIntFrameNum = 1;
+        	mp_filter_internal_mark_progress(f);
+		}
     } else {
         priv->ofc->processFrame(priv->ofc, img->planes, priv->m_iFrameCounter == 1);
     }

@@ -52,6 +52,10 @@ def on_sidebyside2_activate(widget):
     if widget.get_active():
         print(8, flush=True)
 
+def on_tearingtest_activate(widget):
+    if widget.get_active():
+        print(19, flush=True)
+
 def on_shader_bright_activate(widget):
     if widget.get_active():
         print(9, flush=True)
@@ -189,6 +193,11 @@ class HopperRenderSettings:
         sidebyside2_item.connect("activate", on_sidebyside2_activate)
         frame_output_menu.append(sidebyside2_item)
         frame_output_group = sidebyside2_item.get_group()
+
+        tearingtest_item = Gtk.RadioMenuItem.new_with_label(frame_output_group, "TearingTest")
+        tearingtest_item.connect("activate", on_tearingtest_activate)
+        frame_output_menu.append(tearingtest_item)
+        frame_output_group = tearingtest_item.get_group()
 
         # Shader radio items
         shader_group = None

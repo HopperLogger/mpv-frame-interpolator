@@ -25,6 +25,7 @@ typedef struct OpticalFlowCalc {
 	void (*drawFlowAsHSV)(struct OpticalFlowCalc *ofc, const float blendScalar);
 	void (*drawFlowAsGreyscale)(struct OpticalFlowCalc *ofc);
 	void (*saveImage)(struct OpticalFlowCalc *ofc, const char* filePath);
+	void (*tearingTest)(struct OpticalFlowCalc *ofc);
 
 	// Video properties
 	unsigned int m_iDimX; // Width of the frame
@@ -46,6 +47,7 @@ typedef struct OpticalFlowCalc {
 	unsigned int m_iLayerIdxOffset; // m_iLowDimY * m_iLowDimX
 	unsigned int m_iChannelIdxOffset; // m_iDimY * m_iDimX
 	unsigned int m_iFlowBlurKernelSize; // The kernel size used for the flow blur
+	unsigned int m_iFrameOutputCounter; // Counter for the output frames
 
 	// CUDA streams
 	cudaStream_t m_csOFCStream1, m_csOFCStream2; // CUDA streams used for the optical flow calculation
