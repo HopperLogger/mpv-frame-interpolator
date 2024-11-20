@@ -1,35 +1,38 @@
-project('mpv',
-        'c',
-        'cuda',
-        license: ['GPL2+', 'LGPL2.1+'],
-        version: files('./MPV_VERSION'),
-        meson_version: '>=1.3.0',
-        default_options: [
-            'backend_max_links=16',
-            'buildtype=debugoptimized',
-            'b_lundef=false',
-            'c_std=c11',
-            'cpp_std=c++20',
-            'cpp_eh=default',
-            'warning_level=2',
-        ]
+project(
+    'mpv',
+    'c',
+    license: ['GPL2+', 'LGPL2.1+'],
+    version: files('./MPV_VERSION'),
+    meson_version: '>=1.3.0',
+    default_options: [
+        'backend_max_links=16',
+        'buildtype=debugoptimized',
+        'b_lundef=false',
+        'c_std=c11',
+        'cpp_std=c++20',
+        'cpp_eh=default',
+        'warning_level=2',
+    ]
 )
 
 build_root = meson.project_build_root()
 source_root = meson.project_source_root()
 python = find_program('python3')
 
-# cuda
-cuda_dep = dependency('cuda', required: true)
-cuda_args = [
-    '-gencode', 'arch=compute_52,code=sm_52',
-    '-gencode', 'arch=compute_61,code=sm_61',
-    '-gencode', 'arch=compute_70,code=sm_70',
-    '-gencode', 'arch=compute_75,code=sm_75',
-    '-gencode', 'arch=compute_86,code=sm_86',
-    '-gencode', 'arch=compute_89,code=sm_89'
-]
-add_project_arguments(cuda_args, language: 'cuda')
+# HIP
+hip_compiler = find_program('hipcc', required: true)
+hip_sources = ['video/filter/HopperRender/opticalFlowCalc.cpp']
+hip_objects = custom_target(
+    'opticalFlowCalc',
+    input: hip_sources,
+    output: 'opticalFlowCalc.o',
+    command: [hip_compiler, '-c', '@INPUT@', '-o', '@OUTPUT@', '--gpu-architecture=sm_89'] # --amdgpu-target=gfx1010
+)
+dependency_hip = declare_dependency(
+    include_directories: include_directories('/opt/rocm/include', '/opt/cuda/include'),
+    link_args: ['-L/opt/cuda/lib64', '-lcudart']
+)
+# link_args: ['-L/opt/rocm/libs', '-lamdhip64']
 
 # ffmpeg
 libavcodec = dependency('libavcodec', version: '>= 60.31.102')
@@ -54,7 +57,7 @@ dependencies = [libass,
                 libplacebo,
                 libswresample,
                 libswscale,
-                cuda_dep]
+                dependency_hip]
 
 # Keeps track of all enabled/disabled features
 features = {
@@ -225,7 +228,6 @@ sources = files(
     'video/decode/vd_lavc.c',
     'video/filter/refqueue.c',
     'video/filter/HopperRender/vf_HopperRender.c',
-    'video/filter/HopperRender/opticalFlowCalc.cu',
     'video/filter/vf_format.c',
     'video/filter/vf_sub.c',
     'video/fmt-conversion.c',
@@ -282,6 +284,7 @@ sources = files(
     'ta/ta_talloc.c',
     'ta/ta_utils.c',
 )
+sources += hip_objects
 
 
 # compiler stuff
@@ -340,9 +343,6 @@ mswin_flags = ['-D_WIN32_WINNT=0x0A00', '-DWINVER=0x0A00', '-DUNICODE',
                '-D_USE_MATH_DEFINES', '-DWIN32_LEAN_AND_MEAN',
                '-D_CRT_DECLARE_NONSTDC_NAMES', '-D_CRT_NONSTDC_NO_WARNINGS',
                '-D_CRT_SECURE_NO_WARNINGS', '-DWINRT_NO_SOURCE_LOCATION']
-
-# https://developercommunity.visualstudio.com/t/NAN-is-no-longer-compile-time-constant-i/10688907
-mswin_flags += '-D_UCRT_NOISY_NAN'
 
 if host_machine.system() == 'windows'
     flags += [mswin_flags]
@@ -436,7 +436,7 @@ endif
 
 if posix
     path_source = files('osdep/path-unix.c')
-    if not get_option('fuzzers') and cc.has_function('fork', prefix : '#include <unistd.h>')
+    if cc.has_function('fork', prefix : '#include <unistd.h>')
         sources += files('osdep/subprocess-posix.c')
     else
         sources += files('osdep/subprocess-dummy.c')
@@ -524,14 +524,10 @@ if features['win32-desktop']
                           cc.find_library('version')]
     dependencies += win32_desktop_libs
     path_source = files('osdep/path-win.c')
-    if not get_option('fuzzers')
-        sources += files('osdep/subprocess-win.c')
-    else
-        sources += files('osdep/subprocess-dummy.c')
-    endif
     sources += files('input/ipc-win.c',
                      'player/clipboard/clipboard-win.c',
                      'osdep/language-win.c',
+                     'osdep/subprocess-win.c',
                      'osdep/terminal-win.c',
                      'video/out/w32_common.c',
                      'video/out/win32/displayconfig.c',

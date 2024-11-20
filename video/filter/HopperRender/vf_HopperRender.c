@@ -18,7 +18,7 @@
 #include "filters/filter_internal.h"
 #include "filters/user_filters.h"
 #include "video/mp_image_pool.h"
-#include "opticalFlowCalc.cuh"
+#include "opticalFlowCalc.h"
 
 #define INITIAL_RESOLUTION_SCALAR 2 // The initial resolution scalar (0: Full resolution, 1: Half resolution, 2: Quarter resolution, 3: Eighth resolution, 4: Sixteenth resolution, ...)
 #define INITIAL_NUM_STEPS 10 // The initial number of steps executed to find the ideal offset (limits the maximum offset distance per iteration)
@@ -47,8 +47,7 @@ typedef enum FrameOutput {
 	GreyFlow,
 	BlurredFrames,
 	SideBySide1,
-	SideBySide2,
-	TearingTest
+	SideBySide2
 } FrameOutput;
 
 typedef enum InterpolationState {
@@ -135,18 +134,7 @@ static void vf_HopperRender_adjust_frame_scalar(struct priv *priv, const unsigne
 	priv->ofc->m_iLowDimY = priv->m_iDimY >> priv->m_cResolutionScalar;
 	priv->ofc->m_iDirectionIdxOffset = priv->ofc->m_iNumLayers * priv->ofc->m_iLowDimY * priv->ofc->m_iLowDimX;
 	priv->ofc->m_iLayerIdxOffset = priv->ofc->m_iLowDimY * priv->ofc->m_iLowDimX;
-	priv->ofc->m_lowGrid32x32x1.x = (int)(fmax(ceil((double)(priv->ofc->m_iLowDimX) / 32.0), 1.0));
-	priv->ofc->m_lowGrid32x32x1.y = (int)(fmax(ceil((double)(priv->ofc->m_iLowDimY) / 32.0), 1.0));
-	priv->ofc->m_lowGrid16x16x5.x = (int)(fmax(ceil((double)(priv->ofc->m_iLowDimX) / 16.0), 1.0));
-	priv->ofc->m_lowGrid16x16x5.y = (int)(fmax(ceil((double)(priv->ofc->m_iLowDimY) / 16.0), 1.0));
-	priv->ofc->m_lowGrid16x16x4.x = (int)(fmax(ceil((double)(priv->ofc->m_iLowDimX) / 16.0), 1.0));
-	priv->ofc->m_lowGrid16x16x4.y = (int)(fmax(ceil((double)(priv->ofc->m_iLowDimY) / 16.0), 1.0));
-	priv->ofc->m_lowGrid16x16x1.x = (int)(fmax(ceil((double)(priv->ofc->m_iLowDimX) / 16.0), 1.0));
-	priv->ofc->m_lowGrid16x16x1.y = (int)(fmax(ceil((double)(priv->ofc->m_iLowDimY) / 16.0), 1.0));
-	priv->ofc->m_lowGrid8x8x5.x = (int)(fmax(ceil((double)(priv->ofc->m_iLowDimX) / 8.0), 1.0));
-	priv->ofc->m_lowGrid8x8x5.y = (int)(fmax(ceil((double)(priv->ofc->m_iLowDimY) / 8.0), 1.0));
-	priv->ofc->m_lowGrid8x8x1.x = (int)(fmax(ceil((double)(priv->ofc->m_iLowDimX) / 8.0), 1.0));
-	priv->ofc->m_lowGrid8x8x1.y = (int)(fmax(ceil((double)(priv->ofc->m_iLowDimY) / 8.0), 1.0));
+	priv->ofc->adjustFrameScalar(priv->ofc);
 }
 
 /*
@@ -255,9 +243,6 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv, int 
 		case 18:
 			vf_HopperRender_adjust_frame_scalar(priv, 5);
 			break;
-		case 19:
-			priv->m_foFrameOutput = TearingTest;
-			break;
 		default:
 			if (code >= 100 && code < 200) {
 				priv->m_iFrameBlurKernelSize = code - 100;
@@ -321,7 +306,7 @@ void *vf_HopperRender_optical_flow_calc_thread(void *arg)
     }
 }
 
-// Optical flow calculation initialization (declared in CUDA C++ file)
+// Optical flow calculation initialization (declared in HIP C++ file)
 extern void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, const int realDimX, unsigned char resolutionScalar, unsigned int flowBlurKernelSize, bool isHDR, int fmt);
 
 /*
@@ -519,7 +504,7 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 {
 	struct priv *priv = f->priv;
 
-	if (priv->m_iIntFrameNum == 0 && priv->m_foFrameOutput != TearingTest && priv->m_foFrameOutput != BlurredFrames) {
+	if (priv->m_iIntFrameNum == 0) {
 		// Swap the blurred offset arrays
 		int* temp0 = priv->ofc->m_blurredOffsetArray12[0];
 		priv->ofc->m_blurredOffsetArray12[0] = priv->ofc->m_blurredOffsetArray12[1];
@@ -537,9 +522,7 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 	
 	// Warp frames
 	if (priv->m_foFrameOutput != HSVFlow && 
-		priv->m_foFrameOutput != BlurredFrames &&
-		priv->m_foFrameOutput != GreyFlow &&
-		priv->m_foFrameOutput != TearingTest) {
+		priv->m_foFrameOutput != BlurredFrames) {
 		priv->ofc->warpFrames(priv->ofc, priv->m_dScalar, priv->m_foFrameOutput);
 	}
 	
@@ -560,8 +543,6 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 		priv->ofc->insertFrame(priv->ofc);
 	} else if (priv->m_foFrameOutput == SideBySide2) {
 	    priv->ofc->sideBySideFrame(priv->ofc, priv->m_dScalar, priv->m_iFrameCounter);
-	} else if (priv->m_foFrameOutput == TearingTest) {
-		priv->ofc->tearingTest(priv->ofc);
 	}
 
 	// Save the result to a file
@@ -794,16 +775,13 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 
     // Update the GPU arrays
     gettimeofday(&priv->m_teOFCCalcStart, NULL);
-	if (priv->m_foFrameOutput != TearingTest)
-    	priv->ofc->updateFrame(priv->ofc, img->planes, priv->m_iFrameBlurKernelSize, priv->m_iFlowBlurKernelSize >> priv->m_cResolutionScalar, priv->m_foFrameOutput == BlurredFrames);
+    priv->ofc->updateFrame(priv->ofc, img->planes, priv->m_iFrameBlurKernelSize, priv->m_iFlowBlurKernelSize >> priv->m_cResolutionScalar, priv->m_foFrameOutput == BlurredFrames);
 	
 	// Don't interpolate the first three frames (as we need three frames in the buffer to interpolate)
     if (priv->m_isInterpolationState == Active && (priv->m_iFrameCounter > 3 || priv->m_foFrameOutput == SideBySide2)) {
 		vf_HopperRender_interpolate_frame(f, img->planes);
-		if (priv->m_iNumIntFrames > 1) {
-        	priv->m_iIntFrameNum = 1;
-        	mp_filter_internal_mark_progress(f);
-		}
+        priv->m_iIntFrameNum = 1;
+        mp_filter_internal_mark_progress(f);
     } else {
         priv->ofc->processFrame(priv->ofc, img->planes, priv->m_iFrameCounter == 1);
     }
