@@ -1,4 +1,4 @@
-#define __HIP_PLATFORM_NVIDIA__
+#define __HIP_PLATFORM_AMD__
 #include <hip/hip_runtime.h>
 #include <hip/hip_cooperative_groups.h>
 #include "opticalFlowCalc.h"

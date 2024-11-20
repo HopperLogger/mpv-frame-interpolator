@@ -26,13 +26,17 @@ hip_objects = custom_target(
     'opticalFlowCalc',
     input: hip_sources,
     output: 'opticalFlowCalc.o',
-    command: [hip_compiler, '-c', '@INPUT@', '-o', '@OUTPUT@', '--gpu-architecture=sm_89'] # --amdgpu-target=gfx1010
+    command: [hip_compiler, '-c', '@INPUT@', '-o', '@OUTPUT@', '--amdgpu-target=gfx1010']
 )
+# --gpu-architecture=sm_89   CUDA
+# --amdgpu-target=gfx1010    AMD
+
 dependency_hip = declare_dependency(
     include_directories: include_directories('/opt/rocm/include', '/opt/cuda/include'),
-    link_args: ['-L/opt/cuda/lib64', '-lcudart']
+    link_args: ['-L/opt/rocm/lib', '-lamdhip64']
 )
-# link_args: ['-L/opt/rocm/libs', '-lamdhip64']
+# link_args: ['-L/opt/cuda/lib64', '-lcudart'] CUDA
+# link_args: ['-L/opt/rocm/lib', '-lamdhip64'] AMD
 
 # ffmpeg
 libavcodec = dependency('libavcodec', version: '>= 60.31.102')
