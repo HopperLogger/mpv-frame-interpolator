@@ -9,6 +9,15 @@
 #define NV12_FMT 1006
 #define HIP_FMT 1026
 
+#define HIP_CHECK(call)                                              \
+    {                                                                \
+        hipError_t err = call;                                       \
+        if (err != hipSuccess) {                                     \
+            printf("HIP error at %s:%d code=%d (%s) \n", __FILE__, __LINE__, err, hipGetErrorString(err)); \
+			exit(1);                                                 \
+		}                                                            \
+    }
+
 struct priv {
 	// HIP streams
 	hipStream_t m_csOFCStream1, m_csOFCStream2; // HIP streams used for the optical flow calculation
@@ -1171,42 +1180,42 @@ __global__ void convertFlowToGreyscaleKernel(const int* flowArray, T* outputFram
 void free(struct OpticalFlowCalc *ofc) {
 	struct priv *priv = (struct priv*)ofc->priv;
 	if (ofc->m_bIsHDR) {
-		hipFree(ofc->m_frameHDR[0]);
-		hipFree(ofc->m_frameHDR[1]);
-		hipFree(ofc->m_frameHDR[2]);
-		hipFree(ofc->m_blurredFrameHDR[0]);
-		hipFree(ofc->m_blurredFrameHDR[1]);
-		hipFree(ofc->m_blurredFrameHDR[2]);
-		hipFree(ofc->m_warpedFrame12HDR);
-		hipFree(ofc->m_warpedFrame21HDR);
-		hipFree(ofc->m_outputFrameHDR);
+		HIP_CHECK(hipFree(ofc->m_frameHDR[0]));
+		HIP_CHECK(hipFree(ofc->m_frameHDR[1]));
+		HIP_CHECK(hipFree(ofc->m_frameHDR[2]));
+		HIP_CHECK(hipFree(ofc->m_blurredFrameHDR[0]));
+		HIP_CHECK(hipFree(ofc->m_blurredFrameHDR[1]));
+		HIP_CHECK(hipFree(ofc->m_blurredFrameHDR[2]));
+		HIP_CHECK(hipFree(ofc->m_warpedFrame12HDR));
+		HIP_CHECK(hipFree(ofc->m_warpedFrame21HDR));
+		HIP_CHECK(hipFree(ofc->m_outputFrameHDR));
 	} else {
-		hipFree(ofc->m_frameSDR[0]);
-		hipFree(ofc->m_frameSDR[1]);
-		hipFree(ofc->m_frameSDR[2]);
-		hipFree(ofc->m_blurredFrameSDR[0]);
-		hipFree(ofc->m_blurredFrameSDR[1]);
-		hipFree(ofc->m_blurredFrameSDR[2]);
-		hipFree(ofc->m_warpedFrame12SDR);
-		hipFree(ofc->m_warpedFrame21SDR);
-		hipFree(ofc->m_outputFrameSDR);
+		HIP_CHECK(hipFree(ofc->m_frameSDR[0]));
+		HIP_CHECK(hipFree(ofc->m_frameSDR[1]));
+		HIP_CHECK(hipFree(ofc->m_frameSDR[2]));
+		HIP_CHECK(hipFree(ofc->m_blurredFrameSDR[0]));
+		HIP_CHECK(hipFree(ofc->m_blurredFrameSDR[1]));
+		HIP_CHECK(hipFree(ofc->m_blurredFrameSDR[2]));
+		HIP_CHECK(hipFree(ofc->m_warpedFrame12SDR));
+		HIP_CHECK(hipFree(ofc->m_warpedFrame21SDR));
+		HIP_CHECK(hipFree(ofc->m_outputFrameSDR));
 	}
-	hipFree(ofc->m_offsetArray12);
-	hipFree(ofc->m_offsetArray21);
-	hipFree(ofc->m_blurredOffsetArray12[0]);
-	hipFree(ofc->m_blurredOffsetArray21[0]);
-	hipFree(ofc->m_blurredOffsetArray12[1]);
-	hipFree(ofc->m_blurredOffsetArray21[1]);
-	hipFree(ofc->m_statusArray);
-	hipFree(ofc->m_summedUpDeltaArray);
-	hipFree(ofc->m_lowestLayerArray);
-	hipFree(ofc->m_hitCount12);
-	hipFree(ofc->m_hitCount21);
+	HIP_CHECK(hipFree(ofc->m_offsetArray12));
+	HIP_CHECK(hipFree(ofc->m_offsetArray21));
+	HIP_CHECK(hipFree(ofc->m_blurredOffsetArray12[0]));
+	HIP_CHECK(hipFree(ofc->m_blurredOffsetArray21[0]));
+	HIP_CHECK(hipFree(ofc->m_blurredOffsetArray12[1]));
+	HIP_CHECK(hipFree(ofc->m_blurredOffsetArray21[1]));
+	HIP_CHECK(hipFree(ofc->m_statusArray));
+	HIP_CHECK(hipFree(ofc->m_summedUpDeltaArray));
+	HIP_CHECK(hipFree(ofc->m_lowestLayerArray));
+	HIP_CHECK(hipFree(ofc->m_hitCount12));
+	HIP_CHECK(hipFree(ofc->m_hitCount21));
 
-	hipStreamDestroy(priv->m_csOFCStream1);
-	hipStreamDestroy(priv->m_csOFCStream2);
-	hipStreamDestroy(priv->m_csWarpStream1);
-	hipStreamDestroy(priv->m_csWarpStream2);
+	HIP_CHECK(hipStreamDestroy(priv->m_csOFCStream1));
+	HIP_CHECK(hipStreamDestroy(priv->m_csOFCStream2));
+	HIP_CHECK(hipStreamDestroy(priv->m_csWarpStream1));
+	HIP_CHECK(hipStreamDestroy(priv->m_csWarpStream2));
 }
 
 /*
@@ -1256,7 +1265,7 @@ void blurFrameArray(struct OpticalFlowCalc *ofc, const void* frame, void* blurre
 	struct priv *priv = (struct priv*)ofc->priv;
 	// Early exit if kernel size is too small to blur
 	if (kernelSize < 4) {
-		hipMemcpy(blurredFrame, frame, (ofc->m_bIsHDR ? 2 : 1) * ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice);
+		HIP_CHECK(hipMemcpy(blurredFrame, frame, (ofc->m_bIsHDR ? 2 : 1) * ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice));
 		return;
 	}
 	// Calculate useful constants
@@ -1281,21 +1290,21 @@ void blurFrameArray(struct OpticalFlowCalc *ofc, const void* frame, void* blurre
 	if (ofc->m_bIsHDR) {
 		blurFrameKernel<<<gridDim, threadDim, sharedMemSize, priv->m_csWarpStream1>>>(
 			static_cast<const unsigned short*>(frame), static_cast<unsigned short*>(blurredFrame), kernelSize, cacheSize, boundsOffset, avgEntriesPerThread, remainder, lumStart, lumEnd, lumPixelCount, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
-		hipStreamSynchronize(priv->m_csWarpStream1);
+		HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 	} else {
 		blurFrameKernel<<<gridDim, threadDim, sharedMemSize, priv->m_csWarpStream1>>>(
 			static_cast<const unsigned char*>(frame), static_cast<unsigned char*>(blurredFrame), kernelSize, cacheSize, boundsOffset, avgEntriesPerThread, remainder, lumStart, lumEnd, lumPixelCount, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
-		hipStreamSynchronize(priv->m_csWarpStream1);
+		HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 	}
 
 	// Handle direct output if necessary
 	if (directOutput) {
 		if (ofc->m_bIsHDR) {
-			hipMemcpy(ofc->m_outputFrameHDR, blurredFrame, 2 * ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice);
-			hipMemcpy(ofc->m_outputFrameHDR + ofc->m_iDimY * ofc->m_iDimX, static_cast<const unsigned short*>(frame) + ofc->m_iDimY * ofc->m_iDimX, 2 * ((ofc->m_iDimY / 2) * ofc->m_iDimX), hipMemcpyDeviceToDevice);
+			HIP_CHECK(hipMemcpy(ofc->m_outputFrameHDR, blurredFrame, 2 * ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice));
+			HIP_CHECK(hipMemcpy(ofc->m_outputFrameHDR + ofc->m_iDimY * ofc->m_iDimX, static_cast<const unsigned short*>(frame) + ofc->m_iDimY * ofc->m_iDimX, 2 * ((ofc->m_iDimY / 2) * ofc->m_iDimX), hipMemcpyDeviceToDevice));
 		} else {
-			hipMemcpy(ofc->m_outputFrameSDR, blurredFrame, ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice);
-			hipMemcpy(ofc->m_outputFrameSDR + ofc->m_iDimY * ofc->m_iDimX, static_cast<const unsigned char*>(frame) + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY / 2) * ofc->m_iDimX, hipMemcpyDeviceToDevice);
+			HIP_CHECK(hipMemcpy(ofc->m_outputFrameSDR, blurredFrame, ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice));
+			HIP_CHECK(hipMemcpy(ofc->m_outputFrameSDR + ofc->m_iDimY * ofc->m_iDimX, static_cast<const unsigned char*>(frame) + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY / 2) * ofc->m_iDimX, hipMemcpyDeviceToDevice));
 		}
 	}
 
@@ -1317,26 +1326,26 @@ void updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const u
 	ofc->m_iFlowBlurKernelSize = flowKernelSize;
 	// P010 format
 	if (ofc->m_bIsHDR && ofc->m_iFMT == HIP_FMT) {
-		hipMemcpy(ofc->m_frameHDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice);
-		hipMemcpy(ofc->m_frameHDR[0] + ofc->m_iDimY * ofc->m_iDimX, pInBuffer[1], (ofc->m_iDimY / 2) * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice);
+		HIP_CHECK(hipMemcpy(ofc->m_frameHDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice));
+		HIP_CHECK(hipMemcpy(ofc->m_frameHDR[0] + ofc->m_iDimY * ofc->m_iDimX, pInBuffer[1], (ofc->m_iDimY / 2) * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice));
 	// YUV420P10 format
 	} else if (ofc->m_bIsHDR) {
-		hipMemcpy(ofc->m_frameHDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyHostToDevice);
-		hipMemcpy(ofc->m_tempFrameHDR, pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), hipMemcpyHostToDevice);
-		hipMemcpy(ofc->m_tempFrameHDR + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), hipMemcpyHostToDevice);
+		HIP_CHECK(hipMemcpy(ofc->m_frameHDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyHostToDevice));
+		HIP_CHECK(hipMemcpy(ofc->m_tempFrameHDR, pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), hipMemcpyHostToDevice));
+		HIP_CHECK(hipMemcpy(ofc->m_tempFrameHDR + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), hipMemcpyHostToDevice));
 		convertYUV420PtoNV12Kernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[0], ofc->m_tempFrameHDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset);
-		hipStreamSynchronize(priv->m_csWarpStream1);
+		HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 	// NV12 format
 	} else if (ofc->m_iFMT == HIP_FMT) {
-		hipMemcpy(ofc->m_frameSDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice);
-		hipMemcpy(ofc->m_frameSDR[0] + ofc->m_iDimY * ofc->m_iDimX, pInBuffer[1], (ofc->m_iDimY / 2) * ofc->m_iDimX, hipMemcpyDeviceToDevice);
+		HIP_CHECK(hipMemcpy(ofc->m_frameSDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice));
+		HIP_CHECK(hipMemcpy(ofc->m_frameSDR[0] + ofc->m_iDimY * ofc->m_iDimX, pInBuffer[1], (ofc->m_iDimY / 2) * ofc->m_iDimX, hipMemcpyDeviceToDevice));
 	// YUV420P format
 	} else if (ofc->m_iFMT == YUV420P_FMT) {
-		hipMemcpy(ofc->m_frameSDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX, hipMemcpyHostToDevice);
-		hipMemcpy(ofc->m_tempFrameSDR, pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), hipMemcpyHostToDevice);
-		hipMemcpy(ofc->m_tempFrameSDR + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), hipMemcpyHostToDevice);
+		HIP_CHECK(hipMemcpy(ofc->m_frameSDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX, hipMemcpyHostToDevice));
+		HIP_CHECK(hipMemcpy(ofc->m_tempFrameSDR, pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), hipMemcpyHostToDevice));
+		HIP_CHECK(hipMemcpy(ofc->m_tempFrameSDR + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), hipMemcpyHostToDevice));
 		convertYUV420PtoNV12Kernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[0], ofc->m_tempFrameSDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset);
-		hipStreamSynchronize(priv->m_csWarpStream1);
+		HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 	} else {
 		printf("HopperRender does not support this video format: %d\n", ofc->m_iFMT);
 		exit(1);
@@ -1384,26 +1393,26 @@ void downloadFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer) {
 	struct priv *priv = (struct priv*)ofc->priv;
 	// P010 format
 	if (ofc->m_bIsHDR && ofc->m_iFMT == HIP_FMT) {
-		hipMemcpy(pOutBuffer[0], ofc->m_outputFrameHDR, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice);
-		hipMemcpy(pOutBuffer[1], ofc->m_outputFrameHDR + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice);
+		HIP_CHECK(hipMemcpy(pOutBuffer[0], ofc->m_outputFrameHDR, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice));
+		HIP_CHECK(hipMemcpy(pOutBuffer[1], ofc->m_outputFrameHDR + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice));
 	// YUV420P10 format
 	} else if (ofc->m_bIsHDR) {
-		hipMemcpy(pOutBuffer[0], ofc->m_outputFrameHDR, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToHost);
+		HIP_CHECK(hipMemcpy(pOutBuffer[0], ofc->m_outputFrameHDR, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToHost));
 		convertNV12toYUV420PKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(ofc->m_tempFrameHDR, ofc->m_outputFrameHDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1));
-		hipStreamSynchronize(priv->m_csWarpStream1);
-		hipMemcpy(pOutBuffer[1], ofc->m_tempFrameHDR, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1) * sizeof(unsigned short), hipMemcpyDeviceToHost);
-		hipMemcpy(pOutBuffer[2], ofc->m_tempFrameHDR + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1) * sizeof(unsigned short), hipMemcpyDeviceToHost);
+		HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
+		HIP_CHECK(hipMemcpy(pOutBuffer[1], ofc->m_tempFrameHDR, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1) * sizeof(unsigned short), hipMemcpyDeviceToHost));
+		HIP_CHECK(hipMemcpy(pOutBuffer[2], ofc->m_tempFrameHDR + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1) * sizeof(unsigned short), hipMemcpyDeviceToHost));
 	// NV12 format
 	} else if (ofc->m_iFMT == HIP_FMT) {
-		hipMemcpy(pOutBuffer[0], ofc->m_outputFrameSDR, ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice);
-		hipMemcpy(pOutBuffer[1], ofc->m_outputFrameSDR + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * ofc->m_iDimX, hipMemcpyDeviceToDevice);
+		HIP_CHECK(hipMemcpy(pOutBuffer[0], ofc->m_outputFrameSDR, ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice));
+		HIP_CHECK(hipMemcpy(pOutBuffer[1], ofc->m_outputFrameSDR + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * ofc->m_iDimX, hipMemcpyDeviceToDevice));
 	// YUV420P format
 	} else if (ofc->m_iFMT == YUV420P_FMT) {
-		hipMemcpy(pOutBuffer[0], ofc->m_outputFrameSDR, ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToHost);
+		HIP_CHECK(hipMemcpy(pOutBuffer[0], ofc->m_outputFrameSDR, ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToHost));
 		convertNV12toYUV420PKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(ofc->m_tempFrameSDR, ofc->m_outputFrameSDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1));
-		hipStreamSynchronize(priv->m_csWarpStream1);
-		hipMemcpy(pOutBuffer[1], ofc->m_tempFrameSDR, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), hipMemcpyDeviceToHost);
-		hipMemcpy(pOutBuffer[2], ofc->m_tempFrameSDR + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), hipMemcpyDeviceToHost);
+		HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
+		HIP_CHECK(hipMemcpy(pOutBuffer[1], ofc->m_tempFrameSDR, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), hipMemcpyDeviceToHost));
+		HIP_CHECK(hipMemcpy(pOutBuffer[2], ofc->m_tempFrameSDR + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), hipMemcpyDeviceToHost));
 	} else {
 		printf("HopperRender does not support this video format: %d\n", ofc->m_iFMT);
 		exit(1);
@@ -1424,26 +1433,26 @@ void processFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const
 	struct priv *priv = (struct priv*)ofc->priv;
 	if (ofc->m_bIsHDR) {
 		if (ofc->m_fBlackLevel == 0.0f && ofc->m_fWhiteLevel == 1023.0f) {
-			hipMemcpy(ofc->m_outputFrameHDR, firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1], ofc->m_iDimY * ofc->m_iDimX * 3, hipMemcpyDeviceToDevice);
+			HIP_CHECK(hipMemcpy(ofc->m_outputFrameHDR, firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1], ofc->m_iDimY * ofc->m_iDimX * 3, hipMemcpyDeviceToDevice));
 			downloadFrame(ofc, pOutBuffer);
 		} else {
 			processFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1],
 													ofc->m_outputFrameHDR,
 													ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
-			hipStreamSynchronize(priv->m_csWarpStream1);
-			hipMemcpy(ofc->m_outputFrameHDR + ofc->m_iChannelIdxOffset, (firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1]) + ofc->m_iChannelIdxOffset, ofc->m_iDimY * (ofc->m_iDimX >> 1) * sizeof(unsigned short), hipMemcpyDeviceToDevice);
+			HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
+			HIP_CHECK(hipMemcpy(ofc->m_outputFrameHDR + ofc->m_iChannelIdxOffset, (firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1]) + ofc->m_iChannelIdxOffset, ofc->m_iDimY * (ofc->m_iDimX >> 1) * sizeof(unsigned short), hipMemcpyDeviceToDevice));
 			downloadFrame(ofc, pOutBuffer);
 		}
 	} else {
 		if (ofc->m_fBlackLevel == 0.0f && ofc->m_fWhiteLevel == 255.0f) {
-			hipMemcpy(ofc->m_outputFrameSDR, firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1], ofc->m_iDimY * ofc->m_iDimX * 1.5, hipMemcpyDeviceToDevice);
+			HIP_CHECK(hipMemcpy(ofc->m_outputFrameSDR, firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1], ofc->m_iDimY * ofc->m_iDimX * 1.5, hipMemcpyDeviceToDevice));
 			downloadFrame(ofc, pOutBuffer);
 		} else {
 			processFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1],
 													ofc->m_outputFrameSDR,
 													ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
-			hipStreamSynchronize(priv->m_csWarpStream1);
-			hipMemcpy(ofc->m_outputFrameSDR + ofc->m_iChannelIdxOffset, (firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1]) + ofc->m_iChannelIdxOffset, ofc->m_iDimY * (ofc->m_iDimX >> 1), hipMemcpyDeviceToDevice);
+			HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
+			HIP_CHECK(hipMemcpy(ofc->m_outputFrameSDR + ofc->m_iChannelIdxOffset, (firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1]) + ofc->m_iChannelIdxOffset, ofc->m_iDimY * (ofc->m_iDimX >> 1), hipMemcpyDeviceToDevice));
 			downloadFrame(ofc, pOutBuffer);
 		}
 	}
@@ -1483,12 +1492,12 @@ void calculateOpticalFlow(struct OpticalFlowCalc *ofc, unsigned int iNumIteratio
 	size_t sharedMemSize = 16 * 16 * sizeof(unsigned int);
 
 	// Set layer 0 of the X-Dir to 0
-	hipMemset(ofc->m_offsetArray12, 0, ofc->m_iLayerIdxOffset * sizeof(int));
+	HIP_CHECK(hipMemset(ofc->m_offsetArray12, 0, ofc->m_iLayerIdxOffset * sizeof(int)));
 	// Set layers 0-5 of the Y-Dir to 0
-	hipMemset(ofc->m_offsetArray12 + ofc->m_iDirectionIdxOffset, 0, ofc->m_iDirectionIdxOffset * sizeof(int));
+	HIP_CHECK(hipMemset(ofc->m_offsetArray12 + ofc->m_iDirectionIdxOffset, 0, ofc->m_iDirectionIdxOffset * sizeof(int)));
 	// Set layers 1-4 of the X-Dir to -2,-1,1,2
 	setInitialOffset<<<priv->m_lowGrid16x16x4, priv->m_threads16x16x1, 0, priv->m_csOFCStream1>>>(ofc->m_offsetArray12, ofc->m_iNumLayers, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLayerIdxOffset);
-	hipStreamSynchronize(priv->m_csOFCStream1);
+	HIP_CHECK(hipStreamSynchronize(priv->m_csOFCStream1));
 	
 	// We calculate the ideal offset array for each window size (entire frame, ..., individual pixels)
 	for (unsigned int iter = 0; iter < iNumIterations; iter++) {
@@ -1499,7 +1508,7 @@ void calculateOpticalFlow(struct OpticalFlowCalc *ofc, unsigned int iNumIteratio
 		// Each step we adjust the offset array to find the ideal offset
 		for (unsigned int step = 0; step < iNumStepsPerIter; step++) {
 			// Reset the summed up delta array
-			hipMemset(ofc->m_summedUpDeltaArray, 0, 5 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(unsigned int));
+			HIP_CHECK(hipMemset(ofc->m_summedUpDeltaArray, 0, 5 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(unsigned int)));
 
 			// 1. Calculate the image delta and sum up the deltas of each window
 			if (ofc->m_bIsHDR) {
@@ -1516,19 +1525,19 @@ void calculateOpticalFlow(struct OpticalFlowCalc *ofc, unsigned int iNumIteratio
 																ofc->m_iDimY, ofc->m_iDimX, ofc->m_iLowDimY, ofc->m_iLowDimX, windowDim, ofc->m_cResolutionScalar);
 			}
 			
-			hipStreamSynchronize(priv->m_csOFCStream1);
+			HIP_CHECK(hipStreamSynchronize(priv->m_csOFCStream1));
 
 			// 2. Normalize the summed up delta array and find the best layer
 			normalizeDeltaSums<<<priv->m_lowGrid8x8x1, priv->m_threads8x8x5, 0, priv->m_csOFCStream1>>>(ofc->m_summedUpDeltaArray, ofc->m_lowestLayerArray,
 															   ofc->m_offsetArray12, windowDim, windowDim * windowDim,
 															   ofc->m_iDirectionIdxOffset, ofc->m_iLayerIdxOffset, ofc->m_iNumLayers, ofc->m_iLowDimY, ofc->m_iLowDimX);
-			hipStreamSynchronize(priv->m_csOFCStream1);
+			HIP_CHECK(hipStreamSynchronize(priv->m_csOFCStream1));
 
 			// 3. Adjust the offset array based on the comparison results
 			adjustOffsetArray<<<priv->m_lowGrid32x32x1, priv->m_threads32x32x1, 0, priv->m_csOFCStream1>>>(ofc->m_offsetArray12, ofc->m_lowestLayerArray,
 															  ofc->m_statusArray, windowDim, ofc->m_iDirectionIdxOffset, ofc->m_iLayerIdxOffset,
 															  ofc->m_iNumLayers, ofc->m_iLowDimY, ofc->m_iLowDimX, step == iNumStepsPerIter - 1);
-			hipStreamSynchronize(priv->m_csOFCStream1);
+			HIP_CHECK(hipStreamSynchronize(priv->m_csOFCStream1));
 		}
 
 		// 4. Adjust variables for the next iteration
@@ -1537,7 +1546,7 @@ void calculateOpticalFlow(struct OpticalFlowCalc *ofc, unsigned int iNumIteratio
 		if (windowDim == 1) sharedMemSize = 0;
 
 		// Reset the status array
-		hipMemset(ofc->m_statusArray, 0, ofc->m_iLowDimY * ofc->m_iLowDimX);
+		HIP_CHECK(hipMemset(ofc->m_statusArray, 0, ofc->m_iLowDimY * ofc->m_iLowDimX));
 	}
 
 	// Check for HIP Errors
@@ -1558,8 +1567,8 @@ void warpFrames(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode
 	const float frameScalar21 = 1.0f - fScalar;
 
 	// Reset the hit count array
-	hipMemset(ofc->m_hitCount12, 0, ofc->m_iDimY * ofc->m_iDimX * sizeof(int));
-	hipMemset(ofc->m_hitCount21, 0, ofc->m_iDimY * ofc->m_iDimX * sizeof(int));
+	HIP_CHECK(hipMemset(ofc->m_hitCount12, 0, ofc->m_iDimY * ofc->m_iDimX * sizeof(int)));
+	HIP_CHECK(hipMemset(ofc->m_hitCount21, 0, ofc->m_iDimY * ofc->m_iDimX * sizeof(int)));
 
 	// #####################
 	// ###### WARPING ######
@@ -1625,8 +1634,8 @@ void warpFrames(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode
 																									 ofc->m_iChannelIdxOffset);
 		}
 	}
-	if (outputMode != 1) hipStreamSynchronize(priv->m_csWarpStream1);
-	if (outputMode != 0) hipStreamSynchronize(priv->m_csWarpStream2);
+	if (outputMode != 1) HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
+	if (outputMode != 0) HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream2));
 	
 	// ##############################
 	// ###### ARTIFACT REMOVAL ######
@@ -1667,8 +1676,8 @@ void warpFrames(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode
 																									   ofc->m_iChannelIdxOffset);
 		}
 	}
-	if (outputMode != 1) hipStreamSynchronize(priv->m_csWarpStream1);
-	if (outputMode != 0) hipStreamSynchronize(priv->m_csWarpStream2);
+	if (outputMode != 1) HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
+	if (outputMode != 0) HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream2));
 
 	// Check for HIP Errors
 	checkHIPError("warpFrames");
@@ -1697,7 +1706,7 @@ void blendFrames(struct OpticalFlowCalc *ofc, float fScalar) {
 	                                             ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX, ofc->m_iChannelIdxOffset, ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
 	}
 
-	hipStreamSynchronize(priv->m_csWarpStream1);
+	HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 
 	// Check for HIP Errors
 	checkHIPError("blendFrames");
@@ -1721,7 +1730,7 @@ void insertFrame(struct OpticalFlowCalc *ofc) {
 	                                             ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX, ofc->m_iChannelIdxOffset,
 												 ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
 	}
-	hipStreamSynchronize(priv->m_csWarpStream1);
+	HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 
 	// Check for HIP Errors
 	checkHIPError("insertFrame");
@@ -1795,7 +1804,7 @@ void sideBySideFrame(struct OpticalFlowCalc *ofc, float fScalar, const unsigned 
 														ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
 		}
 	}
-	hipStreamSynchronize(priv->m_csWarpStream1);
+	HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 
 	// Check for HIP Errors
 	checkHIPError("sideBySideFrame");
@@ -1819,7 +1828,7 @@ void drawFlowAsHSV(struct OpticalFlowCalc *ofc, const float blendScalar) {
 														ofc->m_cResolutionScalar, ofc->m_iLayerIdxOffset, ofc->m_iChannelIdxOffset, ofc->m_iFMT == HIP_FMT);
 	}
 	
-	hipStreamSynchronize(priv->m_csWarpStream1);
+	HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 
 	// Check for HIP Errors
 	checkHIPError("drawFlowAsHSV");
@@ -1842,7 +1851,7 @@ void drawFlowAsGreyscale(struct OpticalFlowCalc *ofc) {
 														ofc->m_cResolutionScalar, ofc->m_iLayerIdxOffset, ofc->m_iChannelIdxOffset, ofc->m_iFMT == HIP_FMT, (int)ofc->m_fMaxVal, ofc->m_iMiddleValue);
 	}
 	
-	hipStreamSynchronize(priv->m_csWarpStream1);
+	HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 
 	// Check for HIP Errors
 	checkHIPError("drawFlowAsGreyscale");
@@ -1856,12 +1865,12 @@ void drawFlowAsGreyscale(struct OpticalFlowCalc *ofc) {
 void flipFlow(struct OpticalFlowCalc *ofc) {
 	struct priv *priv = (struct priv*)ofc->priv;
 	// Reset the offset array
-	hipMemset(ofc->m_offsetArray21, 0, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(int));
+	HIP_CHECK(hipMemset(ofc->m_offsetArray21, 0, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(int)));
 
 	// Launch kernel
 	flipFlowKernel<<<priv->m_lowGrid16x16x1, priv->m_threads16x16x2, 0, priv->m_csOFCStream1>>>(ofc->m_offsetArray12, ofc->m_offsetArray21,
 												            ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_cResolutionScalar, ofc->m_iDirectionIdxOffset, ofc->m_iLayerIdxOffset);
-	hipStreamSynchronize(priv->m_csOFCStream1);
+	HIP_CHECK(hipStreamSynchronize(priv->m_csOFCStream1));
 
 	// Check for HIP Errors
 	checkHIPError("flipFlow");
@@ -1896,11 +1905,11 @@ void blurFlowArrays(struct OpticalFlowCalc *ofc) {
 	// No need to blur the flow if the kernel size is less than 4
 	if (ofc->m_iFlowBlurKernelSize < 4) {
 		// Offset12 X-Dir
-		hipMemcpy(ofc->m_blurredOffsetArray12[1], ofc->m_offsetArray12, ofc->m_iLayerIdxOffset * sizeof(int), hipMemcpyDeviceToDevice);
+		HIP_CHECK(hipMemcpy(ofc->m_blurredOffsetArray12[1], ofc->m_offsetArray12, ofc->m_iLayerIdxOffset * sizeof(int), hipMemcpyDeviceToDevice));
 		// Offset12 Y-Dir
-		hipMemcpy(ofc->m_blurredOffsetArray12[1] + ofc->m_iLayerIdxOffset, ofc->m_offsetArray12 + ofc->m_iDirectionIdxOffset, ofc->m_iLayerIdxOffset * sizeof(int), hipMemcpyDeviceToDevice);
+		HIP_CHECK(hipMemcpy(ofc->m_blurredOffsetArray12[1] + ofc->m_iLayerIdxOffset, ofc->m_offsetArray12 + ofc->m_iDirectionIdxOffset, ofc->m_iLayerIdxOffset * sizeof(int), hipMemcpyDeviceToDevice));
 		// Offset21 X&Y-Dir
-		hipMemcpy(ofc->m_blurredOffsetArray21[1], ofc->m_offsetArray21, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(int), hipMemcpyDeviceToDevice);
+		HIP_CHECK(hipMemcpy(ofc->m_blurredOffsetArray21[1], ofc->m_offsetArray21, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(int), hipMemcpyDeviceToDevice));
 	} else {
 		// Launch kernels
 		blurFlowKernel<<<gridBF, threadsBF, sharedMemSize, priv->m_csOFCStream1>>>(ofc->m_offsetArray12, ofc->m_blurredOffsetArray12[1], ofc->m_iFlowBlurKernelSize, chacheSize, boundsOffset, avgEntriesPerThread, remainder, start, end, pixelCount, ofc->m_iNumLayers, ofc->m_iLowDimY, ofc->m_iLowDimX);
@@ -1909,8 +1918,8 @@ void blurFlowArrays(struct OpticalFlowCalc *ofc) {
 		//cleanFlowKernel<<<m_lowGrid16x16x1, m_threads16x16x2, 0, blurStream2>>>(m_offsetArray21, m_blurredOffsetArray21, m_iLowDimY, m_iLowDimX);
 
 		// Synchronize streams to ensure completion
-		hipStreamSynchronize(priv->m_csOFCStream1);
-		hipStreamSynchronize(priv->m_csOFCStream2);
+		HIP_CHECK(hipStreamSynchronize(priv->m_csOFCStream1));
+		HIP_CHECK(hipStreamSynchronize(priv->m_csOFCStream2));
 	}
 
 	// Check for HIP Errors
@@ -1930,7 +1939,7 @@ void saveImage(struct OpticalFlowCalc *ofc, const char* filePath) {
 
 	// Copy the image array to the CPU
 	size_t dataSize = 1.5 * ofc->m_iDimY * ofc->m_iDimX;
-	hipMemcpy(ofc->m_imageArrayCPU, ofc->m_outputFrameSDR, dataSize, hipMemcpyDeviceToHost);
+	HIP_CHECK(hipMemcpy(ofc->m_imageArrayCPU, ofc->m_outputFrameSDR, dataSize, hipMemcpyDeviceToHost));
 
 	// Open file in binary write mode
     FILE *file = fopen(filePath, "wb");
@@ -1959,10 +1968,10 @@ void saveImage(struct OpticalFlowCalc *ofc, const char* filePath) {
 unsigned char* createGPUArrayUC(const size_t size) {
 	// Allocate VRAM
 	unsigned char* arrayPtrGPU;
-	hipMalloc(&arrayPtrGPU, size);
+	HIP_CHECK(hipMalloc(&arrayPtrGPU, size));
 
 	// Set all entries to 0
-	hipMemset(arrayPtrGPU, 0, size);
+	HIP_CHECK(hipMemset(arrayPtrGPU, 0, size));
 
 	return arrayPtrGPU;
 }
@@ -1975,10 +1984,10 @@ unsigned char* createGPUArrayUC(const size_t size) {
 unsigned short* createGPUArrayUS(const size_t size) {
 	// Allocate VRAM
 	unsigned short* arrayPtrGPU;
-	hipMalloc(&arrayPtrGPU, size * sizeof(unsigned short));
+	HIP_CHECK(hipMalloc(&arrayPtrGPU, size * sizeof(unsigned short)));
 
 	// Set all entries to 0
-	hipMemset(arrayPtrGPU, 0, size * sizeof(unsigned short));
+	HIP_CHECK(hipMemset(arrayPtrGPU, 0, size * sizeof(unsigned short)));
 
 	return arrayPtrGPU;
 }
@@ -1991,10 +2000,10 @@ unsigned short* createGPUArrayUS(const size_t size) {
 int* createGPUArrayI(const size_t size) {
 	// Allocate VRAM
 	int* arrayPtrGPU;
-	hipMalloc(&arrayPtrGPU, size * sizeof(int));
+	HIP_CHECK(hipMalloc(&arrayPtrGPU, size * sizeof(int)));
 
 	// Set all entries to 0
-	hipMemset(arrayPtrGPU, 0, size * sizeof(int));
+	HIP_CHECK(hipMemset(arrayPtrGPU, 0, size * sizeof(int)));
 
 	return arrayPtrGPU;
 }
@@ -2007,10 +2016,10 @@ int* createGPUArrayI(const size_t size) {
 unsigned int* createGPUArrayUI(const size_t size) {
 	// Allocate VRAM
 	unsigned int* arrayPtrGPU;
-	hipMalloc(&arrayPtrGPU, size * sizeof(unsigned int));
+	HIP_CHECK(hipMalloc(&arrayPtrGPU, size * sizeof(unsigned int)));
 
 	// Set all entries to 0
-	hipMemset(arrayPtrGPU, 0, size * sizeof(unsigned int));
+	HIP_CHECK(hipMemset(arrayPtrGPU, 0, size * sizeof(unsigned int)));
 
 	return arrayPtrGPU;
 }
@@ -2169,10 +2178,10 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ofc->m_hitCount21 = createGPUArrayI(dimY * dimX);
 
 	// Create HIP streams
-	hipStreamCreate(&priv->m_csOFCStream1);
-	hipStreamCreate(&priv->m_csOFCStream2);
-	hipStreamCreate(&priv->m_csWarpStream1);
-	hipStreamCreate(&priv->m_csWarpStream2);
+	HIP_CHECK(hipStreamCreate(&priv->m_csOFCStream1));
+	HIP_CHECK(hipStreamCreate(&priv->m_csOFCStream2));
+	HIP_CHECK(hipStreamCreate(&priv->m_csWarpStream1));
+	HIP_CHECK(hipStreamCreate(&priv->m_csWarpStream2));
 }
 
 /*
