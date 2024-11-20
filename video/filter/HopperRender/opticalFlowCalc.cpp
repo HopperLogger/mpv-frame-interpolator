@@ -1,12 +1,38 @@
-#include <cuda_runtime.h>
-#include <device_launch_parameters.h>
-#include <cooperative_groups.h>
-#include "opticalFlowCalc.cuh"
+#define __HIP_PLATFORM_NVIDIA__
+#include <hip/hip_runtime.h>
+#include <hip/hip_cooperative_groups.h>
+#include "opticalFlowCalc.h"
+#include <algorithm>
 
 #define SCALE_FLOW 0
 #define YUV420P_FMT 1002
 #define NV12_FMT 1006
-#define CUDA_FMT 1026
+#define HIP_FMT 1026
+
+struct priv {
+	// HIP streams
+	hipStream_t m_csOFCStream1, m_csOFCStream2; // HIP streams used for the optical flow calculation
+	hipStream_t m_csWarpStream1, m_csWarpStream2; // HIP streams used for the warping
+
+	// Grids
+	dim3 m_lowGrid32x32x1;
+	dim3 m_lowGrid16x16x5;
+	dim3 m_lowGrid16x16x4;
+	dim3 m_lowGrid16x16x1;
+	dim3 m_lowGrid8x8x5;
+	dim3 m_lowGrid8x8x1;
+	dim3 m_grid16x16x1;
+	dim3 m_halfGrid16x16x1;
+	dim3 m_grid8x8x1;
+	
+	// Threads
+	dim3 m_threads32x32x1;
+	dim3 m_threads16x16x2;
+	dim3 m_threads16x16x1;
+	dim3 m_threads8x8x5;
+	dim3 m_threads8x8x2;
+	dim3 m_threads8x8x1;
+};
 
 // Applies the black and white values to the Y-Channel
 __device__ void applyShaderY(unsigned char& output, const unsigned char input, const float blackLevel, const float whiteLevel, const float maxVal) {
@@ -1137,78 +1163,84 @@ __global__ void convertFlowToGreyscaleKernel(const int* flowArray, T* outputFram
 	}
 }
 
-// Kernel that draws a vertical line at the specified position
-__global__ void tearingTestKernel(unsigned char* outputFrame, const unsigned int xPos, const unsigned int width, const unsigned int dimY, const unsigned int dimX) {
-	// Current entry to be computed by the thread
-	const unsigned int cx = blockIdx.x * blockDim.x + threadIdx.x;
-	const unsigned int cy = blockIdx.y * blockDim.y + threadIdx.y;
-
-	// Y Channel
-	if (cy < dimY && cx < dimX) {
-		if (cx >= xPos && cx < (xPos + width)) {
-			outputFrame[cy * dimX + cx] = 255;
-		} else {
-			outputFrame[cy * dimX + cx] = 0;
-		}
-	}
-}
-
 /*
 * Frees the memory of the optical flow calculator
 *
 * @param ofc: Pointer to the optical flow calculator
 */
 void free(struct OpticalFlowCalc *ofc) {
+	struct priv *priv = (struct priv*)ofc->priv;
 	if (ofc->m_bIsHDR) {
-		cudaFree(ofc->m_frameHDR[0]);
-		cudaFree(ofc->m_frameHDR[1]);
-		cudaFree(ofc->m_frameHDR[2]);
-		cudaFree(ofc->m_blurredFrameHDR[0]);
-		cudaFree(ofc->m_blurredFrameHDR[1]);
-		cudaFree(ofc->m_blurredFrameHDR[2]);
-		cudaFree(ofc->m_warpedFrame12HDR);
-		cudaFree(ofc->m_warpedFrame21HDR);
-		cudaFree(ofc->m_outputFrameHDR);
+		hipFree(ofc->m_frameHDR[0]);
+		hipFree(ofc->m_frameHDR[1]);
+		hipFree(ofc->m_frameHDR[2]);
+		hipFree(ofc->m_blurredFrameHDR[0]);
+		hipFree(ofc->m_blurredFrameHDR[1]);
+		hipFree(ofc->m_blurredFrameHDR[2]);
+		hipFree(ofc->m_warpedFrame12HDR);
+		hipFree(ofc->m_warpedFrame21HDR);
+		hipFree(ofc->m_outputFrameHDR);
 	} else {
-		cudaFree(ofc->m_frameSDR[0]);
-		cudaFree(ofc->m_frameSDR[1]);
-		cudaFree(ofc->m_frameSDR[2]);
-		cudaFree(ofc->m_blurredFrameSDR[0]);
-		cudaFree(ofc->m_blurredFrameSDR[1]);
-		cudaFree(ofc->m_blurredFrameSDR[2]);
-		cudaFree(ofc->m_warpedFrame12SDR);
-		cudaFree(ofc->m_warpedFrame21SDR);
-		cudaFree(ofc->m_outputFrameSDR);
+		hipFree(ofc->m_frameSDR[0]);
+		hipFree(ofc->m_frameSDR[1]);
+		hipFree(ofc->m_frameSDR[2]);
+		hipFree(ofc->m_blurredFrameSDR[0]);
+		hipFree(ofc->m_blurredFrameSDR[1]);
+		hipFree(ofc->m_blurredFrameSDR[2]);
+		hipFree(ofc->m_warpedFrame12SDR);
+		hipFree(ofc->m_warpedFrame21SDR);
+		hipFree(ofc->m_outputFrameSDR);
 	}
-	cudaFree(ofc->m_offsetArray12);
-	cudaFree(ofc->m_offsetArray21);
-	cudaFree(ofc->m_blurredOffsetArray12[0]);
-	cudaFree(ofc->m_blurredOffsetArray21[0]);
-	cudaFree(ofc->m_blurredOffsetArray12[1]);
-	cudaFree(ofc->m_blurredOffsetArray21[1]);
-	cudaFree(ofc->m_statusArray);
-	cudaFree(ofc->m_summedUpDeltaArray);
-	cudaFree(ofc->m_lowestLayerArray);
-	cudaFree(ofc->m_hitCount12);
-	cudaFree(ofc->m_hitCount21);
+	hipFree(ofc->m_offsetArray12);
+	hipFree(ofc->m_offsetArray21);
+	hipFree(ofc->m_blurredOffsetArray12[0]);
+	hipFree(ofc->m_blurredOffsetArray21[0]);
+	hipFree(ofc->m_blurredOffsetArray12[1]);
+	hipFree(ofc->m_blurredOffsetArray21[1]);
+	hipFree(ofc->m_statusArray);
+	hipFree(ofc->m_summedUpDeltaArray);
+	hipFree(ofc->m_lowestLayerArray);
+	hipFree(ofc->m_hitCount12);
+	hipFree(ofc->m_hitCount21);
 
-	cudaStreamDestroy(ofc->m_csOFCStream1);
-	cudaStreamDestroy(ofc->m_csOFCStream2);
-	cudaStreamDestroy(ofc->m_csWarpStream1);
-	cudaStreamDestroy(ofc->m_csWarpStream2);
+	hipStreamDestroy(priv->m_csOFCStream1);
+	hipStreamDestroy(priv->m_csOFCStream2);
+	hipStreamDestroy(priv->m_csWarpStream1);
+	hipStreamDestroy(priv->m_csWarpStream2);
 }
 
 /*
-* Checks if there are any recent cuda errors and prints the error if there is one.
+* Checks if there are any recent HIP errors and prints the error if there is one.
 *
 * @param functionName: Name of the function that called this function
 */
-void checkCudaError(const char* functionName) {
-	cudaError_t cudaError = cudaGetLastError();
-	if (cudaError != cudaSuccess) {
-		printf("CUDA Error in function %s: %s\n", functionName, cudaGetErrorString(cudaError));
+void checkHIPError(const char* functionName) {
+	hipError_t hipError_t = hipGetLastError();
+	if (hipError_t != hipSuccess) {
+		printf("HIP Error in function %s: %s\n", functionName, hipGetErrorString(hipError_t));
 		exit(1);
 	}
+}
+
+/*
+* Readjusts internal structs for the new resolution
+*
+* @param ofc: Pointer to the optical flow calculator
+*/
+void adjustFrameScalar(struct OpticalFlowCalc *ofc) {
+	struct priv *priv = (struct priv*)ofc->priv;
+	priv->m_lowGrid32x32x1.x = (int)(fmax(ceil((double)(ofc->m_iLowDimX) / 32.0), 1.0));
+	priv->m_lowGrid32x32x1.y = (int)(fmax(ceil((double)(ofc->m_iLowDimY) / 32.0), 1.0));
+	priv->m_lowGrid16x16x5.x = (int)(fmax(ceil((double)(ofc->m_iLowDimX) / 16.0), 1.0));
+	priv->m_lowGrid16x16x5.y = (int)(fmax(ceil((double)(ofc->m_iLowDimY) / 16.0), 1.0));
+	priv->m_lowGrid16x16x4.x = (int)(fmax(ceil((double)(ofc->m_iLowDimX) / 16.0), 1.0));
+	priv->m_lowGrid16x16x4.y = (int)(fmax(ceil((double)(ofc->m_iLowDimY) / 16.0), 1.0));
+	priv->m_lowGrid16x16x1.x = (int)(fmax(ceil((double)(ofc->m_iLowDimX) / 16.0), 1.0));
+	priv->m_lowGrid16x16x1.y = (int)(fmax(ceil((double)(ofc->m_iLowDimY) / 16.0), 1.0));
+	priv->m_lowGrid8x8x5.x = (int)(fmax(ceil((double)(ofc->m_iLowDimX) / 8.0), 1.0));
+	priv->m_lowGrid8x8x5.y = (int)(fmax(ceil((double)(ofc->m_iLowDimY) / 8.0), 1.0));
+	priv->m_lowGrid8x8x1.x = (int)(fmax(ceil((double)(ofc->m_iLowDimX) / 8.0), 1.0));
+	priv->m_lowGrid8x8x1.y = (int)(fmax(ceil((double)(ofc->m_iLowDimY) / 8.0), 1.0));
 }
 
 /*
@@ -1220,17 +1252,18 @@ void checkCudaError(const char* functionName) {
 * @param kernelSize: Size of the kernel to use for the blur
 * @param directOutput: Whether to output the blurred frame directly
 */
-void blurFrameArray(struct OpticalFlowCalc *ofc, const void* frame, void* blurredFrame, const unsigned int kernelSize, const bool directOutput) {
+void blurFrameArray(struct OpticalFlowCalc *ofc, const void* frame, void* blurredFrame, const int kernelSize, const bool directOutput) {
+	struct priv *priv = (struct priv*)ofc->priv;
 	// Early exit if kernel size is too small to blur
 	if (kernelSize < 4) {
-		cudaMemcpy(blurredFrame, frame, (ofc->m_bIsHDR ? 2 : 1) * ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
+		hipMemcpy(blurredFrame, frame, (ofc->m_bIsHDR ? 2 : 1) * ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice);
 		return;
 	}
 	// Calculate useful constants
 	const unsigned char boundsOffset = kernelSize >> 1;
 	const unsigned char cacheSize = kernelSize + (boundsOffset << 1);
 	const size_t sharedMemSize = cacheSize * cacheSize * sizeof(unsigned int);
-	const unsigned short totalThreads = max(kernelSize * kernelSize, 1);
+	const unsigned short totalThreads = std::max(kernelSize * kernelSize, 1);
     const unsigned short totalEntries = cacheSize * cacheSize;
     const unsigned char avgEntriesPerThread = totalEntries / totalThreads;
 	const unsigned short remainder = totalEntries % totalThreads;
@@ -1239,35 +1272,35 @@ void blurFrameArray(struct OpticalFlowCalc *ofc, const void* frame, void* blurre
 	const unsigned short lumPixelCount = (lumEnd - lumStart) * (lumEnd - lumStart);
 
 	// Calculate grid and thread dimensions
-	const unsigned int numBlocksX = max(static_cast<int>(ceil(static_cast<double>(ofc->m_iDimX) / min(kernelSize, 32))), 1);
-	const unsigned int numBlocksY = max(static_cast<int>(ceil(static_cast<double>(ofc->m_iDimY) / min(kernelSize, 32))), 1);
+	const unsigned int numBlocksX = std::max(static_cast<int>(ceil(static_cast<double>(ofc->m_iDimX) / std::min(kernelSize, 32))), 1);
+	const unsigned int numBlocksY = std::max(static_cast<int>(ceil(static_cast<double>(ofc->m_iDimY) / std::min(kernelSize, 32))), 1);
 	dim3 gridDim(numBlocksX, numBlocksY, 1);
-	dim3 threadDim(min(kernelSize, 32), min(kernelSize, 32), 1);
+	dim3 threadDim(std::min(kernelSize, 32), std::min(kernelSize, 32), 1);
 
 	// Launch kernel based on HDR/SDR type
 	if (ofc->m_bIsHDR) {
-		blurFrameKernel <<<gridDim, threadDim, sharedMemSize, ofc->m_csWarpStream1>>> (
+		blurFrameKernel<<<gridDim, threadDim, sharedMemSize, priv->m_csWarpStream1>>>(
 			static_cast<const unsigned short*>(frame), static_cast<unsigned short*>(blurredFrame), kernelSize, cacheSize, boundsOffset, avgEntriesPerThread, remainder, lumStart, lumEnd, lumPixelCount, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
-		cudaStreamSynchronize(ofc->m_csWarpStream1);
+		hipStreamSynchronize(priv->m_csWarpStream1);
 	} else {
-		blurFrameKernel <<<gridDim, threadDim, sharedMemSize, ofc->m_csWarpStream1>>> (
+		blurFrameKernel<<<gridDim, threadDim, sharedMemSize, priv->m_csWarpStream1>>>(
 			static_cast<const unsigned char*>(frame), static_cast<unsigned char*>(blurredFrame), kernelSize, cacheSize, boundsOffset, avgEntriesPerThread, remainder, lumStart, lumEnd, lumPixelCount, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
-		cudaStreamSynchronize(ofc->m_csWarpStream1);
+		hipStreamSynchronize(priv->m_csWarpStream1);
 	}
 
 	// Handle direct output if necessary
 	if (directOutput) {
 		if (ofc->m_bIsHDR) {
-			cudaMemcpy(ofc->m_outputFrameHDR, blurredFrame, 2 * ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
-			cudaMemcpy(ofc->m_outputFrameHDR + ofc->m_iDimY * ofc->m_iDimX, static_cast<const unsigned short*>(frame) + ofc->m_iDimY * ofc->m_iDimX, 2 * ((ofc->m_iDimY / 2) * ofc->m_iDimX), cudaMemcpyDeviceToDevice);
+			hipMemcpy(ofc->m_outputFrameHDR, blurredFrame, 2 * ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice);
+			hipMemcpy(ofc->m_outputFrameHDR + ofc->m_iDimY * ofc->m_iDimX, static_cast<const unsigned short*>(frame) + ofc->m_iDimY * ofc->m_iDimX, 2 * ((ofc->m_iDimY / 2) * ofc->m_iDimX), hipMemcpyDeviceToDevice);
 		} else {
-			cudaMemcpy(ofc->m_outputFrameSDR, blurredFrame, ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
-			cudaMemcpy(ofc->m_outputFrameSDR + ofc->m_iDimY * ofc->m_iDimX, static_cast<const unsigned char*>(frame) + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY / 2) * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
+			hipMemcpy(ofc->m_outputFrameSDR, blurredFrame, ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice);
+			hipMemcpy(ofc->m_outputFrameSDR + ofc->m_iDimY * ofc->m_iDimX, static_cast<const unsigned char*>(frame) + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY / 2) * ofc->m_iDimX, hipMemcpyDeviceToDevice);
 		}
 	}
 
-	// Check for CUDA errors
-	checkCudaError("blurFrameArray");
+	// Check for HIP errors
+	checkHIPError("blurFrameArray");
 }
 
 /*
@@ -1280,36 +1313,37 @@ void blurFrameArray(struct OpticalFlowCalc *ofc, const void* frame, void* blurre
 * @param directOutput: Whether to output the blurred frame directly
 */
 void updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const unsigned int frameKernelSize, const unsigned int flowKernelSize, const bool directOutput) {
+	struct priv *priv = (struct priv*)ofc->priv;
 	ofc->m_iFlowBlurKernelSize = flowKernelSize;
 	// P010 format
-	if (ofc->m_bIsHDR && ofc->m_iFMT == CUDA_FMT) {
-		cudaMemcpy(ofc->m_frameHDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), cudaMemcpyDeviceToDevice);
-		cudaMemcpy(ofc->m_frameHDR[0] + ofc->m_iDimY * ofc->m_iDimX, pInBuffer[1], (ofc->m_iDimY / 2) * ofc->m_iDimX * sizeof(unsigned short), cudaMemcpyDeviceToDevice);
+	if (ofc->m_bIsHDR && ofc->m_iFMT == HIP_FMT) {
+		hipMemcpy(ofc->m_frameHDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice);
+		hipMemcpy(ofc->m_frameHDR[0] + ofc->m_iDimY * ofc->m_iDimX, pInBuffer[1], (ofc->m_iDimY / 2) * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice);
 	// YUV420P10 format
 	} else if (ofc->m_bIsHDR) {
-		cudaMemcpy(ofc->m_frameHDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), cudaMemcpyHostToDevice);
-		cudaMemcpy(ofc->m_tempFrameHDR, pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), cudaMemcpyHostToDevice);
-		cudaMemcpy(ofc->m_tempFrameHDR + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), cudaMemcpyHostToDevice);
-		convertYUV420PtoNV12Kernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_frameHDR[0], ofc->m_tempFrameHDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset);
-		cudaStreamSynchronize(ofc->m_csWarpStream1);
+		hipMemcpy(ofc->m_frameHDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyHostToDevice);
+		hipMemcpy(ofc->m_tempFrameHDR, pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), hipMemcpyHostToDevice);
+		hipMemcpy(ofc->m_tempFrameHDR + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), hipMemcpyHostToDevice);
+		convertYUV420PtoNV12Kernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[0], ofc->m_tempFrameHDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset);
+		hipStreamSynchronize(priv->m_csWarpStream1);
 	// NV12 format
-	} else if (ofc->m_iFMT == CUDA_FMT) {
-		cudaMemcpy(ofc->m_frameSDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
-		cudaMemcpy(ofc->m_frameSDR[0] + ofc->m_iDimY * ofc->m_iDimX, pInBuffer[1], (ofc->m_iDimY / 2) * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
+	} else if (ofc->m_iFMT == HIP_FMT) {
+		hipMemcpy(ofc->m_frameSDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice);
+		hipMemcpy(ofc->m_frameSDR[0] + ofc->m_iDimY * ofc->m_iDimX, pInBuffer[1], (ofc->m_iDimY / 2) * ofc->m_iDimX, hipMemcpyDeviceToDevice);
 	// YUV420P format
 	} else if (ofc->m_iFMT == YUV420P_FMT) {
-		cudaMemcpy(ofc->m_frameSDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyHostToDevice);
-		cudaMemcpy(ofc->m_tempFrameSDR, pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), cudaMemcpyHostToDevice);
-		cudaMemcpy(ofc->m_tempFrameSDR + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), cudaMemcpyHostToDevice);
-		convertYUV420PtoNV12Kernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_frameSDR[0], ofc->m_tempFrameSDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset);
-		cudaStreamSynchronize(ofc->m_csWarpStream1);
+		hipMemcpy(ofc->m_frameSDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX, hipMemcpyHostToDevice);
+		hipMemcpy(ofc->m_tempFrameSDR, pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), hipMemcpyHostToDevice);
+		hipMemcpy(ofc->m_tempFrameSDR + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), hipMemcpyHostToDevice);
+		convertYUV420PtoNV12Kernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[0], ofc->m_tempFrameSDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset);
+		hipStreamSynchronize(priv->m_csWarpStream1);
 	} else {
 		printf("HopperRender does not support this video format: %d\n", ofc->m_iFMT);
 		exit(1);
 	}
 
-	// Check for CUDA Errors
-	checkCudaError("updateFrame");
+	// Check for HIP Errors
+	checkHIPError("updateFrame");
 	
 	// Blur the frame
 	if (ofc->m_bIsHDR) {
@@ -1347,37 +1381,36 @@ void updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const u
 * @param pOutBuffer: Pointer to the output buffer
 */
 void downloadFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer) {
-	ofc->m_iFrameOutputCounter++;
-
+	struct priv *priv = (struct priv*)ofc->priv;
 	// P010 format
-	if (ofc->m_bIsHDR && ofc->m_iFMT == CUDA_FMT) {
-		cudaMemcpy(pOutBuffer[0], ofc->m_outputFrameHDR, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), cudaMemcpyDeviceToDevice);
-		cudaMemcpy(pOutBuffer[1], ofc->m_outputFrameHDR + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * ofc->m_iDimX * sizeof(unsigned short), cudaMemcpyDeviceToDevice);
+	if (ofc->m_bIsHDR && ofc->m_iFMT == HIP_FMT) {
+		hipMemcpy(pOutBuffer[0], ofc->m_outputFrameHDR, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice);
+		hipMemcpy(pOutBuffer[1], ofc->m_outputFrameHDR + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice);
 	// YUV420P10 format
 	} else if (ofc->m_bIsHDR) {
-		cudaMemcpy(pOutBuffer[0], ofc->m_outputFrameHDR, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), cudaMemcpyDeviceToHost);
-		convertNV12toYUV420PKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_tempFrameHDR, ofc->m_outputFrameHDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1));
-		cudaStreamSynchronize(ofc->m_csWarpStream1);
-		cudaMemcpy(pOutBuffer[1], ofc->m_tempFrameHDR, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1) * sizeof(unsigned short), cudaMemcpyDeviceToHost);
-		cudaMemcpy(pOutBuffer[2], ofc->m_tempFrameHDR + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1) * sizeof(unsigned short), cudaMemcpyDeviceToHost);
+		hipMemcpy(pOutBuffer[0], ofc->m_outputFrameHDR, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToHost);
+		convertNV12toYUV420PKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(ofc->m_tempFrameHDR, ofc->m_outputFrameHDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1));
+		hipStreamSynchronize(priv->m_csWarpStream1);
+		hipMemcpy(pOutBuffer[1], ofc->m_tempFrameHDR, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1) * sizeof(unsigned short), hipMemcpyDeviceToHost);
+		hipMemcpy(pOutBuffer[2], ofc->m_tempFrameHDR + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1) * sizeof(unsigned short), hipMemcpyDeviceToHost);
 	// NV12 format
-	} else if (ofc->m_iFMT == CUDA_FMT) {
-		cudaMemcpy(pOutBuffer[0], ofc->m_outputFrameSDR, ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
-		cudaMemcpy(pOutBuffer[1], ofc->m_outputFrameSDR + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * ofc->m_iDimX, cudaMemcpyDeviceToDevice);
+	} else if (ofc->m_iFMT == HIP_FMT) {
+		hipMemcpy(pOutBuffer[0], ofc->m_outputFrameSDR, ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice);
+		hipMemcpy(pOutBuffer[1], ofc->m_outputFrameSDR + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * ofc->m_iDimX, hipMemcpyDeviceToDevice);
 	// YUV420P format
 	} else if (ofc->m_iFMT == YUV420P_FMT) {
-		cudaMemcpy(pOutBuffer[0], ofc->m_outputFrameSDR, ofc->m_iDimY * ofc->m_iDimX, cudaMemcpyDeviceToHost);
-		convertNV12toYUV420PKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(ofc->m_tempFrameSDR, ofc->m_outputFrameSDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1));
-		cudaStreamSynchronize(ofc->m_csWarpStream1);
-		cudaMemcpy(pOutBuffer[1], ofc->m_tempFrameSDR, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), cudaMemcpyDeviceToHost);
-		cudaMemcpy(pOutBuffer[2], ofc->m_tempFrameSDR + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), cudaMemcpyDeviceToHost);
+		hipMemcpy(pOutBuffer[0], ofc->m_outputFrameSDR, ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToHost);
+		convertNV12toYUV420PKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(ofc->m_tempFrameSDR, ofc->m_outputFrameSDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1));
+		hipStreamSynchronize(priv->m_csWarpStream1);
+		hipMemcpy(pOutBuffer[1], ofc->m_tempFrameSDR, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), hipMemcpyDeviceToHost);
+		hipMemcpy(pOutBuffer[2], ofc->m_tempFrameSDR + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), hipMemcpyDeviceToHost);
 	} else {
 		printf("HopperRender does not support this video format: %d\n", ofc->m_iFMT);
 		exit(1);
 	}
 	
-	// Check for CUDA Errors
-	checkCudaError("downloadFrame");
+	// Check for HIP Errors
+	checkHIPError("downloadFrame");
 }
 
 /*
@@ -1388,34 +1421,35 @@ void downloadFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer) {
 * @param firstFrame: Whether this is the first frame
 */
 void processFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const bool firstFrame) {
+	struct priv *priv = (struct priv*)ofc->priv;
 	if (ofc->m_bIsHDR) {
 		if (ofc->m_fBlackLevel == 0.0f && ofc->m_fWhiteLevel == 1023.0f) {
-			cudaMemcpy(ofc->m_outputFrameHDR, firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1], ofc->m_iDimY * ofc->m_iDimX * 3, cudaMemcpyDeviceToDevice);
+			hipMemcpy(ofc->m_outputFrameHDR, firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1], ofc->m_iDimY * ofc->m_iDimX * 3, hipMemcpyDeviceToDevice);
 			downloadFrame(ofc, pOutBuffer);
 		} else {
-			processFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1],
+			processFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1],
 													ofc->m_outputFrameHDR,
 													ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
-			cudaStreamSynchronize(ofc->m_csWarpStream1);
-			cudaMemcpy(ofc->m_outputFrameHDR + ofc->m_iChannelIdxOffset, (firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1]) + ofc->m_iChannelIdxOffset, ofc->m_iDimY * (ofc->m_iDimX >> 1) * sizeof(unsigned short), cudaMemcpyDeviceToDevice);
+			hipStreamSynchronize(priv->m_csWarpStream1);
+			hipMemcpy(ofc->m_outputFrameHDR + ofc->m_iChannelIdxOffset, (firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1]) + ofc->m_iChannelIdxOffset, ofc->m_iDimY * (ofc->m_iDimX >> 1) * sizeof(unsigned short), hipMemcpyDeviceToDevice);
 			downloadFrame(ofc, pOutBuffer);
 		}
 	} else {
 		if (ofc->m_fBlackLevel == 0.0f && ofc->m_fWhiteLevel == 255.0f) {
-			cudaMemcpy(ofc->m_outputFrameSDR, firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1], ofc->m_iDimY * ofc->m_iDimX * 1.5, cudaMemcpyDeviceToDevice);
+			hipMemcpy(ofc->m_outputFrameSDR, firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1], ofc->m_iDimY * ofc->m_iDimX * 1.5, hipMemcpyDeviceToDevice);
 			downloadFrame(ofc, pOutBuffer);
 		} else {
-			processFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1>> >(firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1],
+			processFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1],
 													ofc->m_outputFrameSDR,
 													ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
-			cudaStreamSynchronize(ofc->m_csWarpStream1);
-			cudaMemcpy(ofc->m_outputFrameSDR + ofc->m_iChannelIdxOffset, (firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1]) + ofc->m_iChannelIdxOffset, ofc->m_iDimY * (ofc->m_iDimX >> 1), cudaMemcpyDeviceToDevice);
+			hipStreamSynchronize(priv->m_csWarpStream1);
+			hipMemcpy(ofc->m_outputFrameSDR + ofc->m_iChannelIdxOffset, (firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1]) + ofc->m_iChannelIdxOffset, ofc->m_iDimY * (ofc->m_iDimX >> 1), hipMemcpyDeviceToDevice);
 			downloadFrame(ofc, pOutBuffer);
 		}
 	}
 
-	// Check for CUDA Errors
-	checkCudaError("processFrame");
+	// Check for HIP Errors
+	checkHIPError("processFrame");
 }
 
 /*
@@ -1426,12 +1460,13 @@ void processFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const
 * @param iNumSteps: Number of steps executed to find the ideal offset (limits the maximum offset)
 */
 void calculateOpticalFlow(struct OpticalFlowCalc *ofc, unsigned int iNumIterations, unsigned int iNumSteps) {
+	struct priv *priv = (struct priv*)ofc->priv;
 	// Reset variables
 	unsigned int iNumStepsPerIter = iNumSteps; // Number of steps executed to find the ideal offset (limits the maximum offset)
 
 	// We set the initial window size to the next larger power of 2
 	unsigned int windowDim = 1;
-	unsigned int maxDim = max(ofc->m_iLowDimX, ofc->m_iLowDimY);
+	unsigned int maxDim = std::max(ofc->m_iLowDimX, ofc->m_iLowDimY);
     if (maxDim && !(maxDim & (maxDim - 1))) {
 		windowDim = maxDim;
 	} else {
@@ -1448,65 +1483,65 @@ void calculateOpticalFlow(struct OpticalFlowCalc *ofc, unsigned int iNumIteratio
 	size_t sharedMemSize = 16 * 16 * sizeof(unsigned int);
 
 	// Set layer 0 of the X-Dir to 0
-	cudaMemset(ofc->m_offsetArray12, 0, ofc->m_iLayerIdxOffset * sizeof(int));
+	hipMemset(ofc->m_offsetArray12, 0, ofc->m_iLayerIdxOffset * sizeof(int));
 	// Set layers 0-5 of the Y-Dir to 0
-	cudaMemset(ofc->m_offsetArray12 + ofc->m_iDirectionIdxOffset, 0, ofc->m_iDirectionIdxOffset * sizeof(int));
+	hipMemset(ofc->m_offsetArray12 + ofc->m_iDirectionIdxOffset, 0, ofc->m_iDirectionIdxOffset * sizeof(int));
 	// Set layers 1-4 of the X-Dir to -2,-1,1,2
-	setInitialOffset << <ofc->m_lowGrid16x16x4, ofc->m_threads16x16x1, 0, ofc->m_csOFCStream1 >> > (ofc->m_offsetArray12, ofc->m_iNumLayers, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLayerIdxOffset);
-	cudaStreamSynchronize(ofc->m_csOFCStream1);
+	setInitialOffset<<<priv->m_lowGrid16x16x4, priv->m_threads16x16x1, 0, priv->m_csOFCStream1>>>(ofc->m_offsetArray12, ofc->m_iNumLayers, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iLayerIdxOffset);
+	hipStreamSynchronize(priv->m_csOFCStream1);
 	
 	// We calculate the ideal offset array for each window size (entire frame, ..., individual pixels)
 	for (unsigned int iter = 0; iter < iNumIterations; iter++) {
 		// Calculate the number of steps for this iteration executed to find the ideal offset (limits the maximum offset)
 	    //iNumStepsPerIter = static_cast<unsigned int>(static_cast<double>(iNumSteps) - static_cast<double>(iter) * (static_cast<double>(iNumSteps) / static_cast<double>(iNumIterations)));
-		iNumStepsPerIter = max(static_cast<unsigned int>(static_cast<double>(iNumSteps) * exp(-static_cast<double>(3 * iter) / static_cast<double>(iNumIterations))), 1);
+		iNumStepsPerIter = std::max(static_cast<int>(static_cast<double>(iNumSteps) * exp(-static_cast<double>(3 * iter) / static_cast<double>(iNumIterations))), 1);
 
 		// Each step we adjust the offset array to find the ideal offset
 		for (unsigned int step = 0; step < iNumStepsPerIter; step++) {
 			// Reset the summed up delta array
-			cudaMemset(ofc->m_summedUpDeltaArray, 0, 5 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(unsigned int));
+			hipMemset(ofc->m_summedUpDeltaArray, 0, 5 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(unsigned int));
 
 			// 1. Calculate the image delta and sum up the deltas of each window
 			if (ofc->m_bIsHDR) {
-				calcDeltaSums << <iter == 0 ? ofc->m_lowGrid16x16x5 : ofc->m_lowGrid8x8x5, iter == 0 ? ofc->m_threads16x16x1 : ofc->m_threads8x8x1, sharedMemSize, ofc->m_csOFCStream1>> > (ofc->m_summedUpDeltaArray, 
+				calcDeltaSums<<<iter == 0 ? priv->m_lowGrid16x16x5 : priv->m_lowGrid8x8x5, iter == 0 ? priv->m_threads16x16x1 : priv->m_threads8x8x1, sharedMemSize, priv->m_csOFCStream1>>>(ofc->m_summedUpDeltaArray, 
 																ofc->m_blurredFrameHDR[1],
                                                                 ofc->m_blurredFrameHDR[2],
 															    ofc->m_offsetArray12, ofc->m_iLayerIdxOffset, ofc->m_iDirectionIdxOffset,
 																ofc->m_iDimY, ofc->m_iDimX, ofc->m_iLowDimY, ofc->m_iLowDimX, windowDim, ofc->m_cResolutionScalar);
 			} else {
-				calcDeltaSums << <iter == 0 ? ofc->m_lowGrid16x16x5 : ofc->m_lowGrid8x8x5, iter == 0 ? ofc->m_threads16x16x1 : ofc->m_threads8x8x1, sharedMemSize, ofc->m_csOFCStream1>> > (ofc->m_summedUpDeltaArray, 
+				calcDeltaSums<<<iter == 0 ? priv->m_lowGrid16x16x5 : priv->m_lowGrid8x8x5, iter == 0 ? priv->m_threads16x16x1 : priv->m_threads8x8x1, sharedMemSize, priv->m_csOFCStream1>>>(ofc->m_summedUpDeltaArray, 
 																ofc->m_blurredFrameSDR[1],
                                                                 ofc->m_blurredFrameSDR[2],
 															    ofc->m_offsetArray12, ofc->m_iLayerIdxOffset, ofc->m_iDirectionIdxOffset,
 																ofc->m_iDimY, ofc->m_iDimX, ofc->m_iLowDimY, ofc->m_iLowDimX, windowDim, ofc->m_cResolutionScalar);
 			}
 			
-			cudaStreamSynchronize(ofc->m_csOFCStream1);
+			hipStreamSynchronize(priv->m_csOFCStream1);
 
 			// 2. Normalize the summed up delta array and find the best layer
-			normalizeDeltaSums << <ofc->m_lowGrid8x8x1, ofc->m_threads8x8x5, 0, ofc->m_csOFCStream1 >> > (ofc->m_summedUpDeltaArray, ofc->m_lowestLayerArray,
+			normalizeDeltaSums<<<priv->m_lowGrid8x8x1, priv->m_threads8x8x5, 0, priv->m_csOFCStream1>>>(ofc->m_summedUpDeltaArray, ofc->m_lowestLayerArray,
 															   ofc->m_offsetArray12, windowDim, windowDim * windowDim,
 															   ofc->m_iDirectionIdxOffset, ofc->m_iLayerIdxOffset, ofc->m_iNumLayers, ofc->m_iLowDimY, ofc->m_iLowDimX);
-			cudaStreamSynchronize(ofc->m_csOFCStream1);
+			hipStreamSynchronize(priv->m_csOFCStream1);
 
 			// 3. Adjust the offset array based on the comparison results
-			adjustOffsetArray << <ofc->m_lowGrid32x32x1, ofc->m_threads32x32x1, 0, ofc->m_csOFCStream1 >> > (ofc->m_offsetArray12, ofc->m_lowestLayerArray,
+			adjustOffsetArray<<<priv->m_lowGrid32x32x1, priv->m_threads32x32x1, 0, priv->m_csOFCStream1>>>(ofc->m_offsetArray12, ofc->m_lowestLayerArray,
 															  ofc->m_statusArray, windowDim, ofc->m_iDirectionIdxOffset, ofc->m_iLayerIdxOffset,
 															  ofc->m_iNumLayers, ofc->m_iLowDimY, ofc->m_iLowDimX, step == iNumStepsPerIter - 1);
-			cudaStreamSynchronize(ofc->m_csOFCStream1);
+			hipStreamSynchronize(priv->m_csOFCStream1);
 		}
 
 		// 4. Adjust variables for the next iteration
-		windowDim = max(windowDim >> 1, 1);
+		windowDim = std::max(windowDim >> 1, (unsigned int)1);
 		sharedMemSize = 8 * 8 * sizeof(unsigned int);
 		if (windowDim == 1) sharedMemSize = 0;
 
 		// Reset the status array
-		cudaMemset(ofc->m_statusArray, 0, ofc->m_iLowDimY * ofc->m_iLowDimX);
+		hipMemset(ofc->m_statusArray, 0, ofc->m_iLowDimY * ofc->m_iLowDimX);
 	}
 
-	// Check for CUDA Errors
-	checkCudaError("calculateOpticalFlow");
+	// Check for HIP Errors
+	checkHIPError("calculateOpticalFlow");
 }
 
 /*
@@ -1517,13 +1552,14 @@ void calculateOpticalFlow(struct OpticalFlowCalc *ofc, unsigned int iNumIteratio
 * @param outputMode: The mode to output the frames in (0: WarpedFrame 1->2, 1: WarpedFrame 2->1, 2: Both for blending)
 */
 void warpFrames(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode) {
+	struct priv *priv = (struct priv*)ofc->priv;
 	// Calculate the blend scalar
 	const float frameScalar12 = fScalar;
 	const float frameScalar21 = 1.0f - fScalar;
 
 	// Reset the hit count array
-	cudaMemset(ofc->m_hitCount12, 0, ofc->m_iDimY * ofc->m_iDimX * sizeof(int));
-	cudaMemset(ofc->m_hitCount21, 0, ofc->m_iDimY * ofc->m_iDimX * sizeof(int));
+	hipMemset(ofc->m_hitCount12, 0, ofc->m_iDimY * ofc->m_iDimX * sizeof(int));
+	hipMemset(ofc->m_hitCount21, 0, ofc->m_iDimY * ofc->m_iDimX * sizeof(int));
 
 	// #####################
 	// ###### WARPING ######
@@ -1531,7 +1567,7 @@ void warpFrames(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode
 	// Frame 1 to Frame 2
 	if (outputMode != 1) {
 		if (ofc->m_bIsHDR) {
-			warpFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> > (ofc->m_frameHDR[0],
+			warpFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[0],
 																									 ofc->m_blurredOffsetArray12[0],
 																									 ofc->m_hitCount12,
 																									 (outputMode < 2) ? ofc->m_outputFrameHDR : ofc->m_warpedFrame12HDR,
@@ -1544,7 +1580,7 @@ void warpFrames(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode
 																									 ofc->m_iLayerIdxOffset,
 																									 ofc->m_iChannelIdxOffset);
 		} else {
-			warpFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> > (ofc->m_frameSDR[0],
+			warpFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[0],
 																									 ofc->m_blurredOffsetArray12[0],
 																									 ofc->m_hitCount12,
 																									 (outputMode < 2) ? ofc->m_outputFrameSDR : ofc->m_warpedFrame12SDR,
@@ -1562,7 +1598,7 @@ void warpFrames(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode
 	// Frame 2 to Frame 1
 	if (outputMode != 0) {
 		if (ofc->m_bIsHDR) {
-			warpFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream2 >> > (ofc->m_frameHDR[1],
+			warpFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream2>>>(ofc->m_frameHDR[1],
 																									 ofc->m_blurredOffsetArray21[0],
 																									 ofc->m_hitCount21,
 																									 (outputMode < 2) ? ofc->m_outputFrameHDR : ofc->m_warpedFrame21HDR,
@@ -1575,7 +1611,7 @@ void warpFrames(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode
 																									 ofc->m_iLayerIdxOffset,
 																									 ofc->m_iChannelIdxOffset);
 		} else {
-			warpFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream2 >> > (ofc->m_frameSDR[1],
+			warpFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream2>>>(ofc->m_frameSDR[1],
 																									 ofc->m_blurredOffsetArray21[0],
 																									 ofc->m_hitCount21,
 																									 (outputMode < 2) ? ofc->m_outputFrameSDR : ofc->m_warpedFrame21SDR,
@@ -1589,8 +1625,8 @@ void warpFrames(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode
 																									 ofc->m_iChannelIdxOffset);
 		}
 	}
-	if (outputMode != 1) cudaStreamSynchronize(ofc->m_csWarpStream1);
-	if (outputMode != 0) cudaStreamSynchronize(ofc->m_csWarpStream2);
+	if (outputMode != 1) hipStreamSynchronize(priv->m_csWarpStream1);
+	if (outputMode != 0) hipStreamSynchronize(priv->m_csWarpStream2);
 	
 	// ##############################
 	// ###### ARTIFACT REMOVAL ######
@@ -1598,14 +1634,14 @@ void warpFrames(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode
 	// Frame 1 to Frame 2
 	if (outputMode != 1) {
 		if (ofc->m_bIsHDR) {
-			artifactRemovalKernel << <ofc->m_grid8x8x1, ofc->m_threads8x8x2, 0, ofc->m_csWarpStream1 >> > (ofc->m_frameHDR[0],
+			artifactRemovalKernel<<<priv->m_grid8x8x1, priv->m_threads8x8x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[0],
 																									   ofc->m_hitCount12,
 																									   (outputMode < 2) ? ofc->m_outputFrameHDR : ofc->m_warpedFrame12HDR,
 																									   ofc->m_iDimY,
 																									   ofc->m_iDimX, ofc->m_iRealDimX,
 																									   ofc->m_iChannelIdxOffset);
 		} else {
-			artifactRemovalKernel << <ofc->m_grid8x8x1, ofc->m_threads8x8x2, 0, ofc->m_csWarpStream1 >> > (ofc->m_frameSDR[0],
+			artifactRemovalKernel<<<priv->m_grid8x8x1, priv->m_threads8x8x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[0],
 																									   ofc->m_hitCount12,
 																									   (outputMode < 2) ? ofc->m_outputFrameSDR : ofc->m_warpedFrame12SDR,
 																									   ofc->m_iDimY,
@@ -1616,14 +1652,14 @@ void warpFrames(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode
 	// Frame 2 to Frame 1
 	if (outputMode != 0) {
 		if (ofc->m_bIsHDR) {
-			artifactRemovalKernel << <ofc->m_grid8x8x1, ofc->m_threads8x8x2, 0, ofc->m_csWarpStream2 >> > (ofc->m_frameHDR[1],
+			artifactRemovalKernel<<<priv->m_grid8x8x1, priv->m_threads8x8x2, 0, priv->m_csWarpStream2>>>(ofc->m_frameHDR[1],
 																									   ofc->m_hitCount21,
 																									   (outputMode < 2) ? ofc->m_outputFrameHDR : ofc->m_warpedFrame21HDR,
 																									   ofc->m_iDimY,
 																									   ofc->m_iDimX, ofc->m_iRealDimX,
 																									   ofc->m_iChannelIdxOffset);
 		} else {
-			artifactRemovalKernel << <ofc->m_grid8x8x1, ofc->m_threads8x8x2, 0, ofc->m_csWarpStream2 >> > (ofc->m_frameSDR[1],
+			artifactRemovalKernel<<<priv->m_grid8x8x1, priv->m_threads8x8x2, 0, priv->m_csWarpStream2>>>(ofc->m_frameSDR[1],
 																									   ofc->m_hitCount21,
 																									   (outputMode < 2) ? ofc->m_outputFrameSDR : ofc->m_warpedFrame21SDR,
 																									   ofc->m_iDimY,
@@ -1631,11 +1667,11 @@ void warpFrames(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode
 																									   ofc->m_iChannelIdxOffset);
 		}
 	}
-	if (outputMode != 1) cudaStreamSynchronize(ofc->m_csWarpStream1);
-	if (outputMode != 0) cudaStreamSynchronize(ofc->m_csWarpStream2);
+	if (outputMode != 1) hipStreamSynchronize(priv->m_csWarpStream1);
+	if (outputMode != 0) hipStreamSynchronize(priv->m_csWarpStream2);
 
-	// Check for CUDA Errors
-	checkCudaError("warpFrames");
+	// Check for HIP Errors
+	checkHIPError("warpFrames");
 }
 
 /*
@@ -1645,25 +1681,26 @@ void warpFrames(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode
 * @param fScalar: The scalar to blend the frames with
 */
 void blendFrames(struct OpticalFlowCalc *ofc, float fScalar) {
+	struct priv *priv = (struct priv*)ofc->priv;
 	// Calculate the blend scalar
 	const float frame1Scalar = 1.0f - fScalar;
 	const float frame2Scalar = fScalar;
 
 	// Blend the frames
 	if (ofc->m_bIsHDR) {
-		blendFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> >(ofc->m_warpedFrame12HDR, ofc->m_warpedFrame21HDR,
+		blendFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_warpedFrame12HDR, ofc->m_warpedFrame21HDR,
 												 ofc->m_outputFrameHDR, frame1Scalar, frame2Scalar,
 	                                             ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX, ofc->m_iChannelIdxOffset, ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
 	} else {
-		blendFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> >(ofc->m_warpedFrame12SDR, ofc->m_warpedFrame21SDR,
+		blendFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_warpedFrame12SDR, ofc->m_warpedFrame21SDR,
 												 ofc->m_outputFrameSDR, frame1Scalar, frame2Scalar,
 	                                             ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX, ofc->m_iChannelIdxOffset, ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
 	}
 
-	cudaStreamSynchronize(ofc->m_csWarpStream1);
+	hipStreamSynchronize(priv->m_csWarpStream1);
 
-	// Check for CUDA Errors
-	checkCudaError("blendFrames");
+	// Check for HIP Errors
+	checkHIPError("blendFrames");
 }
 
 /*
@@ -1672,21 +1709,22 @@ void blendFrames(struct OpticalFlowCalc *ofc, float fScalar) {
 * @param ofc: Pointer to the optical flow calculator
 */
 void insertFrame(struct OpticalFlowCalc *ofc) {
+	struct priv *priv = (struct priv*)ofc->priv;
 	if (ofc->m_bIsHDR) {
-		insertFrameKernel << <ofc->m_halfGrid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> >(ofc->m_frameHDR[0],
+		insertFrameKernel<<<priv->m_halfGrid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[0],
 												 ofc->m_outputFrameHDR,
 	                                             ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX, ofc->m_iChannelIdxOffset,
 												 ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
 	} else {
-		insertFrameKernel << <ofc->m_halfGrid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> >(ofc->m_frameSDR[0],
+		insertFrameKernel<<<priv->m_halfGrid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[0],
 												 ofc->m_outputFrameSDR,
 	                                             ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX, ofc->m_iChannelIdxOffset,
 												 ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
 	}
-	cudaStreamSynchronize(ofc->m_csWarpStream1);
+	hipStreamSynchronize(priv->m_csWarpStream1);
 
-	// Check for CUDA Errors
-	checkCudaError("insertFrame");
+	// Check for HIP Errors
+	checkHIPError("insertFrame");
 }
 
 /*
@@ -1697,6 +1735,7 @@ void insertFrame(struct OpticalFlowCalc *ofc) {
 * @param frameCounter: The current frame counter
 */
 void sideBySideFrame(struct OpticalFlowCalc *ofc, float fScalar, const unsigned int frameCounter) {
+	struct priv *priv = (struct priv*)ofc->priv;
 	// Calculate the blend scalar
 	const float frame1Scalar = 1.0f - fScalar;
 	const float frame2Scalar = fScalar;
@@ -1705,25 +1744,25 @@ void sideBySideFrame(struct OpticalFlowCalc *ofc, float fScalar, const unsigned 
 
 	if (ofc->m_bIsHDR) {
 		if (frameCounter == 1) {
-			sideBySideFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> >(ofc->m_frameHDR[2], ofc->m_frameHDR[2], 
+			sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[2], ofc->m_frameHDR[2], 
 														ofc->m_frameHDR[2],
 														ofc->m_outputFrameHDR, frame1Scalar, frame2Scalar,
 														ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
 														ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
 		} else if (frameCounter == 2) {
-			sideBySideFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> >(ofc->m_frameHDR[1], ofc->m_frameHDR[1], 
+			sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[1], ofc->m_frameHDR[1], 
 														ofc->m_frameHDR[1],
 														ofc->m_outputFrameHDR, frame1Scalar, frame2Scalar,
 														ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
 														ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
 		} else if (frameCounter <= 3) {
-			sideBySideFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> >(ofc->m_frameHDR[0], ofc->m_frameHDR[0], 
+			sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[0], ofc->m_frameHDR[0], 
 														ofc->m_frameHDR[0],
 														ofc->m_outputFrameHDR, frame1Scalar, frame2Scalar,
 														ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
 														ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
 		} else {
-			sideBySideFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> >(ofc->m_frameHDR[0], ofc->m_warpedFrame12HDR, 
+			sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[0], ofc->m_warpedFrame12HDR, 
 														ofc->m_warpedFrame21HDR,
 														ofc->m_outputFrameHDR, frame1Scalar, frame2Scalar,
 														ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
@@ -1731,35 +1770,35 @@ void sideBySideFrame(struct OpticalFlowCalc *ofc, float fScalar, const unsigned 
 		}
 	} else {
 		if (frameCounter == 1) {
-			sideBySideFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> >(ofc->m_frameSDR[2], ofc->m_frameSDR[2], 
+			sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[2], ofc->m_frameSDR[2], 
 														ofc->m_frameSDR[2],
 														ofc->m_outputFrameSDR, frame1Scalar, frame2Scalar,
 														ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
 														ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
 		} else if (frameCounter == 2) {
-			sideBySideFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> >(ofc->m_frameSDR[1], ofc->m_frameSDR[1], 
+			sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[1], ofc->m_frameSDR[1], 
 														ofc->m_frameSDR[1],
 														ofc->m_outputFrameSDR, frame1Scalar, frame2Scalar,
 														ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
 														ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
 		} else if (frameCounter <= 3) {
-			sideBySideFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> >(ofc->m_frameSDR[0], ofc->m_frameSDR[0], 
+			sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[0], ofc->m_frameSDR[0], 
 														ofc->m_frameSDR[0],
 														ofc->m_outputFrameSDR, frame1Scalar, frame2Scalar,
 														ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
 														ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
 		} else {
-			sideBySideFrameKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> >(ofc->m_frameSDR[0], ofc->m_warpedFrame12SDR, 
+			sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[0], ofc->m_warpedFrame12SDR, 
 														ofc->m_warpedFrame21SDR,
 														ofc->m_outputFrameSDR, frame1Scalar, frame2Scalar,
 														ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
 														ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
 		}
 	}
-	cudaStreamSynchronize(ofc->m_csWarpStream1);
+	hipStreamSynchronize(priv->m_csWarpStream1);
 
-	// Check for CUDA Errors
-	checkCudaError("sideBySideFrame");
+	// Check for HIP Errors
+	checkHIPError("sideBySideFrame");
 }
 
 /*
@@ -1769,20 +1808,21 @@ void sideBySideFrame(struct OpticalFlowCalc *ofc, float fScalar, const unsigned 
 * @param blendScalar: The scalar that determines how much of the source frame is blended with the flow
 */
 void drawFlowAsHSV(struct OpticalFlowCalc *ofc, const float blendScalar) {
+	struct priv *priv = (struct priv*)ofc->priv;
 	if (ofc->m_bIsHDR) {
-		convertFlowToHSVKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> > (ofc->m_blurredOffsetArray12[0], ofc->m_outputFrameHDR,
+		convertFlowToHSVKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_blurredOffsetArray12[0], ofc->m_outputFrameHDR,
 														ofc->m_frameHDR[1], blendScalar, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,
-														ofc->m_cResolutionScalar, ofc->m_iLayerIdxOffset, ofc->m_iChannelIdxOffset, ofc->m_iFMT == CUDA_FMT);
+														ofc->m_cResolutionScalar, ofc->m_iLayerIdxOffset, ofc->m_iChannelIdxOffset, ofc->m_iFMT == HIP_FMT);
 	} else {
-		convertFlowToHSVKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> > (ofc->m_blurredOffsetArray12[0], ofc->m_outputFrameSDR,
+		convertFlowToHSVKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_blurredOffsetArray12[0], ofc->m_outputFrameSDR,
 														ofc->m_frameSDR[1], blendScalar, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,
-														ofc->m_cResolutionScalar, ofc->m_iLayerIdxOffset, ofc->m_iChannelIdxOffset, ofc->m_iFMT == CUDA_FMT);
+														ofc->m_cResolutionScalar, ofc->m_iLayerIdxOffset, ofc->m_iChannelIdxOffset, ofc->m_iFMT == HIP_FMT);
 	}
 	
-	cudaStreamSynchronize(ofc->m_csWarpStream1);
+	hipStreamSynchronize(priv->m_csWarpStream1);
 
-	// Check for CUDA Errors
-	checkCudaError("drawFlowAsHSV");
+	// Check for HIP Errors
+	checkHIPError("drawFlowAsHSV");
 }
 
 /*
@@ -1791,20 +1831,21 @@ void drawFlowAsHSV(struct OpticalFlowCalc *ofc, const float blendScalar) {
 * @param ofc: Pointer to the optical flow calculator
 */
 void drawFlowAsGreyscale(struct OpticalFlowCalc *ofc) {
+	struct priv *priv = (struct priv*)ofc->priv;
 	if (ofc->m_bIsHDR) {
-		convertFlowToGreyscaleKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> > (ofc->m_blurredOffsetArray12[0], ofc->m_outputFrameHDR,
+		convertFlowToGreyscaleKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_blurredOffsetArray12[0], ofc->m_outputFrameHDR,
 														ofc->m_frameHDR[1], ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,
-														ofc->m_cResolutionScalar, ofc->m_iLayerIdxOffset, ofc->m_iChannelIdxOffset, ofc->m_iFMT == CUDA_FMT, (int)ofc->m_fMaxVal, ofc->m_iMiddleValue);
+														ofc->m_cResolutionScalar, ofc->m_iLayerIdxOffset, ofc->m_iChannelIdxOffset, ofc->m_iFMT == HIP_FMT, (int)ofc->m_fMaxVal, ofc->m_iMiddleValue);
 	} else {
-		convertFlowToGreyscaleKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csWarpStream1 >> > (ofc->m_blurredOffsetArray12[0], ofc->m_outputFrameSDR,
+		convertFlowToGreyscaleKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_blurredOffsetArray12[0], ofc->m_outputFrameSDR,
 														ofc->m_frameSDR[1], ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,
-														ofc->m_cResolutionScalar, ofc->m_iLayerIdxOffset, ofc->m_iChannelIdxOffset, ofc->m_iFMT == CUDA_FMT, (int)ofc->m_fMaxVal, ofc->m_iMiddleValue);
+														ofc->m_cResolutionScalar, ofc->m_iLayerIdxOffset, ofc->m_iChannelIdxOffset, ofc->m_iFMT == HIP_FMT, (int)ofc->m_fMaxVal, ofc->m_iMiddleValue);
 	}
 	
-	cudaStreamSynchronize(ofc->m_csWarpStream1);
+	hipStreamSynchronize(priv->m_csWarpStream1);
 
-	// Check for CUDA Errors
-	checkCudaError("drawFlowAsGreyscale");
+	// Check for HIP Errors
+	checkHIPError("drawFlowAsGreyscale");
 }
 
 /*
@@ -1813,16 +1854,17 @@ void drawFlowAsGreyscale(struct OpticalFlowCalc *ofc) {
 * @param ofc: Pointer to the optical flow calculator
 */
 void flipFlow(struct OpticalFlowCalc *ofc) {
+	struct priv *priv = (struct priv*)ofc->priv;
 	// Reset the offset array
-	cudaMemset(ofc->m_offsetArray21, 0, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(int));
+	hipMemset(ofc->m_offsetArray21, 0, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(int));
 
 	// Launch kernel
-	flipFlowKernel << <ofc->m_lowGrid16x16x1, ofc->m_threads16x16x2, 0, ofc->m_csOFCStream1 >> > (ofc->m_offsetArray12, ofc->m_offsetArray21,
+	flipFlowKernel<<<priv->m_lowGrid16x16x1, priv->m_threads16x16x2, 0, priv->m_csOFCStream1>>>(ofc->m_offsetArray12, ofc->m_offsetArray21,
 												            ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_cResolutionScalar, ofc->m_iDirectionIdxOffset, ofc->m_iLayerIdxOffset);
-	cudaStreamSynchronize(ofc->m_csOFCStream1);
+	hipStreamSynchronize(priv->m_csOFCStream1);
 
-	// Check for CUDA Errors
-	checkCudaError("flipFlow");
+	// Check for HIP Errors
+	checkHIPError("flipFlow");
 }
 
 /*
@@ -1831,10 +1873,11 @@ void flipFlow(struct OpticalFlowCalc *ofc) {
 * @param ofc: Pointer to the optical flow calculator
 */
 void blurFlowArrays(struct OpticalFlowCalc *ofc) {
+	struct priv *priv = (struct priv*)ofc->priv;
 	const unsigned char boundsOffset = ofc->m_iFlowBlurKernelSize >> 1;
 	const unsigned char chacheSize = ofc->m_iFlowBlurKernelSize + (boundsOffset << 1);
 	const size_t sharedMemSize = chacheSize * chacheSize * sizeof(int);
-	const unsigned short totalThreads = max(ofc->m_iFlowBlurKernelSize * ofc->m_iFlowBlurKernelSize, 1);
+	const unsigned short totalThreads = std::max(ofc->m_iFlowBlurKernelSize * ofc->m_iFlowBlurKernelSize, (unsigned int)1);
     const unsigned short totalEntries = chacheSize * chacheSize;
     const unsigned char avgEntriesPerThread = totalEntries / totalThreads;
 	const unsigned short remainder = totalEntries % totalThreads;
@@ -1843,35 +1886,35 @@ void blurFlowArrays(struct OpticalFlowCalc *ofc) {
 	const unsigned short pixelCount = (end - start) * (end - start);
 
 	// Calculate the number of blocks needed
-	const unsigned int NUM_BLOCKS_X = max(static_cast<int>(ceil(static_cast<double>(ofc->m_iLowDimX) / min(ofc->m_iFlowBlurKernelSize, 32))), 1);
-	const unsigned int NUM_BLOCKS_Y = max(static_cast<int>(ceil(static_cast<double>(ofc->m_iLowDimY) / min(ofc->m_iFlowBlurKernelSize, 32))), 1);
+	const unsigned int NUM_BLOCKS_X = std::max(static_cast<int>(ceil(static_cast<double>(ofc->m_iLowDimX) / std::min(ofc->m_iFlowBlurKernelSize, (unsigned int)32))), 1);
+	const unsigned int NUM_BLOCKS_Y = std::max(static_cast<int>(ceil(static_cast<double>(ofc->m_iLowDimY) / std::min(ofc->m_iFlowBlurKernelSize, (unsigned int)32))), 1);
 
 	// Use dim3 structs for block and grid size
 	dim3 gridBF(NUM_BLOCKS_X, NUM_BLOCKS_Y, 2);
-	dim3 threadsBF(min(ofc->m_iFlowBlurKernelSize, 32), min(ofc->m_iFlowBlurKernelSize, 32), 1);
+	dim3 threadsBF(std::min(ofc->m_iFlowBlurKernelSize, (unsigned int)32), std::min(ofc->m_iFlowBlurKernelSize, (unsigned int)32), (unsigned int)1);
 
 	// No need to blur the flow if the kernel size is less than 4
 	if (ofc->m_iFlowBlurKernelSize < 4) {
 		// Offset12 X-Dir
-		cudaMemcpy(ofc->m_blurredOffsetArray12[1], ofc->m_offsetArray12, ofc->m_iLayerIdxOffset * sizeof(int), cudaMemcpyDeviceToDevice);
+		hipMemcpy(ofc->m_blurredOffsetArray12[1], ofc->m_offsetArray12, ofc->m_iLayerIdxOffset * sizeof(int), hipMemcpyDeviceToDevice);
 		// Offset12 Y-Dir
-		cudaMemcpy(ofc->m_blurredOffsetArray12[1] + ofc->m_iLayerIdxOffset, ofc->m_offsetArray12 + ofc->m_iDirectionIdxOffset, ofc->m_iLayerIdxOffset * sizeof(int), cudaMemcpyDeviceToDevice);
+		hipMemcpy(ofc->m_blurredOffsetArray12[1] + ofc->m_iLayerIdxOffset, ofc->m_offsetArray12 + ofc->m_iDirectionIdxOffset, ofc->m_iLayerIdxOffset * sizeof(int), hipMemcpyDeviceToDevice);
 		// Offset21 X&Y-Dir
-		cudaMemcpy(ofc->m_blurredOffsetArray21[1], ofc->m_offsetArray21, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(int), cudaMemcpyDeviceToDevice);
+		hipMemcpy(ofc->m_blurredOffsetArray21[1], ofc->m_offsetArray21, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(int), hipMemcpyDeviceToDevice);
 	} else {
 		// Launch kernels
-		blurFlowKernel << <gridBF, threadsBF, sharedMemSize, ofc->m_csOFCStream1 >> > (ofc->m_offsetArray12, ofc->m_blurredOffsetArray12[1], ofc->m_iFlowBlurKernelSize, chacheSize, boundsOffset, avgEntriesPerThread, remainder, start, end, pixelCount, ofc->m_iNumLayers, ofc->m_iLowDimY, ofc->m_iLowDimX);
-		blurFlowKernel << <gridBF, threadsBF, sharedMemSize, ofc->m_csOFCStream2 >> > (ofc->m_offsetArray21, ofc->m_blurredOffsetArray21[1], ofc->m_iFlowBlurKernelSize, chacheSize, boundsOffset, avgEntriesPerThread, remainder, start, end, pixelCount, 1, ofc->m_iLowDimY, ofc->m_iLowDimX);
-		//cleanFlowKernel << <m_lowGrid16x16x1, m_threads16x16x2, 0, blurStream1 >> > (m_offsetArray12, m_blurredOffsetArray12, m_iLowDimY, m_iLowDimX);
-		//cleanFlowKernel << <m_lowGrid16x16x1, m_threads16x16x2, 0, blurStream2 >> > (m_offsetArray21, m_blurredOffsetArray21, m_iLowDimY, m_iLowDimX);
+		blurFlowKernel<<<gridBF, threadsBF, sharedMemSize, priv->m_csOFCStream1>>>(ofc->m_offsetArray12, ofc->m_blurredOffsetArray12[1], ofc->m_iFlowBlurKernelSize, chacheSize, boundsOffset, avgEntriesPerThread, remainder, start, end, pixelCount, ofc->m_iNumLayers, ofc->m_iLowDimY, ofc->m_iLowDimX);
+		blurFlowKernel<<<gridBF, threadsBF, sharedMemSize, priv->m_csOFCStream2>>>(ofc->m_offsetArray21, ofc->m_blurredOffsetArray21[1], ofc->m_iFlowBlurKernelSize, chacheSize, boundsOffset, avgEntriesPerThread, remainder, start, end, pixelCount, 1, ofc->m_iLowDimY, ofc->m_iLowDimX);
+		//cleanFlowKernel<<<m_lowGrid16x16x1, m_threads16x16x2, 0, blurStream1>>>(m_offsetArray12, m_blurredOffsetArray12, m_iLowDimY, m_iLowDimX);
+		//cleanFlowKernel<<<m_lowGrid16x16x1, m_threads16x16x2, 0, blurStream2>>>(m_offsetArray21, m_blurredOffsetArray21, m_iLowDimY, m_iLowDimX);
 
 		// Synchronize streams to ensure completion
-		cudaStreamSynchronize(ofc->m_csOFCStream1);
-		cudaStreamSynchronize(ofc->m_csOFCStream2);
+		hipStreamSynchronize(priv->m_csOFCStream1);
+		hipStreamSynchronize(priv->m_csOFCStream2);
 	}
 
-	// Check for CUDA Errors
-	checkCudaError("blurFlowArrays");
+	// Check for HIP Errors
+	checkHIPError("blurFlowArrays");
 }
 
 /*
@@ -1887,7 +1930,7 @@ void saveImage(struct OpticalFlowCalc *ofc, const char* filePath) {
 
 	// Copy the image array to the CPU
 	size_t dataSize = 1.5 * ofc->m_iDimY * ofc->m_iDimX;
-	cudaMemcpy(ofc->m_imageArrayCPU, ofc->m_outputFrameSDR, dataSize, cudaMemcpyDeviceToHost);
+	hipMemcpy(ofc->m_imageArrayCPU, ofc->m_outputFrameSDR, dataSize, hipMemcpyDeviceToHost);
 
 	// Open file in binary write mode
     FILE *file = fopen(filePath, "wb");
@@ -1909,17 +1952,6 @@ void saveImage(struct OpticalFlowCalc *ofc, const char* filePath) {
 }
 
 /*
-* Performs a tearing test on the output frame
-*
-* @param ofc: Pointer to the optical flow calculator
-*/
-void tearingTest(struct OpticalFlowCalc *ofc) {
-	cudaMemset(ofc->m_outputFrameSDR + ofc->m_iChannelIdxOffset, 128, (ofc->m_iDimY >> 1) * ofc->m_iDimX);
-	tearingTestKernel << <ofc->m_grid16x16x1, ofc->m_threads16x16x1, 0, ofc->m_csWarpStream1 >> >(ofc->m_outputFrameSDR, (ofc->m_iFrameOutputCounter * 5) % ofc->m_iDimX, 10, ofc->m_iDimY, ofc->m_iDimX);
-	cudaStreamSynchronize(ofc->m_csWarpStream1);
-}
-
-/*
 * Creates a new GPUArray of type unsigned char
 *
 * @param size: Number of entries in the array
@@ -1927,10 +1959,10 @@ void tearingTest(struct OpticalFlowCalc *ofc) {
 unsigned char* createGPUArrayUC(const size_t size) {
 	// Allocate VRAM
 	unsigned char* arrayPtrGPU;
-	cudaMalloc(&arrayPtrGPU, size);
+	hipMalloc(&arrayPtrGPU, size);
 
 	// Set all entries to 0
-	cudaMemset(arrayPtrGPU, 0, size);
+	hipMemset(arrayPtrGPU, 0, size);
 
 	return arrayPtrGPU;
 }
@@ -1943,10 +1975,10 @@ unsigned char* createGPUArrayUC(const size_t size) {
 unsigned short* createGPUArrayUS(const size_t size) {
 	// Allocate VRAM
 	unsigned short* arrayPtrGPU;
-	cudaMalloc(&arrayPtrGPU, size * sizeof(unsigned short));
+	hipMalloc(&arrayPtrGPU, size * sizeof(unsigned short));
 
 	// Set all entries to 0
-	cudaMemset(arrayPtrGPU, 0, size * sizeof(unsigned short));
+	hipMemset(arrayPtrGPU, 0, size * sizeof(unsigned short));
 
 	return arrayPtrGPU;
 }
@@ -1959,10 +1991,10 @@ unsigned short* createGPUArrayUS(const size_t size) {
 int* createGPUArrayI(const size_t size) {
 	// Allocate VRAM
 	int* arrayPtrGPU;
-	cudaMalloc(&arrayPtrGPU, size * sizeof(int));
+	hipMalloc(&arrayPtrGPU, size * sizeof(int));
 
 	// Set all entries to 0
-	cudaMemset(arrayPtrGPU, 0, size * sizeof(int));
+	hipMemset(arrayPtrGPU, 0, size * sizeof(int));
 
 	return arrayPtrGPU;
 }
@@ -1975,10 +2007,10 @@ int* createGPUArrayI(const size_t size) {
 unsigned int* createGPUArrayUI(const size_t size) {
 	// Allocate VRAM
 	unsigned int* arrayPtrGPU;
-	cudaMalloc(&arrayPtrGPU, size * sizeof(unsigned int));
+	hipMalloc(&arrayPtrGPU, size * sizeof(unsigned int));
 
 	// Set all entries to 0
-	cudaMemset(arrayPtrGPU, 0, size * sizeof(unsigned int));
+	hipMemset(arrayPtrGPU, 0, size * sizeof(unsigned int));
 
 	return arrayPtrGPU;
 }
@@ -1996,8 +2028,13 @@ unsigned int* createGPUArrayUI(const size_t size) {
 * @param fmt: The format of the frames
 */
 void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, const int realDimX, unsigned char resolutionScalar, unsigned int flowBlurKernelSize, bool isHDR, int fmt) {
+	// Private Data
+	ofc->priv = calloc(1, sizeof(struct priv));
+	struct priv *priv = (struct priv*)ofc->priv;
+	
 	// Functions
 	ofc->free = free;
+	ofc->adjustFrameScalar = adjustFrameScalar;
 	ofc->updateFrame = updateFrame;
 	ofc->downloadFrame = downloadFrame;
 	ofc->processFrame = processFrame;
@@ -2012,7 +2049,6 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ofc->drawFlowAsHSV = drawFlowAsHSV;
 	ofc->drawFlowAsGreyscale = drawFlowAsGreyscale;
 	ofc->saveImage = saveImage;
-	ofc->tearingTest = tearingTest;
 
 	// Video properties
 	ofc->m_iDimX = dimX;
@@ -2022,7 +2058,7 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ofc->m_bIsHDR = isHDR;
 	ofc->m_iFMT = fmt;
 	// P010 format
-	if (isHDR && fmt == CUDA_FMT) {
+	if (isHDR && fmt == HIP_FMT) {
 		ofc->m_fMaxVal = 65535.0f;
 		ofc->m_iMiddleValue = 32768;
 	// YUV420P10 format
@@ -2045,56 +2081,55 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ofc->m_iLayerIdxOffset = ofc->m_iLowDimY * ofc->m_iLowDimX;
 	ofc->m_iChannelIdxOffset = ofc->m_iDimY * ofc->m_iDimX;
 	ofc->m_iFlowBlurKernelSize = flowBlurKernelSize;
-	ofc->m_iFrameOutputCounter = 0;
 
 	// Girds
-	ofc->m_lowGrid32x32x1.x = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimX) / 32.0), 1.0));
-	ofc->m_lowGrid32x32x1.y = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimY) / 32.0), 1.0));
-	ofc->m_lowGrid32x32x1.z = 1;
-	ofc->m_lowGrid16x16x5.x = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimX) / 16.0), 1.0));
-	ofc->m_lowGrid16x16x5.y = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimY) / 16.0), 1.0));
-	ofc->m_lowGrid16x16x5.z = 5;
-	ofc->m_lowGrid16x16x4.x = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimX) / 16.0), 1.0));
-	ofc->m_lowGrid16x16x4.y = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimY) / 16.0), 1.0));
-	ofc->m_lowGrid16x16x4.z = 4;
-	ofc->m_lowGrid16x16x1.x = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimX) / 16.0), 1.0));
-	ofc->m_lowGrid16x16x1.y = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimY) / 16.0), 1.0));
-	ofc->m_lowGrid16x16x1.z = 1;
-	ofc->m_lowGrid8x8x5.x = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimX) / 8.0), 1.0));
-	ofc->m_lowGrid8x8x5.y = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimY) / 8.0), 1.0));
-	ofc->m_lowGrid8x8x5.z = 5;
-	ofc->m_lowGrid8x8x1.x = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimX) / 8.0), 1.0));
-	ofc->m_lowGrid8x8x1.y = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimY) / 8.0), 1.0));
-	ofc->m_lowGrid8x8x1.z = 1;
-	ofc->m_grid16x16x1.x = static_cast<int>(fmax(ceil(dimX / 16.0), 1.0));
-	ofc->m_grid16x16x1.y = static_cast<int>(fmax(ceil(dimY / 16.0), 1.0));
-	ofc->m_grid16x16x1.z = 1;
-	ofc->m_halfGrid16x16x1.x = static_cast<int>(fmax(ceil(dimX / 32.0), 1.0));
-	ofc->m_halfGrid16x16x1.y = static_cast<int>(fmax(ceil(dimY / 16.0), 1.0));
-	ofc->m_halfGrid16x16x1.z = 1;
-	ofc->m_grid8x8x1.x = static_cast<int>(fmax(ceil(dimX / 8.0), 1.0));
-	ofc->m_grid8x8x1.y = static_cast<int>(fmax(ceil(dimY / 8.0), 1.0));
-	ofc->m_grid8x8x1.z = 1;
+	priv->m_lowGrid32x32x1.x = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimX) / 32.0), 1.0));
+	priv->m_lowGrid32x32x1.y = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimY) / 32.0), 1.0));
+	priv->m_lowGrid32x32x1.z = 1;
+	priv->m_lowGrid16x16x5.x = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimX) / 16.0), 1.0));
+	priv->m_lowGrid16x16x5.y = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimY) / 16.0), 1.0));
+	priv->m_lowGrid16x16x5.z = 5;
+	priv->m_lowGrid16x16x4.x = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimX) / 16.0), 1.0));
+	priv->m_lowGrid16x16x4.y = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimY) / 16.0), 1.0));
+	priv->m_lowGrid16x16x4.z = 4;
+	priv->m_lowGrid16x16x1.x = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimX) / 16.0), 1.0));
+	priv->m_lowGrid16x16x1.y = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimY) / 16.0), 1.0));
+	priv->m_lowGrid16x16x1.z = 1;
+	priv->m_lowGrid8x8x5.x = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimX) / 8.0), 1.0));
+	priv->m_lowGrid8x8x5.y = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimY) / 8.0), 1.0));
+	priv->m_lowGrid8x8x5.z = 5;
+	priv->m_lowGrid8x8x1.x = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimX) / 8.0), 1.0));
+	priv->m_lowGrid8x8x1.y = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimY) / 8.0), 1.0));
+	priv->m_lowGrid8x8x1.z = 1;
+	priv->m_grid16x16x1.x = static_cast<int>(fmax(ceil(dimX / 16.0), 1.0));
+	priv->m_grid16x16x1.y = static_cast<int>(fmax(ceil(dimY / 16.0), 1.0));
+	priv->m_grid16x16x1.z = 1;
+	priv->m_halfGrid16x16x1.x = static_cast<int>(fmax(ceil(dimX / 32.0), 1.0));
+	priv->m_halfGrid16x16x1.y = static_cast<int>(fmax(ceil(dimY / 16.0), 1.0));
+	priv->m_halfGrid16x16x1.z = 1;
+	priv->m_grid8x8x1.x = static_cast<int>(fmax(ceil(dimX / 8.0), 1.0));
+	priv->m_grid8x8x1.y = static_cast<int>(fmax(ceil(dimY / 8.0), 1.0));
+	priv->m_grid8x8x1.z = 1;
 
 	// Threads
-	ofc->m_threads32x32x1.x = 32;
-	ofc->m_threads32x32x1.y = 32;
-	ofc->m_threads32x32x1.z = 1;
-	ofc->m_threads16x16x2.x = 16;
-	ofc->m_threads16x16x2.y = 16;
-	ofc->m_threads16x16x2.z = 2;
-	ofc->m_threads16x16x1.x = 16;
-	ofc->m_threads16x16x1.y = 16;
-	ofc->m_threads16x16x1.z = 1;
-	ofc->m_threads8x8x5.x = 8;
-	ofc->m_threads8x8x5.y = 8;
-	ofc->m_threads8x8x5.z = 5;
-	ofc->m_threads8x8x2.x = 8;
-	ofc->m_threads8x8x2.y = 8;
-	ofc->m_threads8x8x2.z = 2;
-	ofc->m_threads8x8x1.x = 8;
-	ofc->m_threads8x8x1.y = 8;
-	ofc->m_threads8x8x1.z = 1;
+	priv->m_threads32x32x1.x = 32;
+	priv->m_threads32x32x1.y = 32;
+	priv->m_threads32x32x1.z = 1;
+	priv->m_threads16x16x2.x = 16;
+	priv->m_threads16x16x2.y = 16;
+	priv->m_threads16x16x2.z = 2;
+	priv->m_threads16x16x1.x = 16;
+	priv->m_threads16x16x1.y = 16;
+	priv->m_threads16x16x1.z = 1;
+	priv->m_threads8x8x5.x = 8;
+	priv->m_threads8x8x5.y = 8;
+	priv->m_threads8x8x5.z = 5;
+	priv->m_threads8x8x2.x = 8;
+	priv->m_threads8x8x2.y = 8;
+	priv->m_threads8x8x2.z = 2;
+	priv->m_threads8x8x1.x = 8;
+	priv->m_threads8x8x1.y = 8;
+	priv->m_threads8x8x1.z = 1;
 
 	// GPU Arrays
 	if (ofc->m_bIsHDR) {
@@ -2133,11 +2168,11 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ofc->m_hitCount12 = createGPUArrayI(dimY * dimX);
 	ofc->m_hitCount21 = createGPUArrayI(dimY * dimX);
 
-	// Create CUDA streams
-	cudaStreamCreate(&ofc->m_csOFCStream1);
-	cudaStreamCreate(&ofc->m_csOFCStream2);
-	cudaStreamCreate(&ofc->m_csWarpStream1);
-	cudaStreamCreate(&ofc->m_csWarpStream2);
+	// Create HIP streams
+	hipStreamCreate(&priv->m_csOFCStream1);
+	hipStreamCreate(&priv->m_csOFCStream2);
+	hipStreamCreate(&priv->m_csWarpStream1);
+	hipStreamCreate(&priv->m_csWarpStream2);
 }
 
 /*

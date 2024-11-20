@@ -2,7 +2,6 @@
 #define OPTICALFLOWCALC_CUH
 
 #include <stdbool.h>
-#include <cuda_runtime.h>
 
 #ifdef __cplusplus
 extern "C" {
@@ -10,11 +9,12 @@ extern "C" {
 
 typedef struct OpticalFlowCalc {
 	void (*free)(struct OpticalFlowCalc *ofc);
+	void (*adjustFrameScalar)(struct OpticalFlowCalc *ofc);
 	void (*updateFrame)(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const unsigned int frameKernelSize, const unsigned int flowKernelSize, const bool directOutput);
 	void (*downloadFrame)(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer);
 	void (*processFrame)(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const bool firstFrame);
 	void (*blurFrameArray)(struct OpticalFlowCalc *ofc, const void* frame, void* blurredFrame,
-						const unsigned int kernelSize, const bool directOutput);
+						const int kernelSize, const bool directOutput);
 	void (*calculateOpticalFlow)(struct OpticalFlowCalc *ofc, unsigned int iNumIterations, unsigned int iNumSteps);
 	void (*flipFlow)(struct OpticalFlowCalc *ofc);
 	void (*blurFlowArrays)(struct OpticalFlowCalc *ofc);
@@ -25,7 +25,6 @@ typedef struct OpticalFlowCalc {
 	void (*drawFlowAsHSV)(struct OpticalFlowCalc *ofc, const float blendScalar);
 	void (*drawFlowAsGreyscale)(struct OpticalFlowCalc *ofc);
 	void (*saveImage)(struct OpticalFlowCalc *ofc, const char* filePath);
-	void (*tearingTest)(struct OpticalFlowCalc *ofc);
 
 	// Video properties
 	unsigned int m_iDimX; // Width of the frame
@@ -47,30 +46,6 @@ typedef struct OpticalFlowCalc {
 	unsigned int m_iLayerIdxOffset; // m_iLowDimY * m_iLowDimX
 	unsigned int m_iChannelIdxOffset; // m_iDimY * m_iDimX
 	unsigned int m_iFlowBlurKernelSize; // The kernel size used for the flow blur
-	unsigned int m_iFrameOutputCounter; // Counter for the output frames
-
-	// CUDA streams
-	cudaStream_t m_csOFCStream1, m_csOFCStream2; // CUDA streams used for the optical flow calculation
-	cudaStream_t m_csWarpStream1, m_csWarpStream2; // CUDA streams used for the warping
-
-	// Grids
-	dim3 m_lowGrid32x32x1;
-	dim3 m_lowGrid16x16x5;
-	dim3 m_lowGrid16x16x4;
-	dim3 m_lowGrid16x16x1;
-	dim3 m_lowGrid8x8x5;
-	dim3 m_lowGrid8x8x1;
-	dim3 m_grid16x16x1;
-	dim3 m_halfGrid16x16x1;
-	dim3 m_grid8x8x1;
-	
-	// Threads
-	dim3 m_threads32x32x1;
-	dim3 m_threads16x16x2;
-	dim3 m_threads16x16x1;
-	dim3 m_threads8x8x5;
-	dim3 m_threads8x8x2;
-	dim3 m_threads8x8x1;
 
 	// GPU Arrays
 	int* m_offsetArray12; // Array containing x,y offsets for each pixel of frame1
@@ -95,6 +70,8 @@ typedef struct OpticalFlowCalc {
 	unsigned short* m_tempFrameHDR; // Temporary array for the output frame
 	unsigned char* m_tempFrameSDR; // Temporary array for the output frame
 	unsigned char* m_imageArrayCPU; // Array containing the image data
+
+	void* priv; // Private data
 } OpticalFlowCalc;
 
 /*
