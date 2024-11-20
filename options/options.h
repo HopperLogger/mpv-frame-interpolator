@@ -134,29 +134,11 @@ struct mp_subtitle_shared_opts {
     int ass_style_override[2];
 };
 
-struct mp_sub_filter_opts {
-    bool sub_filter_SDH;
-    bool sub_filter_SDH_harder;
-    char *sub_filter_SDH_enclosures;
-    bool rf_enable;
-    bool rf_plain;
-    char **rf_items;
-    char **jsre_items;
-    bool rf_warn;
-};
-
 struct mp_osd_render_opts {
-    float osd_bar_align_x;
-    float osd_bar_align_y;
-    float osd_bar_w;
-    float osd_bar_h;
-    float osd_bar_outline_size;
-    float osd_bar_marker_scale;
-    float osd_bar_marker_min_size;
-    int osd_bar_marker_style;
     float osd_scale;
     bool osd_scale_by_window;
     struct osd_style_opts *osd_style;
+    struct osd_bar_style_opts *osd_bar_style;
     bool force_rgba_osd;
 };
 
@@ -408,12 +390,6 @@ struct cuda_opts {
     int cuda_device;
 };
 
-struct dvd_opts {
-    int angle;
-    int speed;
-    char *device;
-};
-
 struct filter_opts {
     int deinterlace;
     int field_parity;
@@ -421,10 +397,8 @@ struct filter_opts {
 
 extern const struct m_sub_options vo_sub_opts;
 extern const struct m_sub_options cuda_conf;
-extern const struct m_sub_options dvd_conf;
 extern const struct m_sub_options mp_subtitle_sub_opts;
 extern const struct m_sub_options mp_subtitle_shared_sub_opts;
-extern const struct m_sub_options mp_sub_filter_opts;
 extern const struct m_sub_options mp_osd_render_sub_opts;
 extern const struct m_sub_options filter_conf;
 extern const struct m_sub_options resample_conf;

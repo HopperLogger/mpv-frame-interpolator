@@ -774,7 +774,7 @@ static int pass_bind(struct gl_video *p, struct image img)
 static void get_transform(float w, float h, int rotate, bool flip,
                           struct gl_transform *out_tr)
 {
-    int a = rotate % 90 ? 0 : rotate / 90;
+    int a = rotate % 90 ? 0 : (rotate / 90) % 4;
     int sin90[4] = {0, 1, 0, -1}; // just to avoid rounding issues etc.
     int cos90[4] = {1, 0, -1, 0};
     struct gl_transform tr = {{{ cos90[a], sin90[a]},
@@ -898,7 +898,10 @@ static void pass_get_images(struct gl_video *p, struct video_image *vimg,
 
         if (type == PLANE_CHROMA) {
             struct gl_transform rot;
-            get_transform(0, 0, p->image_params.rotate, true, &rot);
+            // Reverse the rotation direction here because the different
+            // coordinate system of chroma offset results in rotation
+            // in the opposite direction.
+            get_transform(0, 0, 360 - p->image_params.rotate, t->flipped, &rot);
 
             struct gl_transform tr = chroma;
             gl_transform_vec(rot, &tr.t[0], &tr.t[1]);
@@ -908,15 +911,13 @@ static void pass_get_images(struct gl_video *p, struct video_image *vimg,
 
             // Adjust the chroma offset if the real chroma size is fractional
             // due image sizes not aligned to chroma subsampling.
-            struct gl_transform rot2;
-            get_transform(0, 0, p->image_params.rotate, t->flipped, &rot2);
-            if (rot2.m[0][0] < 0)
+            if (rot.m[0][0] < 0)
                 tr.t[0] += dx;
-            if (rot2.m[1][0] < 0)
+            if (rot.m[1][0] < 0)
                 tr.t[0] += dy;
-            if (rot2.m[0][1] < 0)
+            if (rot.m[0][1] < 0)
                 tr.t[1] += dx;
-            if (rot2.m[1][1] < 0)
+            if (rot.m[1][1] < 0)
                 tr.t[1] += dy;
 
             off[n] = tr;

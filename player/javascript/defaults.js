@@ -653,8 +653,8 @@ mp.options = { read_options: read_options };
 function register_event_handler(t) {
     mp.register_script_message("input-event", function (type, args) {
         if (t[type]) {
-            args = JSON.parse(args)
-            var result = t[type](args[0], args[1]);
+            args = args ? JSON.parse(args) : [];
+            var result = t[type].apply(null, args);
 
             if (type == "complete" && result) {
                 mp.commandv("script-message-to", "console", "complete",

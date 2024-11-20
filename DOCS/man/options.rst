@@ -2897,7 +2897,7 @@ Subtitles
     height: if the window height is larger or smaller than 720, the actual size
     of the text increases or decreases as well.
 
-    Default: 55.
+    Default: 38
 
 ``--sub-blur=<0..20.0>``
     Gaussian blur factor applied to the sub font border.
@@ -2925,7 +2925,7 @@ Subtitles
 
     ``--sub-border-size`` is an alias for ``--sub-outline-size``.
 
-    Default: 3.
+    Default: 1.65
 
 ``--sub-border-style=<outline-and-shadow|opaque-box|background-box>``
     The style of the border.
@@ -2986,7 +2986,7 @@ Subtitles
     This option specifies the distance of the sub to the left, as well as at
     which distance from the right border long sub text will be broken.
 
-    Default: 25.
+    Default: 19
 
 ``--sub-margin-y=<size>``
     Top and bottom screen margin for the subs in scaled pixels (see
@@ -2995,7 +2995,7 @@ Subtitles
     This option specifies the vertical margins of unstyled text subtitles.
     If you just want to raise the vertical subtitle position, use ``--sub-pos``.
 
-    Default: 22.
+    Default: 34
 
 ``--sub-align-x=<left|center|right>``
     Control to which corner of the screen text subtitles should be
@@ -3260,7 +3260,7 @@ Window
 
 ``--image-display-duration=<seconds|inf>``
     If the current file is an image, play the image for the given amount of
-    seconds (default: 1). ``inf`` means the file is kept open forever (until
+    seconds (default: 5). ``inf`` means the file is kept open forever (until
     the user stops playback manually).
 
     Unlike ``--keep-open``, the player is not paused, but simply continues
@@ -4456,7 +4456,7 @@ OSD
 ``--osd-font-size=<size>``
     Specify the OSD font size. See ``--sub-font-size`` for details.
 
-    Default: 55.
+    Default: 30
 
 ``--osd-msg1=<string>``
     Show this string as message on OSD with OSD level 1 (visible by default).
@@ -4573,7 +4573,7 @@ OSD
 
     ``--osd-border-size`` is an alias for ``--osd-outline-size``.
 
-    Default: 3.
+    Default: 1.65
 
 ``--osd-border-style=<outline-and-shadow|opaque-box|background-box>``
     See ``--sub-border-style``. Style used for OSD text border.
@@ -4601,7 +4601,7 @@ OSD
     This option specifies the distance of the OSD to the left, as well as at
     which distance from the right border long OSD text will be broken.
 
-    Default: 25.
+    Default: 15
 
 ``--osd-margin-y=<size>``
     Top and bottom screen margin for the OSD in scaled pixels (see
@@ -4609,7 +4609,7 @@ OSD
 
     This option specifies the vertical margins of the OSD.
 
-    Default: 22.
+    Default: 15
 
 ``--osd-align-x=<left|center|right>``
     Control to which corner of the screen OSD should be
@@ -7381,19 +7381,9 @@ them.
 
     https://libplacebo.org/options/
 
-Miscellaneous
--------------
 
-``--display-tags=tag1,tags2,...``
-    Set the list of tags that should be displayed on the terminal and stats.
-    Tags that are in the list, but are not present in the played file, will not
-    be shown. If a value ends with ``*``, all tags are matched by prefix (though
-    there is no general globbing). Just passing ``*`` essentially filtering.
-
-    The default includes a common list of tags, call mpv with ``--list-options``
-    to see it.
-
-    This is a string list option. See `List Options`_ for details.
+Video Sync
+----------
 
 ``--mc=<seconds/frame>``
     Maximum A-V sync correction per frame (in seconds)
@@ -7546,6 +7536,20 @@ Miscellaneous
     the A/V desync cannot be compensated, too high values could lead to chaotic
     frame dropping due to the audio "overshooting" and skipping multiple video
     frames before the sync logic can react.
+
+Miscellaneous
+-------------
+
+``--display-tags=tag1,tags2,...``
+    Set the list of tags that should be displayed on the terminal and stats.
+    Tags that are in the list, but are not present in the played file, will not
+    be shown. If a value ends with ``*``, all tags are matched by prefix (though
+    there is no general globbing). Just passing ``*`` essentially filtering.
+
+    The default includes a common list of tags, call mpv with ``--list-options``
+    to see it.
+
+    This is a string list option. See `List Options`_ for details.
 
 ``--mf-fps=<value>``
     Framerate used when decoding from multiple PNG or JPEG files with ``mf://``

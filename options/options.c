@@ -88,6 +88,8 @@ extern const struct m_obj_list vo_obj_list;
 
 extern const struct m_sub_options ao_conf;
 
+extern const struct m_sub_options dvd_conf;
+
 extern const struct m_sub_options opengl_conf;
 extern const struct m_sub_options vulkan_conf;
 extern const struct m_sub_options vulkan_display_conf;
@@ -100,6 +102,8 @@ extern const struct m_sub_options wayland_conf;
 extern const struct m_sub_options wingl_conf;
 extern const struct m_sub_options vaapi_conf;
 extern const struct m_sub_options egl_conf;
+
+extern const struct m_sub_options mp_sub_filter_opts;
 
 static const struct m_sub_options screenshot_conf = {
     .opts = image_writer_opts,
@@ -276,29 +280,6 @@ const struct m_sub_options vo_sub_opts = {
 };
 
 #undef OPT_BASE_STRUCT
-#define OPT_BASE_STRUCT struct mp_sub_filter_opts
-
-const struct m_sub_options mp_sub_filter_opts = {
-    .opts = (const struct m_option[]){
-        {"sub-filter-sdh", OPT_BOOL(sub_filter_SDH)},
-        {"sub-filter-sdh-harder", OPT_BOOL(sub_filter_SDH_harder)},
-        {"sub-filter-sdh-enclosures", OPT_STRING(sub_filter_SDH_enclosures)},
-        {"sub-filter-regex-enable", OPT_BOOL(rf_enable)},
-        {"sub-filter-regex-plain", OPT_BOOL(rf_plain)},
-        {"sub-filter-regex", OPT_STRINGLIST(rf_items)},
-        {"sub-filter-jsre", OPT_STRINGLIST(jsre_items)},
-        {"sub-filter-regex-warn", OPT_BOOL(rf_warn)},
-        {0}
-    },
-    .size = sizeof(OPT_BASE_STRUCT),
-    .defaults = &(OPT_BASE_STRUCT){
-        .sub_filter_SDH_enclosures = "([\uFF08",
-        .rf_enable = true,
-    },
-    .change_flags = UPDATE_SUB_FILT,
-};
-
-#undef OPT_BASE_STRUCT
 #define OPT_BASE_STRUCT struct mp_subtitle_opts
 
 const struct m_sub_options mp_subtitle_sub_opts = {
@@ -411,17 +392,8 @@ const struct m_sub_options mp_subtitle_shared_sub_opts = {
 
 const struct m_sub_options mp_osd_render_sub_opts = {
     .opts = (const struct m_option[]){
-        {"osd-bar-align-x", OPT_FLOAT(osd_bar_align_x), M_RANGE(-1.0, +1.0)},
-        {"osd-bar-align-y", OPT_FLOAT(osd_bar_align_y), M_RANGE(-1.0, +1.0)},
-        {"osd-bar-w", OPT_FLOAT(osd_bar_w), M_RANGE(1, 100)},
-        {"osd-bar-h", OPT_FLOAT(osd_bar_h), M_RANGE(0.1, 50)},
-        {"osd-bar-outline-size", OPT_FLOAT(osd_bar_outline_size), M_RANGE(0, 1000.0)},
-        {"osd-bar-border-size", OPT_ALIAS("osd-bar-outline-size")},
-        {"osd-bar-marker-scale", OPT_FLOAT(osd_bar_marker_scale), M_RANGE(0, 100.0)},
-        {"osd-bar-marker-min-size", OPT_FLOAT(osd_bar_marker_min_size), M_RANGE(0, 1000.0)},
-        {"osd-bar-marker-style", OPT_CHOICE(osd_bar_marker_style,
-            {"none", 0}, {"triangle", 1}, {"line", 2})},
         {"osd", OPT_SUBSTRUCT(osd_style, osd_style_conf)},
+        {"osd-bar", OPT_SUBSTRUCT(osd_bar_style, osd_bar_style_conf)},
         {"osd-scale", OPT_FLOAT(osd_scale), M_RANGE(0, 100)},
         {"osd-scale-by-window", OPT_BOOL(osd_scale_by_window)},
         {"force-rgba-osd-rendering", OPT_BOOL(force_rgba_osd)},
@@ -429,13 +401,6 @@ const struct m_sub_options mp_osd_render_sub_opts = {
     },
     .size = sizeof(OPT_BASE_STRUCT),
     .defaults = &(OPT_BASE_STRUCT){
-        .osd_bar_align_y = 0.5,
-        .osd_bar_w = 75.0,
-        .osd_bar_h = 3.125,
-        .osd_bar_outline_size = 0.5,
-        .osd_bar_marker_scale = 1.3,
-        .osd_bar_marker_min_size = 1.6,
-        .osd_bar_marker_style = 1,
         .osd_scale = 1,
         .osd_scale_by_window = true,
     },
@@ -454,22 +419,6 @@ const struct m_sub_options cuda_conf = {
     .size = sizeof(struct cuda_opts),
     .defaults = &(const struct cuda_opts){
         .cuda_device = -1,
-    },
-};
-
-#undef OPT_BASE_STRUCT
-#define OPT_BASE_STRUCT struct dvd_opts
-
-const struct m_sub_options dvd_conf = {
-    .opts = (const struct m_option[]){
-        {"dvd-device", OPT_STRING(device), .flags = M_OPT_FILE},
-        {"dvd-speed", OPT_INT(speed)},
-        {"dvd-angle", OPT_INT(angle), M_RANGE(1, 99)},
-        {0}
-    },
-    .size = sizeof(struct dvd_opts),
-    .defaults = &(const struct dvd_opts){
-        .angle = 1,
     },
 };
 
@@ -507,17 +456,17 @@ static const m_option_t mp_opts[] = {
      .offset = -1},
 
     // handled in m_config.c
-    { "include", CONF_TYPE_STRING, M_OPT_FILE, .offset = -1},
-    { "profile", CONF_TYPE_STRING_LIST, 0, .offset = -1},
-    { "show-profile", CONF_TYPE_STRING, CONF_NOCFG | M_OPT_NOPROP |
+    {"include", CONF_TYPE_STRING, M_OPT_FILE, .offset = -1},
+    {"profile", CONF_TYPE_STRING_LIST, 0, .offset = -1},
+    {"show-profile", CONF_TYPE_STRING, CONF_NOCFG | M_OPT_NOPROP |
         M_OPT_OPTIONAL_PARAM,  .offset = -1},
-    { "list-options", &m_option_type_dummy_flag, CONF_NOCFG | M_OPT_NOPROP,
+    {"list-options", &m_option_type_dummy_flag, CONF_NOCFG | M_OPT_NOPROP,
         .offset = -1},
     {"list-properties", OPT_BOOL(property_print_help),
      .flags = CONF_NOCFG | M_OPT_NOPROP},
-    { "help", CONF_TYPE_STRING, CONF_NOCFG | M_OPT_NOPROP | M_OPT_OPTIONAL_PARAM,
+    {"help", CONF_TYPE_STRING, CONF_NOCFG | M_OPT_NOPROP | M_OPT_OPTIONAL_PARAM,
         .offset = -1},
-    { "h", CONF_TYPE_STRING, CONF_NOCFG | M_OPT_NOPROP | M_OPT_OPTIONAL_PARAM,
+    {"h", CONF_TYPE_STRING, CONF_NOCFG | M_OPT_NOPROP | M_OPT_OPTIONAL_PARAM,
         .offset = -1},
 
     {"list-protocols", OPT_PRINT(stream_print_proto_list)},
@@ -593,7 +542,7 @@ static const m_option_t mp_opts[] = {
 // ------------------------- stream options --------------------
 
 #if HAVE_DVDNAV
-    {"", OPT_SUBSTRUCT(dvd_opts, dvd_conf)},
+    {"dvd", OPT_SUBSTRUCT(dvd_opts, dvd_conf)},
 #endif
     {"edition", OPT_CHOICE(edition_id, {"auto", -1}), M_RANGE(0, 8190)},
 #if HAVE_LIBBLURAY
@@ -747,7 +696,7 @@ static const m_option_t mp_opts[] = {
 
     {"", OPT_SUBSTRUCT(subs_rend, mp_subtitle_sub_opts)},
     {"", OPT_SUBSTRUCT(subs_shared, mp_subtitle_shared_sub_opts)},
-    {"", OPT_SUBSTRUCT(subs_filt, mp_sub_filter_opts)},
+    {"sub-filter", OPT_SUBSTRUCT(subs_filt, mp_sub_filter_opts)},
     {"", OPT_SUBSTRUCT(osd_rend, mp_osd_render_sub_opts)},
 
     {"osd-bar", OPT_BOOL(osd_bar_visible), .flags = UPDATE_OSD},
@@ -1041,7 +990,7 @@ static const struct MPOpts mp_default_opts = {
     .play_frames = -1,
     .rebase_start_time = true,
     .keep_open_pause = true,
-    .image_display_duration = 1.0,
+    .image_display_duration = 5.0,
     .stream_id = { { [STREAM_AUDIO] = -1,
                      [STREAM_VIDEO] = -1,
                      [STREAM_SUB] = -1, },
