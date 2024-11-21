@@ -32,10 +32,14 @@ hip_objects = custom_target(
 # --offload-arch=gfx1010    AMD
 
 dependency_hip = declare_dependency(
-    include_directories: include_directories('/opt/rocm/include', '/opt/cuda/include'),
+    include_directories: include_directories('/opt/rocm/include'),
     link_args: ['-L/opt/rocm/lib', '-lamdhip64']
 )
-# link_args: ['-L/opt/cuda/lib64', '-lcudart'] CUDA
+# CUDA
+# include_directories: include_directories('/opt/cuda/include'),
+# link_args: ['-L/opt/cuda/lib64', '-lcudart']
+# AMD
+# include_directories: include_directories('/opt/rocm/include'),
 # link_args: ['-L/opt/rocm/lib', '-lamdhip64'] AMD
 
 # ffmpeg
