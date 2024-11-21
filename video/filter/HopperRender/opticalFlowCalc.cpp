@@ -51,6 +51,17 @@ __device__ void applyShaderY(unsigned short& output, const unsigned short input,
 	output = static_cast<unsigned short>(fmaxf(fminf((static_cast<float>(input) - blackLevel) / (whiteLevel - blackLevel) * maxVal, maxVal), 0.0f));
 }
 
+// Kernel that runs a tearing test on the GPU
+__global__ void tearingTestKernel(unsigned char* outputFrame, const unsigned int dimY, const unsigned int dimX, const int width, const int pos_x) {
+	// Current entry to be computed by the thread
+	const unsigned int cx = blockIdx.x * blockDim.x + threadIdx.x;
+	const unsigned int cy = blockIdx.y * blockDim.y + threadIdx.y;
+
+	if (cy < dimY && cx < dimX && cx >= pos_x && cx < pos_x + width) {
+		outputFrame[cy * dimX + cx] = 255;
+	}
+}
+
 // Kernel that converts a NV12 frame to a YUV420P frame
 template <typename T>
 __global__ void convertNV12toYUV420PKernel(T* outputFrame, const T* inputFrame, const unsigned int dimY, 
@@ -1961,6 +1972,22 @@ void saveImage(struct OpticalFlowCalc *ofc, const char* filePath) {
 }
 
 /*
+* Runs a tearing test on the GPU
+*
+* @param ofc: Pointer to the optical flow calculator
+*/
+static int counter = 0;
+void tearingTest(struct OpticalFlowCalc *ofc) {
+	struct priv *priv = (struct priv*)ofc->priv;
+	HIP_CHECK(hipMemset(ofc->m_outputFrameSDR, 0, ofc->m_iDimY * ofc->m_iDimX));
+	HIP_CHECK(hipMemset(ofc->m_outputFrameSDR + ofc->m_iDimY * ofc->m_iDimX, 128, (ofc->m_iDimY / 2) * ofc->m_iDimX));
+	tearingTestKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(ofc->m_outputFrameSDR, ofc->m_iDimY, ofc->m_iDimX, 10, counter % ofc->m_iDimX);
+	counter++;
+	HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
+	checkHIPError("tearingTest");
+}
+
+/*
 * Creates a new GPUArray of type unsigned char
 *
 * @param size: Number of entries in the array
@@ -2058,6 +2085,7 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ofc->drawFlowAsHSV = drawFlowAsHSV;
 	ofc->drawFlowAsGreyscale = drawFlowAsGreyscale;
 	ofc->saveImage = saveImage;
+	ofc->tearingTest = tearingTest;
 
 	// Video properties
 	ofc->m_iDimX = dimX;
