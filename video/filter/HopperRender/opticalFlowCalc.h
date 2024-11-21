@@ -25,6 +25,7 @@ typedef struct OpticalFlowCalc {
 	void (*drawFlowAsHSV)(struct OpticalFlowCalc *ofc, const float blendScalar);
 	void (*drawFlowAsGreyscale)(struct OpticalFlowCalc *ofc);
 	void (*saveImage)(struct OpticalFlowCalc *ofc, const char* filePath);
+	void (*tearingTest)(struct OpticalFlowCalc *ofc);
 
 	// Video properties
 	unsigned int m_iDimX; // Width of the frame

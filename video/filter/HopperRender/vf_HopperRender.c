@@ -47,7 +47,8 @@ typedef enum FrameOutput {
 	GreyFlow,
 	BlurredFrames,
 	SideBySide1,
-	SideBySide2
+	SideBySide2,
+	TearingTest
 } FrameOutput;
 
 typedef enum InterpolationState {
@@ -242,6 +243,9 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv, int 
 			break;
 		case 18:
 			vf_HopperRender_adjust_frame_scalar(priv, 5);
+			break;
+		case 19:
+			priv->m_foFrameOutput = TearingTest;
 			break;
 		default:
 			if (code >= 100 && code < 200) {
@@ -543,6 +547,8 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 		priv->ofc->insertFrame(priv->ofc);
 	} else if (priv->m_foFrameOutput == SideBySide2) {
 	    priv->ofc->sideBySideFrame(priv->ofc, priv->m_dScalar, priv->m_iFrameCounter);
+	} else if (priv->m_foFrameOutput == TearingTest) {
+		priv->ofc->tearingTest(priv->ofc);
 	}
 
 	// Save the result to a file
