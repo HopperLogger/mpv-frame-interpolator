@@ -35,12 +35,13 @@ The compilation is the same as for the [mpv](https://github.com/mpv-player/mpv) 
 6. `git clone https://github.com/HopperLogger/mpv-frame-interpolator.git`
 7. `rm -r -f mpv`
 8. `mv mpv-frame-interpolator mpv`
-9. `./build -j 8`
-10. `sudo ./install`
-11. To use it in your terminal, run: `/usr/local/bin/mpv /path/to/video --vf=HopperRender`
-12. To use it in [SMPlayer](https://www.smplayer.info/), install SMPlayer via your distro's software manager or download it from the website.
-13. In the SMPlayer preferences, set the path to the multimedia engine to '/usr/local/bin/mpv'
-14. Goto Advanced->MPlayer/mpv and enter '--vf=HopperRender' in the options field.
+9. Add your GPU Architecture to the `mpv-build/mpv/meson.build` file (line 40) (see [CUDA Archs](https://developer.nvidia.com/cuda-gpus) for a list of architectures)
+10. `./build -j 8`
+11. `sudo ./install`
+12. To use it in your terminal, run: `/usr/local/bin/mpv /path/to/video --vf=HopperRender`
+13. To use it in [SMPlayer](https://www.smplayer.info/), install SMPlayer via your distro's software manager or download it from the website.
+14. In the SMPlayer preferences, set the path to the multimedia engine to '/usr/local/bin/mpv'
+15. Goto Advanced->MPlayer/mpv and enter '--vf=HopperRender' in the options field.
 
 ### Installation for AMD:
 1. Install [ROCm](https://rocm.docs.amd.com/projects/radeon/en/latest/docs/install/native_linux/install-radeon.html) by following the installation instructions on AMD's site (for most distros) or run `yay -S rocm-hip-sdk` (on Arch Linux)
@@ -62,12 +63,13 @@ The compilation is the same as for the [mpv](https://github.com/mpv-player/mpv) 
 7. `git clone https://github.com/HopperLogger/mpv-frame-interpolator.git`
 8. `rm -r -f mpv`
 9. `mv mpv-frame-interpolator mpv`
-10. `./build -j 8`
-11. `sudo ./install`
-12. To use it in your terminal, run: `/usr/local/bin/mpv /path/to/video --vf=HopperRender`
-13. To use it in [SMPlayer](https://www.smplayer.info/), install SMPlayer via your distro's software manager or download it from the website.
-14. In the SMPlayer preferences, set the path to the multimedia engine to '/usr/local/bin/mpv'
-15. Goto Advanced->MPlayer/mpv and enter '--vf=HopperRender' in the options field.
+10. Add your GPU Architecture to the `mpv-build/mpv/meson.build` file (line 46) (run `rocminfo` to find it, starts with gfx and should be in the Agent section)
+11. `./build -j 8`
+12. `sudo ./install`
+13. To use it in your terminal, run: `/usr/local/bin/mpv /path/to/video --vf=HopperRender`
+14. To use it in [SMPlayer](https://www.smplayer.info/), install SMPlayer via your distro's software manager or download it from the website.
+15. In the SMPlayer preferences, set the path to the multimedia engine to '/usr/local/bin/mpv'
+16. Goto Advanced->MPlayer/mpv and enter '--vf=HopperRender' in the options field.
 
 That's it! You can now play a video with SMPlayer and HopperRender will interpolate it to your monitor's native refresh-rate.
 
