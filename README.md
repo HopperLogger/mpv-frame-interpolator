@@ -3,14 +3,14 @@
 </div>
 
 # HopperRender
-A fork of mpv-player/mpv, enhanced with real-time frame interpolation using CUDA. This integration allows for smoother video playback by generating intermediate frames between existing ones, leveraging NVIDIA GPUs for efficient, high-performance processing.
+A fork of mpv-player/mpv, enhanced with real-time frame interpolation using CUDA/HIP. This integration allows for smoother video playback by generating intermediate frames between existing ones, leveraging the GPU for efficient, high-performance processing.
 The goal is to achieve pretty decent frame interpolation with a variety of user customizable settings.
 The filter can be easially used with [SMPlayer](https://github.com/smplayer-dev/smplayer).
 > Please keep in mind that this project is still in ongoing development and there are very likely some bugs depending on the environment you're running and the setting you use. The interpolation quality is also not perfect yet, but pretty decent most of the time, especially for 24 fps -> 60 fps conversion.
 
 ## Features
 - Realtime frame interpolation of any source framerate to your monitors refresh-rate
-- Compatible with HDR video _(tested with 4K Blu-rays)_
+- Compatible with HDR video
 - Comes with an AppIndicator that shows the current stats and allows several output modes, and settings to be selected
 - Warps frames in both directions and blends them for the smoothest experience
 - HSV Flow visualization lets you see the calculated movements of objects in a scene
@@ -19,24 +19,55 @@ The filter can be easially used with [SMPlayer](https://github.com/smplayer-dev/
 - Automatic scene change detection to prevent them from being interpolated _(currently deactivated)_
 
 ## How to get started?
-This filter uses the CUDA API and requires a NVIDIA GPU (GTX 950 or newer) and the [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) to be installed.
+This filter uses the HIP API and can be compiled on either NVIDIA or AMD systems.
 The compilation is the same as for the [mpv](https://github.com/mpv-player/mpv) base. You can either manually build [mpv](https://github.com/mpv-player/mpv) or use the automated [mpv-build](https://github.com/mpv-player/mpv-build) script and replace the mpv folder with this repo.
 
-### The recommended way:
-1. Install the [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads)
-2. `git clone https://github.com/mpv-player/mpv-build.git`
-3. `cd mpv-build`
-4. `./rebuild -j8`
-5. `git clone https://github.com/HopperLogger/mpv-frame-interpolator.git`
-6. `rm -r -f mpv`
-7. `mv mpv-frame-interpolator mpv`
-8. `./build -j8`
-9. `sudo ./install`
-10. To use it in your terminal, run: `/usr/local/bin/mpv /path/to/video --vf=HopperRender _-hwdec=nvdec_`
-11. To use it in [SMPlayer](https://www.smplayer.info/), install SMPlayer via your distro's software manager or download it from the website.
-12. In the SMPlayer preferences, set the path to the multimedia engine to '/usr/local/bin/mpv'
-13. Goto Advanced->MPlayer/mpv and enter '--vf=HopperRender' in the options field.
-14. (Optionally) goto Performance and select 'nvdec' for hardware decoding _(if it's available on your system)_.
+### Installation for NVIDIA:
+1. Install the [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) by following the installation instructions on NVIDIA's site (for most distros) or run `yay -S cuda` (on Arch Linux)
+2. Add the following lines to your ~/.bashrc file (assuming CUDA was installed to `/opt/cuda`):
+   
+   `export PATH=/opt/cuda/bin:$PATH`
+   
+   `export LD_LIBRARY_PATH=/opt/cuda/lib:/opt/cuda/lib64:$LD_LIBRARY_PATH`
+3. `git clone https://github.com/mpv-player/mpv-build.git`
+4. `cd mpv-build`
+5. `./rebuild -j 8`
+6. `git clone https://github.com/HopperLogger/mpv-frame-interpolator.git`
+7. `rm -r -f mpv`
+8. `mv mpv-frame-interpolator mpv`
+9. `./build -j 8`
+10. `sudo ./install`
+11. To use it in your terminal, run: `/usr/local/bin/mpv /path/to/video --vf=HopperRender`
+12. To use it in [SMPlayer](https://www.smplayer.info/), install SMPlayer via your distro's software manager or download it from the website.
+13. In the SMPlayer preferences, set the path to the multimedia engine to '/usr/local/bin/mpv'
+14. Goto Advanced->MPlayer/mpv and enter '--vf=HopperRender' in the options field.
+
+### Installation for AMD:
+1. Install [ROCm](https://rocm.docs.amd.com/projects/radeon/en/latest/docs/install/native_linux/install-radeon.html) by following the installation instructions on AMD's site (for most distros) or run `yay -S rocm-hip-sdk` (on Arch Linux)
+2. Add the following lines to your ~/.bashrc file (assuming ROCm was installed to `/opt/rocm`):
+   
+   `export HIP_PLATFORM=amd`
+   
+   `export ROCM_PATH=/opt/rocm`
+   
+   `export PATH=$ROCM_PATH/bin:$PATH`
+   
+   `export PATH=/opt/rocm/lib/llvm/bin:$PATH`
+   
+   `export LD_LIBRARY_PATH=$ROCM_PATH/lib:$ROCM_PATH/lib64:$LD_LIBRARY_PATH`
+3. Refresh your shell with `source ~/.bashrc`
+4. `git clone https://github.com/mpv-player/mpv-build.git`
+5. `cd mpv-build`
+6. `./rebuild -j 8`
+7. `git clone https://github.com/HopperLogger/mpv-frame-interpolator.git`
+8. `rm -r -f mpv`
+9. `mv mpv-frame-interpolator mpv`
+10. `./build -j 8`
+11. `sudo ./install`
+12. To use it in your terminal, run: `/usr/local/bin/mpv /path/to/video --vf=HopperRender`
+13. To use it in [SMPlayer](https://www.smplayer.info/), install SMPlayer via your distro's software manager or download it from the website.
+14. In the SMPlayer preferences, set the path to the multimedia engine to '/usr/local/bin/mpv'
+15. Goto Advanced->MPlayer/mpv and enter '--vf=HopperRender' in the options field.
 
 That's it! You can now play a video with SMPlayer and HopperRender will interpolate it to your monitor's native refresh-rate.
 
@@ -83,7 +114,7 @@ sudo make install
 - Make sure not to move, rename, or delete the mpv-build folder, as the filter depends on the AppIndicator python script to be at the path `~/mpv-build/mpv/video/filter/HopperRender/HopperRenderSettingsApplet.py`
 
 ## Settings
-You can access the filter status and settings when playing back a video with HopperRender by right clicking on the HopperRender icon in the pannel _(tested on Linux Mint)_.
+You can access the filter status and settings when playing back a video with HopperRender by right clicking on the HopperRender icon in the pannel _(tested on the Cinnamon Desktop Enviornment)_.
 
 - You can activate and deactivate the interpolation
 - You can select which type of frame output you want to see:
@@ -100,6 +131,7 @@ You can access the filter status and settings when playing back a video with Hop
     - _Blurred Frames: Outputs the blurred source frames_
     - _Side-by-side 1: Shows the difference between no interpolation on the left, and interpolation on the right (split in the middle)_
     - _Side-by-side 2: Shows the difference between no interpolation on the left, and interpolation on the right (scaled down side by side)_
+    - _Tearing Test_: Runs a white bar accross the screen. Allows you to check for stuttering or tearing.
 - You can select a shader that changes the dynamic range of the video
 - You can select the calculation resolution used to calculate the optical flow _(this does not affect the output resolution!)_
 - In the status section, you can see the current state of HopperRender, the number of calculation steps that are currently performed, the source framerate, the frame and calculation resolutions, as well as much more technical details
