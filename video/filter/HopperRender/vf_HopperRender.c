@@ -18,6 +18,7 @@
 #include "filters/filter_internal.h"
 #include "filters/user_filters.h"
 #include "video/mp_image_pool.h"
+#include "filters/f_autoconvert.h"
 #include "opticalFlowCalc.h"
 
 #define INITIAL_RESOLUTION_SCALAR 2 // The initial resolution scalar (0: Full resolution, 1: Half resolution, 2: Quarter resolution, 3: Eighth resolution, 4: Sixteenth resolution, ...)
@@ -59,6 +60,9 @@ typedef enum InterpolationState {
 } InterpolationState;
 
 struct priv {
+	// Autoconverter
+	struct mp_autoconvert *conv;
+
     // Thread data
     ThreadData m_tdAppIndicatorThreadData; // Data for the AppIndicator thread used to communicate with the status widget
 	int m_iAppIndicatorFileDesc; // The file descriptor for the AppIndicator status widget
@@ -75,8 +79,6 @@ struct priv {
 	// Video info
 	unsigned int m_iDimX; // The width of the frame
 	unsigned int m_iDimY; // The height of the frame
-	bool m_bIsHDR; // Whether or not the video is HDR
-	enum mp_imgfmt m_fmt; // The format of the video
 	struct mp_image *m_miRefImage; // The reference image used for the optical flow calculation
 
 	// Timings
@@ -94,8 +96,6 @@ struct priv {
 
 	// Frame output
 	struct mp_image_pool *m_miSWPool; // The software image pool used to store the source frames
-	struct mp_image **m_miHWPool; // The hardware image pool used to store the source frames
-	size_t m_iHWPoolSize; // The number of frames in the hardware image pool
 	int m_iIntFrameNum; // The current interpolated frame number
 	int m_iFrameCounter; // Frame counter (relative! i.e. number of source frames received since last seek or playback start)
 	int m_iNumIntFrames; // Number of interpolated frames for every source frame
@@ -185,46 +185,26 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv, int 
 		case 9:
 			priv->ofc->m_fBlackLevel = 0.0f;
 			priv->ofc->m_fWhiteLevel = 220.0f;
-			if (priv->m_bIsHDR && priv->m_fmt == IMGFMT_CUDA) {
-				priv->ofc->m_fBlackLevel *= 256.0f;
-				priv->ofc->m_fWhiteLevel *= 256.0f;
-			} else if (priv->m_bIsHDR) {
-				priv->ofc->m_fBlackLevel *= 4.0f;
-				priv->ofc->m_fWhiteLevel *= 4.0f;
-			}
+			priv->ofc->m_fBlackLevel *= 256.0f;
+			priv->ofc->m_fWhiteLevel *= 256.0f;
 			break;
 		case 10:
 			priv->ofc->m_fBlackLevel = 16.0f;
 			priv->ofc->m_fWhiteLevel = 219.0f;
-			if (priv->m_bIsHDR && priv->m_fmt == IMGFMT_CUDA) {
-				priv->ofc->m_fBlackLevel *= 256.0f;
-				priv->ofc->m_fWhiteLevel *= 256.0f;
-			} else if (priv->m_bIsHDR) {
-				priv->ofc->m_fBlackLevel *= 4.0f;
-				priv->ofc->m_fWhiteLevel *= 4.0f;
-			}
+			priv->ofc->m_fBlackLevel *= 256.0f;
+			priv->ofc->m_fWhiteLevel *= 256.0f;
 			break;
 		case 11:
 			priv->ofc->m_fBlackLevel = 10.0f;
 			priv->ofc->m_fWhiteLevel = 225.0f;
-			if (priv->m_bIsHDR && priv->m_fmt == IMGFMT_CUDA) {
-				priv->ofc->m_fBlackLevel *= 256.0f;
-				priv->ofc->m_fWhiteLevel *= 256.0f;
-			} else if (priv->m_bIsHDR) {
-				priv->ofc->m_fBlackLevel *= 4.0f;
-				priv->ofc->m_fWhiteLevel *= 4.0f;
-			}
+			priv->ofc->m_fBlackLevel *= 256.0f;
+			priv->ofc->m_fWhiteLevel *= 256.0f;
 			break;
 		case 12:
 			priv->ofc->m_fBlackLevel = 0.0f;
 			priv->ofc->m_fWhiteLevel = 255.0f;
-			if (priv->m_bIsHDR && priv->m_fmt == IMGFMT_CUDA) {
-				priv->ofc->m_fBlackLevel *= 256.0f;
-				priv->ofc->m_fWhiteLevel *= 256.0f;
-			} else if (priv->m_bIsHDR) {
-				priv->ofc->m_fBlackLevel *= 4.0f;
-				priv->ofc->m_fWhiteLevel *= 4.0f;
-			}
+			priv->ofc->m_fBlackLevel *= 256.0f;
+			priv->ofc->m_fWhiteLevel *= 256.0f;
 			break;
 		case 13:
 			vf_HopperRender_adjust_frame_scalar(priv, 0);
@@ -311,7 +291,7 @@ void *vf_HopperRender_optical_flow_calc_thread(void *arg)
 }
 
 // Optical flow calculation initialization (declared in HIP C++ file)
-extern void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, const int realDimX, unsigned char resolutionScalar, unsigned int flowBlurKernelSize, bool isHDR, int fmt);
+extern void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, unsigned char resolutionScalar, unsigned int flowBlurKernelSize);
 
 /*
 * Initializes the video filter.
@@ -319,28 +299,18 @@ extern void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, con
 * @param f: The video filter instance
 * @param dimY: The height of the video
 * @param dimX: The stride width of the video
-* @param realDimX: The real width of the video (not the stride width!)
-* @param fmt: The output format of the video
 *
 * @return: The result of the configuration
 */
-static void vf_HopperRender_init(struct mp_filter *f, int dimY, int dimX, int realDimX, enum mp_imgfmt fmt)
+static void vf_HopperRender_init(struct mp_filter *f, int dimY, int dimX)
 {
 	struct priv *priv = f->priv;
 
-	// Check if the format is supported (We suport YUV420P, NV12, CUDA, and YUV420P10)
-	if (fmt != IMGFMT_CUDA && fmt != IMGFMT_420P && fmt != 1118 && fmt != IMGFMT_NV12) {
-		MP_ERR(f, "[HopperRender] Only CUDA and VDPAU formats are supported!\n");
-		mp_filter_internal_mark_failed(f);
-		return;
-	}
-
 	priv->m_iDimX = dimX;
 	priv->m_iDimY = dimY;
-	priv->m_fmt = fmt;
 
 	// Initialize the optical flow calculator
-	initOpticalFlowCalc(priv->ofc, dimY, dimX, realDimX, priv->m_cResolutionScalar, priv->m_iFlowBlurKernelSize >> priv->m_cResolutionScalar, priv->m_bIsHDR, (int)fmt);
+	initOpticalFlowCalc(priv->ofc, dimY, dimX, priv->m_cResolutionScalar, priv->m_iFlowBlurKernelSize >> priv->m_cResolutionScalar);
 	
 	// Create the optical flow calc thread
 	int ret = pthread_create(&priv->m_ptOFCThreadID, NULL, vf_HopperRender_optical_flow_calc_thread, priv);
@@ -353,19 +323,12 @@ static void vf_HopperRender_init(struct mp_filter *f, int dimY, int dimX, int re
 	char buffer2[512];
 	memset(buffer2, 0, sizeof(buffer2));
 	for (int i = 0; i < 6; i++) {
-		snprintf(buffer2, sizeof(buffer2), "RES%d %dx%d", i, realDimX >> i, dimY >> i);
+		snprintf(buffer2, sizeof(buffer2), "RES%d %dx%d", i, dimX >> i, dimY >> i);
 		if (write(priv->m_iAppIndicatorFileDesc, buffer2, sizeof(buffer2)) == -1) {
 			perror("write");
 			close(priv->m_iAppIndicatorFileDesc);
 			exit(EXIT_FAILURE);
 		}
-	}
-	
-	// Initialize the needed image pool
-	if (IMGFMT_IS_HWACCEL(fmt)) {
-		priv->m_miHWPool = calloc(MAX_NUM_BUFFERED_IMG, sizeof(struct mp_image*));
-	} else {
-		priv->m_miSWPool = mp_image_pool_new(NULL);
 	}
 }
 
@@ -601,104 +564,6 @@ static void vf_HopperRender_redirect_AppIndicator_command(struct priv *priv)
 }
 
 /*
-* Checks if the hw image pool has numFrames images and if not, creates new images.
-* After this function is called, the hw image pool will contain numFrames images.
-*
-* @param f: The video filter instance
-* @param numFrames: The number of images that should be in the pool
-*/
-static void vf_HopperRender_check_hwpool_size(struct mp_filter *f, int numFrames)
-{
-	struct priv *priv = f->priv;
-
-	// If we are processing software images, we don't need to fill our custom hw pool
-	if (!IMGFMT_IS_HWACCEL(priv->m_fmt))
-		return;
-
-	// Check if the image pool already has the correct number of images
-	if (priv->m_iHWPoolSize >= numFrames)
-		return;
-
-	MP_INFO(f, "[HopperRender] Adding %zu images to the hw pool\n", numFrames - priv->m_iHWPoolSize);
-
-	for (int i = priv->m_iHWPoolSize; i < numFrames; i++) {
-		AVFrame *av_frame = av_frame_alloc();
-		if (!av_frame)
-			return;
-		if (av_hwframe_get_buffer(priv->m_miRefImage->hwctx, av_frame, 0) < 0) {
-			av_frame_free(&av_frame);
-			return;
-		}
-		struct mp_image *dst = mp_image_from_av_frame(av_frame);
-		av_frame_free(&av_frame);
-		if (!dst)
-			return;
-
-		if (dst->w < priv->m_miRefImage->w || dst->h < priv->m_miRefImage->h) {
-			talloc_free(dst);
-			return;
-		}
-
-		mp_image_set_size(dst, priv->m_miRefImage->w, priv->m_miRefImage->h);
-
-		mp_image_copy_attributes(dst, priv->m_miRefImage);
-		
-		priv->m_miHWPool[i] = dst;
-	}
-	priv->m_iHWPoolSize = numFrames;
-}
-
-/*
-* Yields an image from the currently used MPI pool.
-*
-* @param f: The video filter instance
-* @param frameNum: The frame number to yield
-*/
-static struct mp_image *vf_HopperRender_get_image(struct mp_filter *f, int frameNum)
-{
-	struct priv *priv = f->priv;
-
-	// If we are processing software images, we can just use the software image pool
-	if (!IMGFMT_IS_HWACCEL(priv->m_fmt)) {
-		struct mp_image *mpi = mp_image_pool_get(priv->m_miSWPool, priv->m_fmt, priv->m_iDimX, priv->m_iDimY);
-		mp_image_copy_attributes(mpi, priv->m_miRefImage);
-		return mpi;
-	}
-
-	// If we are processing hardware images, we return a new ref to one of the images in the hardware pool
-	/* if (frameNum < 0 || frameNum >= priv->m_iHWPoolSize) {
-		MP_ERR(f, "[HopperRender] Invalid frame number\n");
-		mp_filter_internal_mark_failed(f);
-		return NULL;
-	} */
-
-	AVFrame *av_frame = av_frame_alloc();
-	if (!av_frame)
-		return NULL;
-	if (av_hwframe_get_buffer(priv->m_miRefImage->hwctx, av_frame, 0) < 0) {
-		av_frame_free(&av_frame);
-		return NULL;
-	}
-	struct mp_image *dst = mp_image_from_av_frame(av_frame);
-	av_frame_free(&av_frame);
-	if (!dst)
-		return NULL;
-
-	if (dst->w < priv->m_miRefImage->w || dst->h < priv->m_miRefImage->h) {
-		talloc_free(dst);
-		return NULL;
-	}
-
-	mp_image_set_size(dst, priv->m_miRefImage->w, priv->m_miRefImage->h);
-
-	mp_image_copy_attributes(dst, priv->m_miRefImage);
-
-	return dst;
-
-	//return mp_image_new_ref(priv->m_miHWPool[frameNum]);
-}
-
-/*
 * Delivers the intermediate frames to the output pin.
 *
 * @param f: The video filter instance
@@ -708,7 +573,8 @@ static void vf_HopperRender_process_intermediate_frame(struct mp_filter *f)
 {
 	struct priv *priv = f->priv;
 
-	struct mp_image *img = vf_HopperRender_get_image(f, priv->m_iIntFrameNum - 1);
+	struct mp_image *img = mp_image_pool_get(priv->m_miSWPool, IMGFMT_P010, priv->m_iDimX, priv->m_iDimY);
+	mp_image_copy_attributes(img, priv->m_miRefImage);
 	struct mp_frame frame = {.type = MP_FRAME_VIDEO, .data = img};
 	
     // Generate the interpolated frame
@@ -741,7 +607,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
     vf_HopperRender_redirect_AppIndicator_command(priv);
 
     // Read the new source frame
-    struct mp_frame frame = mp_pin_out_read(f->ppins[0]);
+    struct mp_frame frame = mp_pin_out_read(priv->conv->f->pins[1]);
     struct mp_image *img = frame.data;
 	
 	// Detect if the frame is an end of frame
@@ -752,10 +618,8 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 
     // Initialize the filter if needed
     if (!priv->m_bInitialized) {
-		priv->m_bIsHDR = (img->imgfmt == 1118) || img->params.hw_subfmt == IMGFMT_P010;
 		priv->m_miRefImage = mp_image_new_ref(img);
-		int stride = (img->imgfmt == IMGFMT_CUDA) ? img->stride[0] / (priv->m_bIsHDR ? 2 : 1) : img->w;
-        vf_HopperRender_init(f, img->h, stride, img->w, img->imgfmt);
+        vf_HopperRender_init(f, img->h, img->w);
         priv->m_bInitialized = true;
     }
 
@@ -776,13 +640,10 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 		priv->m_iNumIntFrames = 1;
 	}
 
-	// Check if we need to fill the hw image pool
-	//vf_HopperRender_check_hwpool_size(f, priv->m_iNumIntFrames - 1);
-
     // Update the GPU arrays
     gettimeofday(&priv->m_teOFCCalcStart, NULL);
     priv->ofc->updateFrame(priv->ofc, img->planes, priv->m_iFrameBlurKernelSize, priv->m_iFlowBlurKernelSize >> priv->m_cResolutionScalar, priv->m_foFrameOutput == BlurredFrames);
-	
+
 	// Don't interpolate the first three frames (as we need three frames in the buffer to interpolate)
     if (priv->m_isInterpolationState == Active && (priv->m_iFrameCounter > 3 || priv->m_foFrameOutput == SideBySide2)) {
 		vf_HopperRender_interpolate_frame(f, img->planes);
@@ -791,9 +652,9 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
     } else {
         priv->ofc->processFrame(priv->ofc, img->planes, priv->m_iFrameCounter == 1);
     }
-	
+
     // Deliver the source frame
-    mp_pin_in_write(f->ppins[1], frame);
+    mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, img));
 }
 
 /*
@@ -805,6 +666,12 @@ static void vf_HopperRender_process(struct mp_filter *f)
 {
     struct priv *priv = f->priv;
 
+	// Convert the incoming frames using the autoconvert filter (Any -> P010)
+	if (mp_pin_can_transfer_data(priv->conv->f->pins[0], f->ppins[0])) {
+        struct mp_frame frame = mp_pin_out_read(f->ppins[0]);
+        mp_pin_in_write(priv->conv->f->pins[0], frame);
+    }
+
     // Process intermediate frames if needed
     if (priv->m_iIntFrameNum > 0 && mp_pin_in_needs_data(f->ppins[1])) {
         vf_HopperRender_process_intermediate_frame(f);
@@ -812,7 +679,7 @@ static void vf_HopperRender_process(struct mp_filter *f)
     }
 
     // Process a new source frame if available
-    if (priv->m_iIntFrameNum == 0 && mp_pin_can_transfer_data(f->ppins[1], f->ppins[0])) {
+    if (priv->m_iIntFrameNum == 0 && mp_pin_can_transfer_data(f->ppins[1], priv->conv->f->pins[1])) {
         vf_HopperRender_process_new_source_frame(f);
     }
 
@@ -912,10 +779,7 @@ static void vf_HopperRender_uninit(struct mp_filter *f)
 {
     struct priv *priv = f->priv;
 	mp_image_unrefp(&priv->m_miRefImage);
-	for (int i = 0; i < priv->m_iHWPoolSize; i++) {
-		if (priv->m_miHWPool[i])
-			mp_image_unrefp(&priv->m_miHWPool[i]);
-	}
+	mp_image_pool_clear(priv->m_miSWPool);
 	close(priv->m_iAppIndicatorFileDesc);
 	if (priv->m_bInitialized) {
 		pthread_kill(priv->m_ptOFCThreadID, SIGTERM);
@@ -994,6 +858,14 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
     mp_filter_add_pin(f, MP_PIN_IN, "in");
     mp_filter_add_pin(f, MP_PIN_OUT, "out");
 
+	// Initialize the autoconvert filter
+	priv->conv = mp_autoconvert_create(f);
+    if (!priv->conv) {
+        talloc_free(f);
+        return NULL;
+    }
+    mp_autoconvert_add_imgfmt(priv->conv, IMGFMT_P010, 0);
+
 	// Thread data
 	priv->m_ptOFCThreadID = 0;
 
@@ -1014,8 +886,6 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 	// Video info
 	priv->m_iDimX = 1920;
 	priv->m_iDimY = 1080;
-	priv->m_bIsHDR = false;
-	priv->m_fmt = IMGFMT_420P;
 	priv->m_miRefImage = calloc(1, sizeof(struct mp_image));
 
 	// Timings
@@ -1031,9 +901,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 	priv->m_dScalar = 0.0;
 
 	// Frame output
-	priv->m_miSWPool = NULL;
-	priv->m_miHWPool = NULL;
-	priv->m_iHWPoolSize = 0;
+	priv->m_miSWPool = mp_image_pool_new(NULL);
 	priv->m_iIntFrameNum = 0;
 	priv->m_iFrameCounter = 0;
 	priv->m_iNumIntFrames = 1;
