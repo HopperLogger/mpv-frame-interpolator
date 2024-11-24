@@ -1171,6 +1171,14 @@ void adjustFrameScalar(struct OpticalFlowCalc *ofc) {
 	priv->m_lowGrid8x8x5.y = (int)(fmax(ceil((double)(ofc->m_iLowDimY) / 8.0), 1.0));
 	priv->m_lowGrid8x8x1.x = (int)(fmax(ceil((double)(ofc->m_iLowDimX) / 8.0), 1.0));
 	priv->m_lowGrid8x8x1.y = (int)(fmax(ceil((double)(ofc->m_iLowDimY) / 8.0), 1.0));
+
+	// Clear the flow arrays
+ 	HIP_CHECK(hipMemset(ofc->m_offsetArray12, 0, 2 * 5 * ofc->m_iDimY * ofc->m_iDimX * sizeof(int)));
+	HIP_CHECK(hipMemset(ofc->m_offsetArray21, 0, 2 * ofc->m_iDimY * ofc->m_iDimX * sizeof(int)));
+	HIP_CHECK(hipMemset(ofc->m_blurredOffsetArray12[0], 0, 2 * ofc->m_iDimY * ofc->m_iDimX * sizeof(int)));
+	HIP_CHECK(hipMemset(ofc->m_blurredOffsetArray21[0], 0, 2 * ofc->m_iDimY * ofc->m_iDimX * sizeof(int)));
+	HIP_CHECK(hipMemset(ofc->m_blurredOffsetArray12[1], 0, 2 * ofc->m_iDimY * ofc->m_iDimX * sizeof(int)));
+	HIP_CHECK(hipMemset(ofc->m_blurredOffsetArray21[1], 0, 2 * ofc->m_iDimY * ofc->m_iDimX * sizeof(int)));
 }
 
 /*
