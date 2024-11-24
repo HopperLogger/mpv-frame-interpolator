@@ -27,8 +27,8 @@
 #define FLOW_BLUR_KERNEL_SIZE 32 // The size of the blur kernel used to blur the offset calculated by the optical flow
 #define NUM_ITERATIONS 0 // Number of iterations to use in the optical flow calculation (0: As many as possible)
 #define TEST_MODE 0 // Enables or disables automatic settings change to allow accurate performance testing (0: Disabled, 1: Enabled)
-#define AUTO_FRAME_SCALE 0 // Whether to automatically reduce/increase the calculation resolution depending on performance (0: Disabled, 1: Enabled)
-#define AUTO_STEPS_ADJUST 0 // Whether to automatically reduce/increase the number of calculation steps depending on performance (0: Disabled, 1: Enabled)
+#define AUTO_FRAME_SCALE 1 // Whether to automatically reduce/increase the calculation resolution depending on performance (0: Disabled, 1: Enabled)
+#define AUTO_STEPS_ADJUST 1 // Whether to automatically reduce/increase the number of calculation steps depending on performance (0: Disabled, 1: Enabled)
 #define LOG_PERFORMANCE 0 // Whether or not to print debug messages regarding calculation performance (0: Disabled, 1: Enabled)
 #define MIN_NUM_STEPS 4 // The minimum number of calculation steps (if below this, resolution will be decreased or calculation disabled)
 #define MAX_NUM_STEPS 15 // The maximum number of calculation steps (if reached, resolution will be increased or steps will be kept at this number)
@@ -87,12 +87,14 @@ struct priv {
 	double m_dSourceFPS; // The fps of the source video
     double m_dPlaybackSpeed; // The speed of the playback
 	double m_dSourceFrameTime; // The current time between source frames (1 / m_dSourceFPS)
+	bool m_bPlaybackChanged; // Whether or not the playback speed has changed
 	
 	// Optical flow calculation
 	struct OpticalFlowCalc* ofc; // Optical flow calculator struct
 	unsigned char m_cResolutionScalar; // Determines which resolution scalar will be used for the optical flow calculation (0: Full resolution, 1: Half resolution, 2: Quarter resolution, 3: Eighth resolution, 4: Sixteenth resolution, ...)
 	unsigned int m_iNumSteps; // Number of steps executed to find the ideal offset (limits the maximum offset distance per iteration)
 	double m_dScalar; // The scalar used to determine the position between frame1 and frame2
+	bool m_bReinit; // Tells the OFC to reset its buffers
 
 	// Frame output
 	struct mp_image_pool *m_miSWPool; // The software image pool used to store the source frames
@@ -121,12 +123,11 @@ void *vf_HopperRender_start_AppIndicator_script(void *arg);
 * Applies the new resolution scalar to the optical flow calculator
 *
 * @param priv: The video filter private data
-* @param newResolutionScalar: The new resolution scalar to apply
 */
-static void vf_HopperRender_adjust_frame_scalar(struct priv *priv, const unsigned char newResolutionScalar)
+static void vf_HopperRender_adjust_frame_scalar(struct priv *priv)
 {
+	printf("Adjusting frame scalar\n");
 	// Here we just adjust all the variables that are affected by the new resolution scalar
-	priv->m_cResolutionScalar = newResolutionScalar;
 	priv->ofc->m_iFlowBlurKernelSize = priv->m_iFlowBlurKernelSize >> priv->m_cResolutionScalar;
 	if (priv->m_isInterpolationState == TooSlow) priv->m_isInterpolationState = Active;
 	//priv->m_iNumSteps = MIN_NUM_STEPS;
@@ -136,6 +137,7 @@ static void vf_HopperRender_adjust_frame_scalar(struct priv *priv, const unsigne
 	priv->ofc->m_iDirectionIdxOffset = priv->ofc->m_iNumLayers * priv->ofc->m_iLowDimY * priv->ofc->m_iLowDimX;
 	priv->ofc->m_iLayerIdxOffset = priv->ofc->m_iLowDimY * priv->ofc->m_iLowDimX;
 	priv->ofc->adjustFrameScalar(priv->ofc);
+	priv->m_bReinit = false;
 }
 
 /*
@@ -207,22 +209,28 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv, int 
 			priv->ofc->m_fWhiteLevel *= 256.0f;
 			break;
 		case 13:
-			vf_HopperRender_adjust_frame_scalar(priv, 0);
+			priv->m_cResolutionScalar = 0;
+			priv->m_bReinit = true;
 			break;
 		case 14:
-			vf_HopperRender_adjust_frame_scalar(priv, 1);
+			priv->m_cResolutionScalar = 1;
+			priv->m_bReinit = true;
 			break;
 		case 15:
-			vf_HopperRender_adjust_frame_scalar(priv, 2);
+			priv->m_cResolutionScalar = 2;
+			priv->m_bReinit = true;
 			break;
 		case 16:
-			vf_HopperRender_adjust_frame_scalar(priv, 3);
+			priv->m_cResolutionScalar = 3;
+			priv->m_bReinit = true;
 			break;
 		case 17:
-			vf_HopperRender_adjust_frame_scalar(priv, 4);
+			priv->m_cResolutionScalar = 4;
+			priv->m_bReinit = true;
 			break;
 		case 18:
-			vf_HopperRender_adjust_frame_scalar(priv, 5);
+			priv->m_cResolutionScalar = 5;
+			priv->m_bReinit = true;
 			break;
 		case 19:
 			priv->m_foFrameOutput = TearingTest;
@@ -281,7 +289,11 @@ void *vf_HopperRender_optical_flow_calc_thread(void *arg)
 			}
 
 			gettimeofday(&priv->m_teOFCCalcEnd, NULL);
-			priv->m_dOFCCalcDuration = ((priv->m_teOFCCalcEnd.tv_sec - priv->m_teOFCCalcStart.tv_sec) * 1000.0) + ((priv->m_teOFCCalcEnd.tv_usec - priv->m_teOFCCalcStart.tv_usec) / 1000.0);
+			priv->m_dOFCCalcDuration = (priv->m_teOFCCalcEnd.tv_sec - priv->m_teOFCCalcStart.tv_sec) + ((priv->m_teOFCCalcEnd.tv_usec - priv->m_teOFCCalcStart.tv_usec) / 1000000.0);
+
+			if (priv->m_bReinit) {
+				vf_HopperRender_adjust_frame_scalar(priv);
+			}
 
         } else if (sig == SIGTERM) {
 			pthread_exit(NULL);
@@ -346,6 +358,7 @@ static bool vf_HopperRender_command(struct mp_filter *f, struct mp_filter_comman
 	if (cmd->type == MP_FILTER_COMMAND_TEXT) {
 		priv->m_dPlaybackSpeed = cmd->speed;
 		priv->m_dSourceFrameTime = 1.0 / (priv->m_dSourceFPS * priv->m_dPlaybackSpeed);
+		priv->m_bPlaybackChanged = true;
 	}
 
 	// If the source is already at or above 60 FPS, we don't need interpolation
@@ -370,11 +383,11 @@ static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv, double
     int offset = snprintf(buffer2, sizeof(buffer2), 
                           "Num Steps: %d\nCalc Res: %dx%d\nTarget Time: %06.2f ms (%.1f fps)\nFrame Time: %06.2f ms (%.3f fps | %.2fx)\nOfc: %06.2f ms (%.0f fps)\nWarp Time: %06.2f ms (%.0f fps)",
                           priv->m_iNumSteps, priv->m_iDimX >> priv->m_cResolutionScalar, priv->m_iDimY >> priv->m_cResolutionScalar, priv->m_dTargetPTS * 1000.0, 1.0 / priv->m_dTargetPTS,
-						  priv->m_dSourceFrameTime * 1000.0, 1.0 / priv->m_dSourceFrameTime, priv->m_dPlaybackSpeed, priv->m_dOFCCalcDuration, 1.0 / priv->m_dOFCCalcDuration * 1000.0, currTotalWarpDuration, 1.0 / currTotalWarpDuration * 1000.0);
+						  priv->m_dSourceFrameTime * 1000.0, 1.0 / priv->m_dSourceFrameTime, priv->m_dPlaybackSpeed, priv->m_dOFCCalcDuration * 1000.0, 1.0 / priv->m_dOFCCalcDuration, currTotalWarpDuration * 1000.0, 1.0 / currTotalWarpDuration);
 
     for (int i = 0; i < 10; i++) {
 		if (i < min(priv->m_iNumIntFrames, 10)) {
-        	offset += snprintf(buffer2 + offset, sizeof(buffer2) - offset, "\nWarp%d: %06.2f ms", i, warpCalcDurations[i]);
+        	offset += snprintf(buffer2 + offset, sizeof(buffer2) - offset, "\nWarp%d: %06.2f ms", i, warpCalcDurations[i] * 1000.0);
 		} else {
 			offset += snprintf(buffer2 + offset, sizeof(buffer2) - offset, "\n");
 		}
@@ -398,24 +411,20 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f)
 	// Calculate the calculation durations
 	double warpCalcDurations[100];
 	double currTotalWarpDuration = 0.0;
-	double currTotalCalcDuration = priv->m_dOFCCalcDuration;
 	for (int i = 0; i < min(priv->m_iNumIntFrames, 100); i++) {
-		warpCalcDurations[i] = ((priv->m_teWarpCalcEnd[i].tv_sec - priv->m_teWarpCalcStart[i].tv_sec) * 1000.0) + ((priv->m_teWarpCalcEnd[i].tv_usec - priv->m_teWarpCalcStart[i].tv_usec) / 1000.0);
+		warpCalcDurations[i] = (priv->m_teWarpCalcEnd[i].tv_sec - priv->m_teWarpCalcStart[i].tv_sec) + ((priv->m_teWarpCalcEnd[i].tv_usec - priv->m_teWarpCalcStart[i].tv_usec) / 1000000.0);
 		currTotalWarpDuration += warpCalcDurations[i];
 	}
-	if (currTotalWarpDuration > priv->m_dOFCCalcDuration) currTotalCalcDuration = currTotalWarpDuration;
+	double currTotalCalcDuration = max(priv->m_dOFCCalcDuration, currTotalWarpDuration);
 	
 	// Send the stats to the AppIndicator status widget
 	vf_HopperRender_update_AppIndicator_widget(priv, warpCalcDurations, currTotalWarpDuration);
-
-	// Get the time we have in between source frames (WE NEED TO STAY BELOW THIS!)
-	double dSourceFrameTimeMS = priv->m_dSourceFrameTime * 1000.0;
 	
 	/*
 	* Calculation took too long
 	*/
-	if ((currTotalCalcDuration + currTotalCalcDuration * 0.7) > dSourceFrameTimeMS) {
-		if (LOG_PERFORMANCE) MP_TRACE(f, "[HopperRender] Calculation took too long %.3f ms AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, dSourceFrameTimeMS, priv->m_iNumSteps, priv->m_cResolutionScalar);
+	if ((currTotalCalcDuration + currTotalCalcDuration * 0.3) > priv->m_dSourceFrameTime) {
+		if (LOG_PERFORMANCE) MP_TRACE(f, "[HopperRender] Calculation took too long %.3f sec AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, priv->m_dSourceFrameTime, priv->m_iNumSteps, priv->m_cResolutionScalar);
 
 		// Decrease the number of steps to reduce calculation time
 		if (AUTO_STEPS_ADJUST && priv->m_iNumSteps > MIN_NUM_STEPS) {
@@ -429,34 +438,40 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f)
 			priv->m_cNumTimesTooSlow += 1;
 			if (priv->m_cNumTimesTooSlow > 1) {
 				priv->m_cNumTimesTooSlow = 0;
-				vf_HopperRender_adjust_frame_scalar(priv, priv->m_cResolutionScalar + 1);
+				priv->m_cResolutionScalar += 1;
+				priv->m_bReinit = true;
 			}
 			return;
 		}
 
 		// Disable Interpolation if we are too slow
-		if ((AUTO_FRAME_SCALE || AUTO_STEPS_ADJUST) && ((currTotalCalcDuration + currTotalCalcDuration * 0.05) > dSourceFrameTimeMS)) priv->m_isInterpolationState = TooSlow;
+		if ((AUTO_FRAME_SCALE || AUTO_STEPS_ADJUST) && ((currTotalCalcDuration + currTotalCalcDuration * 0.05) > priv->m_dSourceFrameTime)) priv->m_isInterpolationState = TooSlow;
 
 	/*
 	* We have left over capacity
 	*/
-	} else if ((currTotalCalcDuration + currTotalCalcDuration * 0.9) < dSourceFrameTimeMS) {
-		if (LOG_PERFORMANCE) MP_TRACE(f, "[HopperRender] Calculation has capacity %.3f ms AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, dSourceFrameTimeMS, priv->m_iNumSteps, priv->m_cResolutionScalar);
+	} else if ((currTotalCalcDuration + currTotalCalcDuration * 0.4) < priv->m_dSourceFrameTime) {
+		if (LOG_PERFORMANCE) MP_TRACE(f, "[HopperRender] Calculation has capacity %.3f sec AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, priv->m_dSourceFrameTime, priv->m_iNumSteps, priv->m_cResolutionScalar);
 
 		// Increase the frame scalar if we have enough leftover capacity
-		if (AUTO_FRAME_SCALE && priv->m_cResolutionScalar > 0 && priv->m_iNumSteps >= MAX_NUM_STEPS) {
+		if (AUTO_FRAME_SCALE && priv->m_bPlaybackChanged && priv->m_cResolutionScalar > 0 && priv->m_iNumSteps >= MAX_NUM_STEPS) {
+			// Only allow a quality increase if something changed, like speed or we are at the beginning of the video
+			if (priv->m_dCurrPlaybackPTS > 5.0) {
+				priv->m_bPlaybackChanged = false;
+			}
 			priv->m_cNumTimesTooSlow = 0;
-			vf_HopperRender_adjust_frame_scalar(priv, priv->m_cResolutionScalar - 1);
-			priv->m_iNumSteps = MIN_NUM_STEPS;
+			priv->m_cResolutionScalar -= 1;
+			priv->m_bReinit = true;
+			priv->m_iNumSteps = max(MIN_NUM_STEPS, priv->m_iNumSteps / 2);
 		} else if (AUTO_STEPS_ADJUST) {
-			priv->m_iNumSteps = fmin(priv->m_iNumSteps + 1, MAX_NUM_STEPS); // Increase the number of steps to use the leftover capacity
+			priv->m_iNumSteps = min(priv->m_iNumSteps + 1, MAX_NUM_STEPS);
 		}
 
 	/*
 	* Calculation takes as long as it should
 	*/
 	} else {
-		if (LOG_PERFORMANCE) MP_TRACE(f, "[HopperRender] Calculation took %.3f ms AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, dSourceFrameTimeMS, priv->m_iNumSteps, priv->m_cResolutionScalar);
+		if (LOG_PERFORMANCE) MP_TRACE(f, "[HopperRender] Calculation took %.3f sec AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, priv->m_dSourceFrameTime, priv->m_iNumSteps, priv->m_cResolutionScalar);
 	}
 }
 
@@ -894,11 +909,13 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
     priv->m_dSourceFPS = 24000.0 / 1001.0; // Default to 23.976 FPS
     priv->m_dPlaybackSpeed = 1.0;
 	priv->m_dSourceFrameTime = 1001.0 / 24000.0;
+	priv->m_bPlaybackChanged = true;
 	
 	// Optical Flow calculation
 	priv->m_cResolutionScalar = INITIAL_RESOLUTION_SCALAR;
 	priv->m_iNumSteps = INITIAL_NUM_STEPS;
 	priv->m_dScalar = 0.0;
+	priv->m_bReinit = false;
 
 	// Frame output
 	priv->m_miSWPool = mp_image_pool_new(NULL);
