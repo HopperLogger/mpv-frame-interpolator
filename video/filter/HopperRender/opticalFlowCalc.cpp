@@ -1,13 +1,9 @@
-#define __HIP_PLATFORM_AMD__
 #include <hip/hip_runtime.h>
 #include <hip/hip_cooperative_groups.h>
 #include "opticalFlowCalc.h"
 #include <algorithm>
 
 #define SCALE_FLOW 0
-#define YUV420P_FMT 1002
-#define NV12_FMT 1006
-#define HIP_FMT 1026
 
 #define HIP_CHECK(call)                                              \
     {                                                                \
@@ -44,87 +40,40 @@ struct priv {
 };
 
 // Applies the black and white values to the Y-Channel
-__device__ void applyShaderY(unsigned char& output, const unsigned char input, const float blackLevel, const float whiteLevel, const float maxVal) {
-	output = static_cast<unsigned char>(fmaxf(fminf((static_cast<float>(input) - blackLevel) / (whiteLevel - blackLevel) * maxVal, maxVal), 0.0f));
-}
 __device__ void applyShaderY(unsigned short& output, const unsigned short input, const float blackLevel, const float whiteLevel, const float maxVal) {
 	output = static_cast<unsigned short>(fmaxf(fminf((static_cast<float>(input) - blackLevel) / (whiteLevel - blackLevel) * maxVal, maxVal), 0.0f));
 }
 
 // Kernel that runs a tearing test on the GPU
-__global__ void tearingTestKernel(unsigned char* outputFrame, const unsigned int dimY, const unsigned int dimX, const int width, const int pos_x) {
+__global__ void tearingTestKernel(unsigned short* outputFrame, const unsigned int dimY, const unsigned int dimX, const int width, const int pos_x) {
 	// Current entry to be computed by the thread
 	const unsigned int cx = blockIdx.x * blockDim.x + threadIdx.x;
 	const unsigned int cy = blockIdx.y * blockDim.y + threadIdx.y;
 
 	if (cy < dimY && cx < dimX && cx >= pos_x && cx < pos_x + width) {
-		outputFrame[cy * dimX + cx] = 255;
-	}
-}
-
-// Kernel that converts a NV12 frame to a YUV420P frame
-template <typename T>
-__global__ void convertNV12toYUV420PKernel(T* outputFrame, const T* inputFrame, const unsigned int dimY, 
-										   const unsigned int dimX, const unsigned int halfDimY, 
-										   const unsigned int halfDimX, const unsigned int channelIdxOffset, const unsigned int secondChannelIdxOffset) {
-	// Current entry to be computed by the thread
-	const unsigned int cx = blockIdx.x * blockDim.x + threadIdx.x;
-	const unsigned int cy = blockIdx.y * blockDim.y + threadIdx.y;
-
-	if (cy < halfDimY && cx < dimX) {
-		// U Channel
-		if (!(cx & 1)) {
-			outputFrame[cy * halfDimX + (cx >> 1)] = inputFrame[channelIdxOffset + cy * dimX + cx];
-		// V Channel
-		} else {
-			outputFrame[secondChannelIdxOffset + cy * halfDimX + (cx >> 1)] = inputFrame[channelIdxOffset + cy * dimX + cx];
-		}
-	}
-}
-
-// Kernel that converts a YUV420P frame to a NV12 frame
-// Note that it expects the frame to only contain the U and V channels (so the first byte should be of the U channel)
-template <typename T>
-__global__ void convertYUV420PtoNV12Kernel(T* outputFrame, const T* inputFrame, const unsigned int dimY, 
-										   const unsigned int dimX, const unsigned int halfDimY, 
-										   const unsigned int halfDimX, const unsigned int channelIdxOffset) {
-	// Current entry to be computed by the thread
-	const unsigned int cx = blockIdx.x * blockDim.x + threadIdx.x;
-	const unsigned int cy = blockIdx.y * blockDim.y + threadIdx.y;
-
-	if (cy < halfDimY && cx < dimX) {
-		// U Channel
-		if (!(cx & 1)) {
-			outputFrame[channelIdxOffset + cy * dimX + cx] = inputFrame[cy * halfDimX + (cx >> 1)];
-		// V Channel
-		} else {
-			outputFrame[channelIdxOffset + cy * dimX + cx] = inputFrame[halfDimY * halfDimX + cy * halfDimX + (cx >> 1)];
-		}
+		outputFrame[cy * dimX + cx] = 65535;
 	}
 }
 
 // Kernel that simply applies a shader to the frame and copies it to the output frame
-template <typename T>
-__global__ void processFrameKernel(const T* frame, T* outputFrame,
+__global__ void processFrameKernel(const unsigned short* frame, unsigned short* outputFrame,
                                  const unsigned int dimY,
-                                 const unsigned int dimX, const unsigned int realDimX, const float blackLevel, const float whiteLevel, const float maxVal) {
+                                 const unsigned int dimX, const float blackLevel, const float whiteLevel, const float maxVal) {
 	// Current entry to be computed by the thread
 	const unsigned int cx = blockIdx.x * blockDim.x + threadIdx.x;
 	const unsigned int cy = blockIdx.y * blockDim.y + threadIdx.y;
 
 	// Y Channel
-	if (cy < dimY && cx < realDimX) {
+	if (cy < dimY && cx < dimX) {
 		applyShaderY(outputFrame[cy * dimX + cx], frame[cy * dimX + cx], blackLevel, whiteLevel, maxVal);
 	}
 }
 
 // Kernel that blurs a 2D plane along the X direction
-template <typename T>
-__global__ void blurFrameKernel(const T* frameArray, T* blurredFrameArray, 
+__global__ void blurFrameKernel(const unsigned short* frameArray, unsigned short* blurredFrameArray, 
 								const unsigned char kernelSize, const unsigned char chacheSize, const unsigned char boundsOffset, 
 								const unsigned char avgEntriesPerThread, const unsigned short remainder, const char lumStart,
-								const unsigned char lumEnd, const unsigned short lumPixelCount, const unsigned short dimY, const unsigned short dimX,
-								const unsigned int realDimX) {
+								const unsigned char lumEnd, const unsigned short lumPixelCount, const unsigned short dimY, const unsigned short dimX) {
 	// Shared memory for the frame to prevent multiple global memory accesses
 	extern __shared__ unsigned int sharedFrameArray[];
 	// Current entry to be computed by the thread
@@ -132,7 +81,7 @@ __global__ void blurFrameKernel(const T* frameArray, T* blurredFrameArray,
 	const unsigned short cy = blockIdx.y * blockDim.y + threadIdx.y;
 
 	// Check if the current thread is supposed to perform calculations
-	if (cy >= dimY || cx >= realDimX) {
+	if (cy >= dimY || cx >= dimX) {
 		return;
 	}
 
@@ -156,7 +105,7 @@ __global__ void blurFrameKernel(const T* frameArray, T* blurredFrameArray,
 		offsetY = (startIndex + i) / chacheSize;
 		newX = trX - boundsOffset + offsetX;
 		newY = trY - boundsOffset + offsetY;
-		if (newY < dimY && newY >= 0 && newX < realDimX && newX >= 0) {
+		if (newY < dimY && newY >= 0 && newX < dimX && newX >= 0) {
 			sharedFrameArray[startIndex + i] = frameArray[newY * dimX + newX];
 		} else {
 			sharedFrameArray[startIndex + i] = 0;
@@ -167,7 +116,7 @@ __global__ void blurFrameKernel(const T* frameArray, T* blurredFrameArray,
     __syncthreads();
 
 	// Don't blur the edges of the frame
-	if (cy < kernelSize / 2 || cy >= dimY - kernelSize / 2 || cx < kernelSize / 2 || cx >= realDimX - kernelSize / 2) {
+	if (cy < kernelSize / 2 || cy >= dimY - kernelSize / 2 || cx < kernelSize / 2 || cx >= dimX - kernelSize / 2) {
 		blurredFrameArray[cy * dimX + cx] = 0;
 		return;
 	}
@@ -176,7 +125,7 @@ __global__ void blurFrameKernel(const T* frameArray, T* blurredFrameArray,
 	// Collect the sum of the surrounding pixels
 	for (char y = lumStart; y < lumEnd; y++) {
 		for (char x = lumStart; x < lumEnd; x++) {
-			if ((cy + y) < dimY && (cy + y) >= 0 && (cx + x) < realDimX && (cx + x) >= 0) {
+			if ((cy + y) < dimY && (cy + y) >= 0 && (cx + x) < dimX && (cx + x) >= 0) {
 				blurredPixel += sharedFrameArray[(threadIdx.y + boundsOffset + y) * chacheSize + threadIdx.x + boundsOffset + x];
 			} else {
 				blurredPixel += sharedFrameArray[(threadIdx.y + boundsOffset) * chacheSize + threadIdx.x + boundsOffset];
@@ -242,8 +191,7 @@ __device__ void warpReduce2x2(volatile unsigned int* partial_sums, int tIdx) {
 }
 
 // Kernel that sums up all the pixel deltas of each window
-template <typename T>
-__global__ void calcDeltaSums(unsigned int* summedUpDeltaArray, const T* frame1, const T* frame2,
+__global__ void calcDeltaSums(unsigned int* summedUpDeltaArray, const unsigned short* frame1, const unsigned short* frame2,
 							  const int* offsetArray, const unsigned int layerIdxOffset, const unsigned int directionIdxOffset,
 						      const unsigned int dimY, const unsigned int dimX, const unsigned int lowDimY, const unsigned int lowDimX,
 							  const unsigned int windowDim, const unsigned char resolutionScalar) {
@@ -850,10 +798,9 @@ __global__ void cleanFlowKernel(const int* flowArray, int* blurredFlowArray,
 }
 
 // Kernel that warps a frame according to the offset array
-template <typename T>
-__global__ void warpFrameKernel(const T* frame1, const int* offsetArray, int* hitCount,
-								T* warpedFrame, const float frameScalar, const unsigned int lowDimY, const unsigned int lowDimX,
-								const unsigned int dimY, const int dimX, const unsigned int realDimX, const unsigned char resolutionScalar,
+__global__ void warpFrameKernel(const unsigned short* frame1, const int* offsetArray, int* hitCount,
+								unsigned short* warpedFrame, const float frameScalar, const unsigned int lowDimY, const unsigned int lowDimX,
+								const unsigned int dimY, const int dimX, const unsigned char resolutionScalar,
 								const unsigned int directionIdxOffset, const unsigned int channelIdxOffset) {
 	// Current entry to be computed by the thread
 	const int cx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -861,7 +808,7 @@ __global__ void warpFrameKernel(const T* frame1, const int* offsetArray, int* hi
 	const int cz = blockIdx.z * blockDim.z + threadIdx.z;
 
 	// Y Channel
-	if (cz == 0 && cy < dimY && cx < realDimX) {
+	if (cz == 0 && cy < dimY && cx < dimX) {
 		// Get the current offsets to use
 		const int scaledCx = cx >> resolutionScalar; // The X-Index of the current thread in the offset array
 		const int scaledCy = cy >> resolutionScalar; // The Y-Index of the current thread in the offset array
@@ -871,13 +818,13 @@ __global__ void warpFrameKernel(const T* frame1, const int* offsetArray, int* hi
 		const int newCy = cy + offsetY;
 
 		// Check if the current pixel is inside the frame
-		if (newCy >= 0 && newCy < dimY && newCx >= 0 && newCx < realDimX) {
+		if (newCy >= 0 && newCy < dimY && newCx >= 0 && newCx < dimX) {
 			warpedFrame[newCy * dimX + newCx] = frame1[cy * dimX + cx];
 			atomicAdd(&hitCount[newCy * dimX + newCx], 1);
 		}
 
 	// U/V-Channel
-	} else if (cz == 1 && cy < (dimY >> 1) && cx < realDimX) {
+	} else if (cz == 1 && cy < (dimY >> 1) && cx < dimX) {
 		const int scaledCx = (cx >> resolutionScalar) & ~1; // The X-Index of the current thread in the offset array
 		const int scaledCy = (cy >> resolutionScalar) << 1; // The Y-Index of the current thread in the offset array
 		const int offsetX = static_cast<int>(static_cast<float>(offsetArray[scaledCy * lowDimX + scaledCx] * 1 << (resolutionScalar * SCALE_FLOW)) * frameScalar);
@@ -887,7 +834,7 @@ __global__ void warpFrameKernel(const T* frame1, const int* offsetArray, int* hi
 		const int newCy = cy + offsetY;
 
 		// Check if the current pixel is inside the frame
-		if (newCy >= 0 && newCy < (dimY >> 1) && newCx >= 0 && newCx < realDimX) {
+		if (newCy >= 0 && newCy < (dimY >> 1) && newCx >= 0 && newCx < dimX) {
 			// U-Channel
 			if ((cx & 1) == 0) {
 				warpedFrame[channelIdxOffset + newCy * dimX + (newCx & ~1)] = frame1[channelIdxOffset + cy * dimX + cx];
@@ -901,9 +848,8 @@ __global__ void warpFrameKernel(const T* frame1, const int* offsetArray, int* hi
 }
 
 // Kernel that removes artifacts from the warped frame
-template <typename T>
-__global__ void artifactRemovalKernel(const T* frame1, const int* hitCount, T* warpedFrame,
-												 const unsigned int dimY, const unsigned int dimX, const unsigned int realDimX, const unsigned int channelIdxOffset) {
+__global__ void artifactRemovalKernel(const unsigned short* frame1, const int* hitCount, unsigned short* warpedFrame,
+												 const unsigned int dimY, const unsigned int dimX, const unsigned int channelIdxOffset) {
 	// Current entry to be computed by the thread
 	const unsigned int cx = blockIdx.x * blockDim.x + threadIdx.x;
 	const unsigned int cy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -911,13 +857,13 @@ __global__ void artifactRemovalKernel(const T* frame1, const int* hitCount, T* w
 	const unsigned int threadIndex2D = cy * dimX + cx; // Standard thread index without Z-Dim
 
 	// Y Channel
-	if (cz == 0 && cy < dimY && cx < realDimX) {
+	if (cz == 0 && cy < dimY && cx < dimX) {
 		if (hitCount[threadIndex2D] != 1) {
 			warpedFrame[threadIndex2D] = frame1[threadIndex2D];
 		}
 
 	// U/V Channels
-	} else if (cz == 1 && cy < (dimY >> 1) && cx < realDimX) {
+	} else if (cz == 1 && cy < (dimY >> 1) && cx < dimX) {
 		if (hitCount[threadIndex2D] != 1) {
 			warpedFrame[channelIdxOffset + cy * dimX + cx] = frame1[channelIdxOffset + threadIndex2D];
 		}
@@ -925,10 +871,9 @@ __global__ void artifactRemovalKernel(const T* frame1, const int* hitCount, T* w
 }
 
 // Kernel that blends warpedFrame1 to warpedFrame2
-template <typename T>
-__global__ void blendFrameKernel(const T* warpedFrame1, const T* warpedFrame2, T* outputFrame,
+__global__ void blendFrameKernel(const unsigned short* warpedFrame1, const unsigned short* warpedFrame2, unsigned short* outputFrame,
                                  const float frame1Scalar, const float frame2Scalar, const unsigned int dimY,
-                                 const unsigned int dimX, const unsigned int realDimX, const unsigned int channelIdxOffset, const float blackLevel, const float whiteLevel, const float maxVal) {
+                                 const unsigned int dimX, const unsigned int channelIdxOffset, const float blackLevel, const float whiteLevel, const float maxVal) {
 	// Current entry to be computed by the thread
 	const unsigned int cx = blockIdx.x * blockDim.x + threadIdx.x;
 	const unsigned int cy = blockIdx.y * blockDim.y + threadIdx.y;
@@ -936,12 +881,12 @@ __global__ void blendFrameKernel(const T* warpedFrame1, const T* warpedFrame2, T
 	float pixelValue;
 
 	// Y Channel
-	if (cz == 0 && cy < dimY && cx < realDimX) {
+	if (cz == 0 && cy < dimY && cx < dimX) {
 		pixelValue = static_cast<float>(warpedFrame1[cy * dimX + cx]) * frame1Scalar + 
 					 static_cast<float>(warpedFrame2[cy * dimX + cx]) * frame2Scalar;
 		applyShaderY(outputFrame[cy * dimX + cx], pixelValue, blackLevel, whiteLevel, maxVal);
 	// U/V Channels
-	} else if (cz == 1 && cy < (dimY >> 1) && cx < realDimX) {
+	} else if (cz == 1 && cy < (dimY >> 1) && cx < dimX) {
 		pixelValue = static_cast<float>(warpedFrame1[channelIdxOffset + cy * dimX + cx]) * frame1Scalar + 
 					 static_cast<float>(warpedFrame2[channelIdxOffset + cy * dimX + cx]) * frame2Scalar;
 		outputFrame[channelIdxOffset + cy * dimX + cx] = pixelValue;
@@ -949,9 +894,8 @@ __global__ void blendFrameKernel(const T* warpedFrame1, const T* warpedFrame2, T
 }
 
 // Kernel that places half of frame 1 over the outputFrame
-template <typename T>
-__global__ void insertFrameKernel(const T* frame1, T* outputFrame, const unsigned int dimY,
-                                  const unsigned int dimX, const unsigned int realDimX, 
+__global__ void insertFrameKernel(const unsigned short* frame1, unsigned short* outputFrame, const unsigned int dimY,
+                                  const unsigned int dimX,
 								  const unsigned int channelIdxOffset, const float blackLevel, 
 								  const float whiteLevel, const float maxVal) {
 	// Current entry to be computed by the thread
@@ -960,19 +904,18 @@ __global__ void insertFrameKernel(const T* frame1, T* outputFrame, const unsigne
 	const unsigned int cz = threadIdx.z;
 
 	// Y Channel
-	if (cz == 0 && cy < dimY && cx < (realDimX >> 1)) {
+	if (cz == 0 && cy < dimY && cx < (dimX >> 1)) {
 		applyShaderY(outputFrame[cy * dimX + cx], frame1[cy * dimX + cx], blackLevel, whiteLevel, maxVal);
 	// U/V Channels
-	} else if (cz == 1 && cy < (dimY >> 1) && cx < (realDimX >> 1)) {
+	} else if (cz == 1 && cy < (dimY >> 1) && cx < (dimX >> 1)) {
 		outputFrame[channelIdxOffset + cy * dimX + cx] = frame1[channelIdxOffset + cy * dimX + cx];
 	}
 }
 
 // Kernel that places frame 1 scaled down on the left side and the blendedFrame on the right side of the outputFrame
-template <typename T>
-__global__ void sideBySideFrameKernel(const T* frame1, const T* warpedFrame1, const T* warpedFrame2, T* outputFrame, 
+__global__ void sideBySideFrameKernel(const unsigned short* frame1, const unsigned short* warpedFrame1, const unsigned short* warpedFrame2, unsigned short* outputFrame, 
 									  const float frame1Scalar, const float frame2Scalar, const unsigned int dimY,
-                                      const unsigned int dimX, const unsigned int realDimX, const unsigned int halfDimY, 
+                                      const unsigned int dimX, const unsigned int halfDimY, 
 									  const unsigned int halfDimX, const unsigned int channelIdxOffset,
 									  const float blackLevel, const float whiteLevel, const float maxVal, const unsigned short middleValue) {
 	// Current entry to be computed by the thread
@@ -980,30 +923,30 @@ __global__ void sideBySideFrameKernel(const T* frame1, const T* warpedFrame1, co
 	const unsigned int cy = blockIdx.y * blockDim.y + threadIdx.y;
 	const unsigned int cz = threadIdx.z;
 	const unsigned int verticalOffset = dimY >> 2;
-	const bool isYChannel = cz == 0 && cy < dimY && cx < realDimX;
-	const bool isUVChannel = cz == 1 && cy < halfDimY && cx < realDimX;
+	const bool isYChannel = cz == 0 && cy < dimY && cx < dimX;
+	const bool isUVChannel = cz == 1 && cy < halfDimY && cx < dimX;
 	const bool isVChannel = (cx & 1) == 1;
 	const bool isInLeftSideY = cy >= verticalOffset && cy < (verticalOffset + halfDimY) && cx < halfDimX;
-	const bool isInRightSideY = cy >= verticalOffset && cy < (verticalOffset + halfDimY) && cx >= halfDimX && cx < realDimX;
+	const bool isInRightSideY = cy >= verticalOffset && cy < (verticalOffset + halfDimY) && cx >= halfDimX && cx < dimX;
 	const bool isInLeftSideUV = cy >= (verticalOffset >> 1) && cy < ((verticalOffset >> 1) + (dimY >> 2)) && cx < halfDimX;
-	const bool isInRightSideUV = cy >= (verticalOffset >> 1) && cy < ((verticalOffset >> 1) + (dimY >> 2)) && cx >= halfDimX && cx < realDimX;
-	T blendedFrameValue;
+	const bool isInRightSideUV = cy >= (verticalOffset >> 1) && cy < ((verticalOffset >> 1) + (dimY >> 2)) && cx >= halfDimX && cx < dimX;
+	unsigned short blendedFrameValue;
 
 	// Early exit if thread indices are out of bounds
-    if (cz > 1 || cy >= dimY || cx >= realDimX || (cz == 1 && cy >= halfDimY)) return;
+    if (cz > 1 || cy >= dimY || cx >= dimX || (cz == 1 && cy >= halfDimY)) return;
 
 	// --- Blending ---
 	// Y Channel
 	if (isYChannel && isInRightSideY) {
 		blendedFrameValue = 
-			static_cast<T>(
+			static_cast<unsigned short>(
 				static_cast<float>(warpedFrame1[((cy - verticalOffset) << 1) * dimX + ((cx - halfDimX) << 1)]) * frame1Scalar + 
 				static_cast<float>(warpedFrame2[((cy - verticalOffset) << 1) * dimX + ((cx - halfDimX) << 1)]) * frame2Scalar
 			);
 	// U/V Channels
 	} else if (isUVChannel && isInRightSideUV) {
 		blendedFrameValue = 
-			static_cast<T>(
+			static_cast<unsigned short>(
 				static_cast<float>(warpedFrame1[channelIdxOffset + 2 * (cy - (verticalOffset >> 1)) * dimX + ((cx - halfDimX) << 1) + isVChannel]) * frame1Scalar + 
 				static_cast<float>(warpedFrame2[channelIdxOffset + 2 * (cy - (verticalOffset >> 1)) * dimX + ((cx - halfDimX) << 1) + isVChannel]) * frame2Scalar
 			);
@@ -1013,7 +956,7 @@ __global__ void sideBySideFrameKernel(const T* frame1, const T* warpedFrame1, co
 	if (isYChannel) {
 		// Y Channel Left Side
 		if (isInLeftSideY) {
-			applyShaderY(outputFrame[cy * dimX + cx], static_cast<T>(frame1[((cy - verticalOffset) << 1) * dimX + (cx << 1)]), blackLevel, whiteLevel, maxVal);
+			applyShaderY(outputFrame[cy * dimX + cx], static_cast<unsigned short>(frame1[((cy - verticalOffset) << 1) * dimX + (cx << 1)]), blackLevel, whiteLevel, maxVal);
 		// Y Channel Right Side
 		} else if (isInRightSideY) {
 			applyShaderY(outputFrame[cy * dimX + cx], blendedFrameValue, blackLevel, whiteLevel, maxVal);
@@ -1036,16 +979,14 @@ __global__ void sideBySideFrameKernel(const T* frame1, const T* warpedFrame1, co
 }
 
 // Kernel that creates an HSV flow image from the offset array
-template <typename T>
-__global__ void convertFlowToHSVKernel(const int* flowArray, T* outputFrame, const T* frame1,
+__global__ void convertFlowToHSVKernel(const int* flowArray, unsigned short* outputFrame, const unsigned short* frame1,
                                        const float blendScalar, const unsigned int lowDimY, const unsigned int lowDimX, const unsigned int dimY, const unsigned int dimX, 
-									   const unsigned int realDimX, const unsigned char resolutionScalar, const unsigned int directionIdxOffset,
-									   const unsigned int channelIdxOffset, const bool isP010) {
+									   const unsigned char resolutionScalar, const unsigned int directionIdxOffset,
+									   const unsigned int channelIdxOffset) {
 	// Current entry to be computed by the thread
 	const unsigned int cx = blockIdx.x * blockDim.x + threadIdx.x;
 	const unsigned int cy = blockIdx.y * blockDim.y + threadIdx.y;
 	const unsigned int cz = threadIdx.z;
-	const bool isHDR = sizeof(T) == 2;
 
 	const unsigned int scaledCx = cx >> resolutionScalar; // The X-Index of the current thread in the offset array
 	const unsigned int scaledCy = cy >> resolutionScalar; // The Y-Index of the current thread in the offset array
@@ -1053,10 +994,10 @@ __global__ void convertFlowToHSVKernel(const int* flowArray, T* outputFrame, con
 	// Get the current flow values
 	float x;
 	float y;
-	if (cz == 0 && cy < dimY && cx < realDimX) {
+	if (cz == 0 && cy < dimY && cx < dimX) {
 		x = flowArray[scaledCy * lowDimX + scaledCx];
 		y = flowArray[directionIdxOffset + scaledCy * lowDimX + scaledCx];
-	} else if (cz == 1 && cy < (dimY >> 1) && cx < realDimX){
+	} else if (cz == 1 && cy < (dimY >> 1) && cx < dimX){
 		x = flowArray[(scaledCy << 1) * lowDimX + scaledCx];
 		y = flowArray[directionIdxOffset + (scaledCy << 1) * lowDimX + scaledCx];
 	}
@@ -1113,52 +1054,33 @@ __global__ void convertFlowToHSVKernel(const int* flowArray, T* outputFrame, con
 	}
 
 	// Y Channel
-	if (cz == 0 && cy < dimY && cx < realDimX) {
-		outputFrame[cy * dimX + cx] = isHDR ?
-			(static_cast<unsigned short>(
-				(fmaxf(fminf(rgb.r * 0.299f + rgb.g * 0.587f + rgb.b * 0.114f, 255.0f), 0.0f)) * blendScalar) << (isP010 ? 8 : 2)) + 
-				frame1[cy * dimX + cx] * (1.0f - blendScalar)
-			:
-			static_cast<unsigned char>(
-				(fmaxf(fminf(rgb.r * 0.299f + rgb.g * 0.587f + rgb.b * 0.114f, 255.0f), 0.0f)) * blendScalar + 
-				frame1[cy * dimX + cx] * (1.0f - blendScalar)
-			);
+	if (cz == 0 && cy < dimY && cx < dimX) {
+		outputFrame[cy * dimX + cx] = (static_cast<unsigned short>(
+				(fmaxf(fminf(rgb.r * 0.299f + rgb.g * 0.587f + rgb.b * 0.114f, 255.0f), 0.0f)) * blendScalar) << 8) + 
+				frame1[cy * dimX + cx] * (1.0f - blendScalar);
 	// U/V Channels
-	} else if (cz == 1 && cy < (dimY >> 1) && cx < realDimX) {
+	} else if (cz == 1 && cy < (dimY >> 1) && cx < dimX) {
 		// U Channel
 		if ((cx & 1) == 0) {
-			outputFrame[channelIdxOffset + cy * dimX + (cx & ~1)] = isHDR ?
-				static_cast<unsigned short>(
-						fmaxf(fminf(rgb.r * -0.168736f + rgb.g * -0.331264f + rgb.b * 0.5f + 128.0f, 255.0f), 0.0f)) << (isP010 ? 8 : 2)
-				:
-				static_cast<unsigned char>(
-					fmaxf(fminf(rgb.r * -0.168736f + rgb.g * -0.331264f + rgb.b * 0.5f + 128.0f, 255.0f), 0.0f)
-				);
+			outputFrame[channelIdxOffset + cy * dimX + (cx & ~1)] = static_cast<unsigned short>(
+						fmaxf(fminf(rgb.r * -0.168736f + rgb.g * -0.331264f + rgb.b * 0.5f + 128.0f, 255.0f), 0.0f)) << 8;
 		// V Channel
 		} else {
-			outputFrame[channelIdxOffset + cy * dimX + (cx & ~1) + 1] = isHDR ?
-				static_cast<unsigned short>(
-						fmaxf(fminf(rgb.r * 0.5f + rgb.g * -0.418688f + rgb.b * -0.081312f + 128.0f, 255.0f), 0.0f)) << (isP010 ? 8 : 2)
-				:
-				static_cast<unsigned char>(
-					fmaxf(fminf(rgb.r * 0.5f + rgb.g * -0.418688f + rgb.b * -0.081312f + 128.0f, 255.0f), 0.0f)
-				);
+			outputFrame[channelIdxOffset + cy * dimX + (cx & ~1) + 1] = static_cast<unsigned short>(
+						fmaxf(fminf(rgb.r * 0.5f + rgb.g * -0.418688f + rgb.b * -0.081312f + 128.0f, 255.0f), 0.0f)) << 8;
 		}
 	}
 }
 
 // Kernel that creates an greyscale flow image from the offset array
-template <typename T>
-__global__ void convertFlowToGreyscaleKernel(const int* flowArray, T* outputFrame, const T* frame1,
+__global__ void convertFlowToGreyscaleKernel(const int* flowArray, unsigned short* outputFrame, const unsigned short* frame1,
                                        const unsigned int lowDimY, const unsigned int lowDimX, const unsigned int dimY, const unsigned int dimX, 
-									   const unsigned int realDimX, const unsigned char resolutionScalar, const unsigned int directionIdxOffset,
-									   const unsigned int channelIdxOffset, const bool isP010, const int maxVal, const unsigned short middleValue) {
+									   const unsigned char resolutionScalar, const unsigned int directionIdxOffset,
+									   const unsigned int channelIdxOffset, const int maxVal, const unsigned short middleValue) {
 	// Current entry to be computed by the thread
 	const unsigned int cx = blockIdx.x * blockDim.x + threadIdx.x;
 	const unsigned int cy = blockIdx.y * blockDim.y + threadIdx.y;
 	const unsigned int cz = threadIdx.z;
-	const bool isHDR = sizeof(T) == 2;
-	const unsigned char fmtScalar = isP010 ? 6 : 0;
 
 	const unsigned int scaledCx = cx >> resolutionScalar; // The X-Index of the current thread in the offset array
 	const unsigned int scaledCy = cy >> resolutionScalar; // The Y-Index of the current thread in the offset array
@@ -1166,19 +1088,19 @@ __global__ void convertFlowToGreyscaleKernel(const int* flowArray, T* outputFram
 	// Get the current flow values
 	int x;
 	int y;
-	if (cz == 0 && cy < dimY && cx < realDimX) {
+	if (cz == 0 && cy < dimY && cx < dimX) {
 		x = flowArray[scaledCy * lowDimX + scaledCx];
 		y = flowArray[directionIdxOffset + scaledCy * lowDimX + scaledCx];
-	} else if (cz == 1 && cy < (dimY >> 1) && cx < realDimX){
+	} else if (cz == 1 && cy < (dimY >> 1) && cx < dimX){
 		x = flowArray[(scaledCy << 1) * lowDimX + scaledCx];
 		y = flowArray[directionIdxOffset + (scaledCy << 1) * lowDimX + scaledCx];
 	}
 
 	// Y Channel
-	if (cz == 0 && cy < dimY && cx < realDimX) {
-		outputFrame[cy * dimX + cx] = isHDR ? min((abs(x) + abs(y)) << (4 + fmtScalar), maxVal) : min((abs(x) + abs(y)) << 2, maxVal);
+	if (cz == 0 && cy < dimY && cx < dimX) {
+		outputFrame[cy * dimX + cx] = min((abs(x) + abs(y)) << (10), maxVal);
 	// U/V Channels
-	} else if (cz == 1 && cy < (dimY >> 1) && cx < realDimX) {
+	} else if (cz == 1 && cy < (dimY >> 1) && cx < dimX) {
 		outputFrame[channelIdxOffset + cy * dimX + cx] = middleValue;
 	}
 }
@@ -1190,27 +1112,15 @@ __global__ void convertFlowToGreyscaleKernel(const int* flowArray, T* outputFram
 */
 void free(struct OpticalFlowCalc *ofc) {
 	struct priv *priv = (struct priv*)ofc->priv;
-	if (ofc->m_bIsHDR) {
-		HIP_CHECK(hipFree(ofc->m_frameHDR[0]));
-		HIP_CHECK(hipFree(ofc->m_frameHDR[1]));
-		HIP_CHECK(hipFree(ofc->m_frameHDR[2]));
-		HIP_CHECK(hipFree(ofc->m_blurredFrameHDR[0]));
-		HIP_CHECK(hipFree(ofc->m_blurredFrameHDR[1]));
-		HIP_CHECK(hipFree(ofc->m_blurredFrameHDR[2]));
-		HIP_CHECK(hipFree(ofc->m_warpedFrame12HDR));
-		HIP_CHECK(hipFree(ofc->m_warpedFrame21HDR));
-		HIP_CHECK(hipFree(ofc->m_outputFrameHDR));
-	} else {
-		HIP_CHECK(hipFree(ofc->m_frameSDR[0]));
-		HIP_CHECK(hipFree(ofc->m_frameSDR[1]));
-		HIP_CHECK(hipFree(ofc->m_frameSDR[2]));
-		HIP_CHECK(hipFree(ofc->m_blurredFrameSDR[0]));
-		HIP_CHECK(hipFree(ofc->m_blurredFrameSDR[1]));
-		HIP_CHECK(hipFree(ofc->m_blurredFrameSDR[2]));
-		HIP_CHECK(hipFree(ofc->m_warpedFrame12SDR));
-		HIP_CHECK(hipFree(ofc->m_warpedFrame21SDR));
-		HIP_CHECK(hipFree(ofc->m_outputFrameSDR));
-	}
+	HIP_CHECK(hipFree(ofc->m_frame[0]));
+	HIP_CHECK(hipFree(ofc->m_frame[1]));
+	HIP_CHECK(hipFree(ofc->m_frame[2]));
+	HIP_CHECK(hipFree(ofc->m_blurredFrame[0]));
+	HIP_CHECK(hipFree(ofc->m_blurredFrame[1]));
+	HIP_CHECK(hipFree(ofc->m_blurredFrame[2]));
+	HIP_CHECK(hipFree(ofc->m_warpedFrame12));
+	HIP_CHECK(hipFree(ofc->m_warpedFrame21));
+	HIP_CHECK(hipFree(ofc->m_outputFrame));
 	HIP_CHECK(hipFree(ofc->m_offsetArray12));
 	HIP_CHECK(hipFree(ofc->m_offsetArray21));
 	HIP_CHECK(hipFree(ofc->m_blurredOffsetArray12[0]));
@@ -1272,11 +1182,11 @@ void adjustFrameScalar(struct OpticalFlowCalc *ofc) {
 * @param kernelSize: Size of the kernel to use for the blur
 * @param directOutput: Whether to output the blurred frame directly
 */
-void blurFrameArray(struct OpticalFlowCalc *ofc, const void* frame, void* blurredFrame, const int kernelSize, const bool directOutput) {
+void blurFrameArray(struct OpticalFlowCalc *ofc, const unsigned short* frame, unsigned short* blurredFrame, const int kernelSize, const bool directOutput) {
 	struct priv *priv = (struct priv*)ofc->priv;
 	// Early exit if kernel size is too small to blur
 	if (kernelSize < 4) {
-		HIP_CHECK(hipMemcpy(blurredFrame, frame, (ofc->m_bIsHDR ? 2 : 1) * ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice));
+		HIP_CHECK(hipMemcpy(blurredFrame, frame, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice));
 		return;
 	}
 	// Calculate useful constants
@@ -1297,26 +1207,15 @@ void blurFrameArray(struct OpticalFlowCalc *ofc, const void* frame, void* blurre
 	dim3 gridDim(numBlocksX, numBlocksY, 1);
 	dim3 threadDim(std::min(kernelSize, 32), std::min(kernelSize, 32), 1);
 
-	// Launch kernel based on HDR/SDR type
-	if (ofc->m_bIsHDR) {
-		blurFrameKernel<<<gridDim, threadDim, sharedMemSize, priv->m_csWarpStream1>>>(
-			static_cast<const unsigned short*>(frame), static_cast<unsigned short*>(blurredFrame), kernelSize, cacheSize, boundsOffset, avgEntriesPerThread, remainder, lumStart, lumEnd, lumPixelCount, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
-		HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
-	} else {
-		blurFrameKernel<<<gridDim, threadDim, sharedMemSize, priv->m_csWarpStream1>>>(
-			static_cast<const unsigned char*>(frame), static_cast<unsigned char*>(blurredFrame), kernelSize, cacheSize, boundsOffset, avgEntriesPerThread, remainder, lumStart, lumEnd, lumPixelCount, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX);
-		HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
-	}
+	// Launch kernel
+	blurFrameKernel<<<gridDim, threadDim, sharedMemSize, priv->m_csWarpStream1>>>(
+		frame, blurredFrame, kernelSize, cacheSize, boundsOffset, avgEntriesPerThread, remainder, lumStart, lumEnd, lumPixelCount, ofc->m_iDimY, ofc->m_iDimX);
+	HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 
 	// Handle direct output if necessary
 	if (directOutput) {
-		if (ofc->m_bIsHDR) {
-			HIP_CHECK(hipMemcpy(ofc->m_outputFrameHDR, blurredFrame, 2 * ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice));
-			HIP_CHECK(hipMemcpy(ofc->m_outputFrameHDR + ofc->m_iDimY * ofc->m_iDimX, static_cast<const unsigned short*>(frame) + ofc->m_iDimY * ofc->m_iDimX, 2 * ((ofc->m_iDimY / 2) * ofc->m_iDimX), hipMemcpyDeviceToDevice));
-		} else {
-			HIP_CHECK(hipMemcpy(ofc->m_outputFrameSDR, blurredFrame, ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice));
-			HIP_CHECK(hipMemcpy(ofc->m_outputFrameSDR + ofc->m_iDimY * ofc->m_iDimX, static_cast<const unsigned char*>(frame) + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY / 2) * ofc->m_iDimX, hipMemcpyDeviceToDevice));
-		}
+		HIP_CHECK(hipMemcpy(ofc->m_outputFrame, blurredFrame, 2 * ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice));
+		HIP_CHECK(hipMemcpy(ofc->m_outputFrame + ofc->m_iDimY * ofc->m_iDimX, frame + ofc->m_iDimY * ofc->m_iDimX, 2 * ((ofc->m_iDimY / 2) * ofc->m_iDimX), hipMemcpyDeviceToDevice));
 	}
 
 	// Check for HIP errors
@@ -1335,63 +1234,26 @@ void blurFrameArray(struct OpticalFlowCalc *ofc, const void* frame, void* blurre
 void updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const unsigned int frameKernelSize, const unsigned int flowKernelSize, const bool directOutput) {
 	struct priv *priv = (struct priv*)ofc->priv;
 	ofc->m_iFlowBlurKernelSize = flowKernelSize;
-	// P010 format
-	if (ofc->m_bIsHDR && ofc->m_iFMT == HIP_FMT) {
-		HIP_CHECK(hipMemcpy(ofc->m_frameHDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice));
-		HIP_CHECK(hipMemcpy(ofc->m_frameHDR[0] + ofc->m_iDimY * ofc->m_iDimX, pInBuffer[1], (ofc->m_iDimY / 2) * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice));
-	// YUV420P10 format
-	} else if (ofc->m_bIsHDR) {
-		HIP_CHECK(hipMemcpy(ofc->m_frameHDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyHostToDevice));
-		HIP_CHECK(hipMemcpy(ofc->m_tempFrameHDR, pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), hipMemcpyHostToDevice));
-		HIP_CHECK(hipMemcpy(ofc->m_tempFrameHDR + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2) * sizeof(unsigned short), hipMemcpyHostToDevice));
-		convertYUV420PtoNV12Kernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[0], ofc->m_tempFrameHDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset);
-		HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
-	// NV12 format
-	} else if (ofc->m_iFMT == HIP_FMT) {
-		HIP_CHECK(hipMemcpy(ofc->m_frameSDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice));
-		HIP_CHECK(hipMemcpy(ofc->m_frameSDR[0] + ofc->m_iDimY * ofc->m_iDimX, pInBuffer[1], (ofc->m_iDimY / 2) * ofc->m_iDimX, hipMemcpyDeviceToDevice));
-	// YUV420P format
-	} else if (ofc->m_iFMT == YUV420P_FMT) {
-		HIP_CHECK(hipMemcpy(ofc->m_frameSDR[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX, hipMemcpyHostToDevice));
-		HIP_CHECK(hipMemcpy(ofc->m_tempFrameSDR, pInBuffer[1], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), hipMemcpyHostToDevice));
-		HIP_CHECK(hipMemcpy(ofc->m_tempFrameSDR + (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), pInBuffer[2], (ofc->m_iDimY / 2) * (ofc->m_iDimX / 2), hipMemcpyHostToDevice));
-		convertYUV420PtoNV12Kernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[0], ofc->m_tempFrameSDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset);
-		HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
-	} else {
-		printf("HopperRender does not support this video format: %d\n", ofc->m_iFMT);
-		exit(1);
-	}
+
+	HIP_CHECK(hipMemcpy(ofc->m_frame[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyHostToDevice));
+	HIP_CHECK(hipMemcpy(ofc->m_frame[0] + ofc->m_iDimY * ofc->m_iDimX, pInBuffer[1], (ofc->m_iDimY / 2) * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyHostToDevice));
 
 	// Check for HIP Errors
 	checkHIPError("updateFrame");
 	
 	// Blur the frame
-	if (ofc->m_bIsHDR) {
-		blurFrameArray(ofc, ofc->m_frameHDR[0], ofc->m_blurredFrameHDR[0], frameKernelSize, directOutput);
-	} else {
-		blurFrameArray(ofc, ofc->m_frameSDR[0], ofc->m_blurredFrameSDR[0], frameKernelSize, directOutput);
-	}
-
+	blurFrameArray(ofc, ofc->m_frame[0], ofc->m_blurredFrame[0], frameKernelSize, directOutput);
+	
 	// Swap the frame buffers
-	unsigned char* temp0 = ofc->m_frameSDR[0];
-	ofc->m_frameSDR[0] = ofc->m_frameSDR[1];
-	ofc->m_frameSDR[1] = ofc->m_frameSDR[2];
-	ofc->m_frameSDR[2] = temp0;
+	unsigned short* temp1 = ofc->m_frame[0];
+	ofc->m_frame[0] = ofc->m_frame[1];
+	ofc->m_frame[1] = ofc->m_frame[2];
+	ofc->m_frame[2] = temp1;
 
-	temp0 = ofc->m_blurredFrameSDR[0];
-	ofc->m_blurredFrameSDR[0] = ofc->m_blurredFrameSDR[1];
-	ofc->m_blurredFrameSDR[1] = ofc->m_blurredFrameSDR[2];
-	ofc->m_blurredFrameSDR[2] = temp0;
-
-	unsigned short* temp1 = ofc->m_frameHDR[0];
-	ofc->m_frameHDR[0] = ofc->m_frameHDR[1];
-	ofc->m_frameHDR[1] = ofc->m_frameHDR[2];
-	ofc->m_frameHDR[2] = temp1;
-
-	temp1 = ofc->m_blurredFrameHDR[0];
-	ofc->m_blurredFrameHDR[0] = ofc->m_blurredFrameHDR[1];
-	ofc->m_blurredFrameHDR[1] = ofc->m_blurredFrameHDR[2];
-	ofc->m_blurredFrameHDR[2] = temp1;
+	temp1 = ofc->m_blurredFrame[0];
+	ofc->m_blurredFrame[0] = ofc->m_blurredFrame[1];
+	ofc->m_blurredFrame[1] = ofc->m_blurredFrame[2];
+	ofc->m_blurredFrame[2] = temp1;
 }
 
 /*
@@ -1402,32 +1264,9 @@ void updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const u
 */
 void downloadFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer) {
 	struct priv *priv = (struct priv*)ofc->priv;
-	// P010 format
-	if (ofc->m_bIsHDR && ofc->m_iFMT == HIP_FMT) {
-		HIP_CHECK(hipMemcpy(pOutBuffer[0], ofc->m_outputFrameHDR, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice));
-		HIP_CHECK(hipMemcpy(pOutBuffer[1], ofc->m_outputFrameHDR + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToDevice));
-	// YUV420P10 format
-	} else if (ofc->m_bIsHDR) {
-		HIP_CHECK(hipMemcpy(pOutBuffer[0], ofc->m_outputFrameHDR, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToHost));
-		convertNV12toYUV420PKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(ofc->m_tempFrameHDR, ofc->m_outputFrameHDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1));
-		HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
-		HIP_CHECK(hipMemcpy(pOutBuffer[1], ofc->m_tempFrameHDR, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1) * sizeof(unsigned short), hipMemcpyDeviceToHost));
-		HIP_CHECK(hipMemcpy(pOutBuffer[2], ofc->m_tempFrameHDR + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1) * sizeof(unsigned short), hipMemcpyDeviceToHost));
-	// NV12 format
-	} else if (ofc->m_iFMT == HIP_FMT) {
-		HIP_CHECK(hipMemcpy(pOutBuffer[0], ofc->m_outputFrameSDR, ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToDevice));
-		HIP_CHECK(hipMemcpy(pOutBuffer[1], ofc->m_outputFrameSDR + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * ofc->m_iDimX, hipMemcpyDeviceToDevice));
-	// YUV420P format
-	} else if (ofc->m_iFMT == YUV420P_FMT) {
-		HIP_CHECK(hipMemcpy(pOutBuffer[0], ofc->m_outputFrameSDR, ofc->m_iDimY * ofc->m_iDimX, hipMemcpyDeviceToHost));
-		convertNV12toYUV420PKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(ofc->m_tempFrameSDR, ofc->m_outputFrameSDR, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iDimY >> 1, ofc->m_iDimX >> 1, ofc->m_iChannelIdxOffset, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1));
-		HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
-		HIP_CHECK(hipMemcpy(pOutBuffer[1], ofc->m_tempFrameSDR, (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), hipMemcpyDeviceToHost));
-		HIP_CHECK(hipMemcpy(pOutBuffer[2], ofc->m_tempFrameSDR + (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), (ofc->m_iDimY >> 1) * (ofc->m_iDimX >> 1), hipMemcpyDeviceToHost));
-	} else {
-		printf("HopperRender does not support this video format: %d\n", ofc->m_iFMT);
-		exit(1);
-	}
+
+	HIP_CHECK(hipMemcpy(pOutBuffer[0], ofc->m_outputFrame, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToHost));
+	HIP_CHECK(hipMemcpy(pOutBuffer[1], ofc->m_outputFrame + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToHost));
 	
 	// Check for HIP Errors
 	checkHIPError("downloadFrame");
@@ -1442,30 +1281,17 @@ void downloadFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer) {
 */
 void processFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const bool firstFrame) {
 	struct priv *priv = (struct priv*)ofc->priv;
-	if (ofc->m_bIsHDR) {
-		if (ofc->m_fBlackLevel == 0.0f && ofc->m_fWhiteLevel == 1023.0f) {
-			HIP_CHECK(hipMemcpy(ofc->m_outputFrameHDR, firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1], ofc->m_iDimY * ofc->m_iDimX * 3, hipMemcpyDeviceToDevice));
-			downloadFrame(ofc, pOutBuffer);
-		} else {
-			processFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1],
-													ofc->m_outputFrameHDR,
-													ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
-			HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
-			HIP_CHECK(hipMemcpy(ofc->m_outputFrameHDR + ofc->m_iChannelIdxOffset, (firstFrame ? ofc->m_frameHDR[2] : ofc->m_frameHDR[1]) + ofc->m_iChannelIdxOffset, ofc->m_iDimY * (ofc->m_iDimX >> 1) * sizeof(unsigned short), hipMemcpyDeviceToDevice));
-			downloadFrame(ofc, pOutBuffer);
-		}
+
+	if (ofc->m_fBlackLevel == 0.0f && ofc->m_fWhiteLevel == 1023.0f) {
+		HIP_CHECK(hipMemcpy(ofc->m_outputFrame, firstFrame ? ofc->m_frame[2] : ofc->m_frame[1], ofc->m_iDimY * ofc->m_iDimX * 3, hipMemcpyDeviceToDevice));
+		downloadFrame(ofc, pOutBuffer);
 	} else {
-		if (ofc->m_fBlackLevel == 0.0f && ofc->m_fWhiteLevel == 255.0f) {
-			HIP_CHECK(hipMemcpy(ofc->m_outputFrameSDR, firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1], ofc->m_iDimY * ofc->m_iDimX * 1.5, hipMemcpyDeviceToDevice));
-			downloadFrame(ofc, pOutBuffer);
-		} else {
-			processFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1],
-													ofc->m_outputFrameSDR,
-													ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
-			HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
-			HIP_CHECK(hipMemcpy(ofc->m_outputFrameSDR + ofc->m_iChannelIdxOffset, (firstFrame ? ofc->m_frameSDR[2] : ofc->m_frameSDR[1]) + ofc->m_iChannelIdxOffset, ofc->m_iDimY * (ofc->m_iDimX >> 1), hipMemcpyDeviceToDevice));
-			downloadFrame(ofc, pOutBuffer);
-		}
+		processFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(firstFrame ? ofc->m_frame[2] : ofc->m_frame[1],
+												ofc->m_outputFrame,
+												ofc->m_iDimY, ofc->m_iDimX, ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
+		HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
+		HIP_CHECK(hipMemcpy(ofc->m_outputFrame + ofc->m_iChannelIdxOffset, (firstFrame ? ofc->m_frame[2] : ofc->m_frame[1]) + ofc->m_iChannelIdxOffset, ofc->m_iDimY * (ofc->m_iDimX >> 1) * sizeof(unsigned short), hipMemcpyDeviceToDevice));
+		downloadFrame(ofc, pOutBuffer);
 	}
 
 	// Check for HIP Errors
@@ -1522,19 +1348,11 @@ void calculateOpticalFlow(struct OpticalFlowCalc *ofc, unsigned int iNumIteratio
 			HIP_CHECK(hipMemset(ofc->m_summedUpDeltaArray, 0, 5 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(unsigned int)));
 
 			// 1. Calculate the image delta and sum up the deltas of each window
-			if (ofc->m_bIsHDR) {
-				calcDeltaSums<<<iter == 0 ? priv->m_lowGrid16x16x5 : priv->m_lowGrid8x8x5, iter == 0 ? priv->m_threads16x16x1 : priv->m_threads8x8x1, sharedMemSize, priv->m_csOFCStream1>>>(ofc->m_summedUpDeltaArray, 
-																ofc->m_blurredFrameHDR[1],
-                                                                ofc->m_blurredFrameHDR[2],
-															    ofc->m_offsetArray12, ofc->m_iLayerIdxOffset, ofc->m_iDirectionIdxOffset,
-																ofc->m_iDimY, ofc->m_iDimX, ofc->m_iLowDimY, ofc->m_iLowDimX, windowDim, ofc->m_cResolutionScalar);
-			} else {
-				calcDeltaSums<<<iter == 0 ? priv->m_lowGrid16x16x5 : priv->m_lowGrid8x8x5, iter == 0 ? priv->m_threads16x16x1 : priv->m_threads8x8x1, sharedMemSize, priv->m_csOFCStream1>>>(ofc->m_summedUpDeltaArray, 
-																ofc->m_blurredFrameSDR[1],
-                                                                ofc->m_blurredFrameSDR[2],
-															    ofc->m_offsetArray12, ofc->m_iLayerIdxOffset, ofc->m_iDirectionIdxOffset,
-																ofc->m_iDimY, ofc->m_iDimX, ofc->m_iLowDimY, ofc->m_iLowDimX, windowDim, ofc->m_cResolutionScalar);
-			}
+			calcDeltaSums<<<iter == 0 ? priv->m_lowGrid16x16x5 : priv->m_lowGrid8x8x5, iter == 0 ? priv->m_threads16x16x1 : priv->m_threads8x8x1, sharedMemSize, priv->m_csOFCStream1>>>(ofc->m_summedUpDeltaArray, 
+															ofc->m_blurredFrame[1],
+															ofc->m_blurredFrame[2],
+															ofc->m_offsetArray12, ofc->m_iLayerIdxOffset, ofc->m_iDirectionIdxOffset,
+															ofc->m_iDimY, ofc->m_iDimX, ofc->m_iLowDimY, ofc->m_iLowDimX, windowDim, ofc->m_cResolutionScalar);
 			
 			HIP_CHECK(hipStreamSynchronize(priv->m_csOFCStream1));
 
@@ -1586,64 +1404,34 @@ void warpFrames(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode
 	// #####################
 	// Frame 1 to Frame 2
 	if (outputMode != 1) {
-		if (ofc->m_bIsHDR) {
-			warpFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[0],
-																									 ofc->m_blurredOffsetArray12[0],
-																									 ofc->m_hitCount12,
-																									 (outputMode < 2) ? ofc->m_outputFrameHDR : ofc->m_warpedFrame12HDR,
-																									 frameScalar12,
-																									 ofc->m_iLowDimY,
-																									 ofc->m_iLowDimX,
-																									 ofc->m_iDimY,
-																									 ofc->m_iDimX, ofc->m_iRealDimX,
-																									 ofc->m_cResolutionScalar,
-																									 ofc->m_iLayerIdxOffset,
-																									 ofc->m_iChannelIdxOffset);
-		} else {
-			warpFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[0],
-																									 ofc->m_blurredOffsetArray12[0],
-																									 ofc->m_hitCount12,
-																									 (outputMode < 2) ? ofc->m_outputFrameSDR : ofc->m_warpedFrame12SDR,
-																									 frameScalar12,
-																									 ofc->m_iLowDimY,
-																									 ofc->m_iLowDimX,
-																									 ofc->m_iDimY,
-																									 ofc->m_iDimX, ofc->m_iRealDimX,
-																									 ofc->m_cResolutionScalar,
-																									 ofc->m_iLayerIdxOffset,
-																									 ofc->m_iChannelIdxOffset);
-		}
+		warpFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frame[0],
+																									ofc->m_blurredOffsetArray12[0],
+																									ofc->m_hitCount12,
+																									(outputMode < 2) ? ofc->m_outputFrame : ofc->m_warpedFrame12,
+																									frameScalar12,
+																									ofc->m_iLowDimY,
+																									ofc->m_iLowDimX,
+																									ofc->m_iDimY,
+																									ofc->m_iDimX,
+																									ofc->m_cResolutionScalar,
+																									ofc->m_iLayerIdxOffset,
+																									ofc->m_iChannelIdxOffset);
 		
 	}
 	// Frame 2 to Frame 1
 	if (outputMode != 0) {
-		if (ofc->m_bIsHDR) {
-			warpFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream2>>>(ofc->m_frameHDR[1],
-																									 ofc->m_blurredOffsetArray21[0],
-																									 ofc->m_hitCount21,
-																									 (outputMode < 2) ? ofc->m_outputFrameHDR : ofc->m_warpedFrame21HDR,
-																									 frameScalar21,
-																									 ofc->m_iLowDimY,
-																									 ofc->m_iLowDimX,
-																									 ofc->m_iDimY,
-																									 ofc->m_iDimX, ofc->m_iRealDimX,
-																									 ofc->m_cResolutionScalar,
-																									 ofc->m_iLayerIdxOffset,
-																									 ofc->m_iChannelIdxOffset);
-		} else {
-			warpFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream2>>>(ofc->m_frameSDR[1],
-																									 ofc->m_blurredOffsetArray21[0],
-																									 ofc->m_hitCount21,
-																									 (outputMode < 2) ? ofc->m_outputFrameSDR : ofc->m_warpedFrame21SDR,
-																									 frameScalar21,
-																									 ofc->m_iLowDimY,
-																									 ofc->m_iLowDimX,
-																									 ofc->m_iDimY,
-																									 ofc->m_iDimX, ofc->m_iRealDimX,
-																									 ofc->m_cResolutionScalar,
-																									 ofc->m_iLayerIdxOffset,
-																									 ofc->m_iChannelIdxOffset);
-		}
+		warpFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream2>>>(ofc->m_frame[1],
+																									ofc->m_blurredOffsetArray21[0],
+																									ofc->m_hitCount21,
+																									(outputMode < 2) ? ofc->m_outputFrame : ofc->m_warpedFrame21,
+																									frameScalar21,
+																									ofc->m_iLowDimY,
+																									ofc->m_iLowDimX,
+																									ofc->m_iDimY,
+																									ofc->m_iDimX,
+																									ofc->m_cResolutionScalar,
+																									ofc->m_iLayerIdxOffset,
+																									ofc->m_iChannelIdxOffset);
 	}
 	if (outputMode != 1) HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 	if (outputMode != 0) HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream2));
@@ -1653,39 +1441,21 @@ void warpFrames(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode
 	// ##############################
 	// Frame 1 to Frame 2
 	if (outputMode != 1) {
-		if (ofc->m_bIsHDR) {
-			artifactRemovalKernel<<<priv->m_grid8x8x1, priv->m_threads8x8x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[0],
-																									   ofc->m_hitCount12,
-																									   (outputMode < 2) ? ofc->m_outputFrameHDR : ofc->m_warpedFrame12HDR,
-																									   ofc->m_iDimY,
-																									   ofc->m_iDimX, ofc->m_iRealDimX,
-																									   ofc->m_iChannelIdxOffset);
-		} else {
-			artifactRemovalKernel<<<priv->m_grid8x8x1, priv->m_threads8x8x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[0],
-																									   ofc->m_hitCount12,
-																									   (outputMode < 2) ? ofc->m_outputFrameSDR : ofc->m_warpedFrame12SDR,
-																									   ofc->m_iDimY,
-																									   ofc->m_iDimX, ofc->m_iRealDimX,
-																									   ofc->m_iChannelIdxOffset);
-		}
+		artifactRemovalKernel<<<priv->m_grid8x8x1, priv->m_threads8x8x2, 0, priv->m_csWarpStream1>>>(ofc->m_frame[0],
+																									ofc->m_hitCount12,
+																									(outputMode < 2) ? ofc->m_outputFrame : ofc->m_warpedFrame12,
+																									ofc->m_iDimY,
+																									ofc->m_iDimX,
+																									ofc->m_iChannelIdxOffset);
 	}
 	// Frame 2 to Frame 1
 	if (outputMode != 0) {
-		if (ofc->m_bIsHDR) {
-			artifactRemovalKernel<<<priv->m_grid8x8x1, priv->m_threads8x8x2, 0, priv->m_csWarpStream2>>>(ofc->m_frameHDR[1],
-																									   ofc->m_hitCount21,
-																									   (outputMode < 2) ? ofc->m_outputFrameHDR : ofc->m_warpedFrame21HDR,
-																									   ofc->m_iDimY,
-																									   ofc->m_iDimX, ofc->m_iRealDimX,
-																									   ofc->m_iChannelIdxOffset);
-		} else {
-			artifactRemovalKernel<<<priv->m_grid8x8x1, priv->m_threads8x8x2, 0, priv->m_csWarpStream2>>>(ofc->m_frameSDR[1],
-																									   ofc->m_hitCount21,
-																									   (outputMode < 2) ? ofc->m_outputFrameSDR : ofc->m_warpedFrame21SDR,
-																									   ofc->m_iDimY,
-																									   ofc->m_iDimX, ofc->m_iRealDimX,
-																									   ofc->m_iChannelIdxOffset);
-		}
+		artifactRemovalKernel<<<priv->m_grid8x8x1, priv->m_threads8x8x2, 0, priv->m_csWarpStream2>>>(ofc->m_frame[1],
+																									ofc->m_hitCount21,
+																									(outputMode < 2) ? ofc->m_outputFrame : ofc->m_warpedFrame21,
+																									ofc->m_iDimY,
+																									ofc->m_iDimX,
+																									ofc->m_iChannelIdxOffset);
 	}
 	if (outputMode != 1) HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 	if (outputMode != 0) HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream2));
@@ -1707,15 +1477,9 @@ void blendFrames(struct OpticalFlowCalc *ofc, float fScalar) {
 	const float frame2Scalar = fScalar;
 
 	// Blend the frames
-	if (ofc->m_bIsHDR) {
-		blendFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_warpedFrame12HDR, ofc->m_warpedFrame21HDR,
-												 ofc->m_outputFrameHDR, frame1Scalar, frame2Scalar,
-	                                             ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX, ofc->m_iChannelIdxOffset, ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
-	} else {
-		blendFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_warpedFrame12SDR, ofc->m_warpedFrame21SDR,
-												 ofc->m_outputFrameSDR, frame1Scalar, frame2Scalar,
-	                                             ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX, ofc->m_iChannelIdxOffset, ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
-	}
+	blendFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_warpedFrame12, ofc->m_warpedFrame21,
+												ofc->m_outputFrame, frame1Scalar, frame2Scalar,
+												ofc->m_iDimY, ofc->m_iDimX, ofc->m_iChannelIdxOffset, ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
 
 	HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 
@@ -1730,17 +1494,10 @@ void blendFrames(struct OpticalFlowCalc *ofc, float fScalar) {
 */
 void insertFrame(struct OpticalFlowCalc *ofc) {
 	struct priv *priv = (struct priv*)ofc->priv;
-	if (ofc->m_bIsHDR) {
-		insertFrameKernel<<<priv->m_halfGrid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[0],
-												 ofc->m_outputFrameHDR,
-	                                             ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX, ofc->m_iChannelIdxOffset,
-												 ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
-	} else {
-		insertFrameKernel<<<priv->m_halfGrid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[0],
-												 ofc->m_outputFrameSDR,
-	                                             ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX, ofc->m_iChannelIdxOffset,
-												 ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
-	}
+	insertFrameKernel<<<priv->m_halfGrid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frame[0],
+												ofc->m_outputFrame,
+												ofc->m_iDimY, ofc->m_iDimX, ofc->m_iChannelIdxOffset,
+												ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal);
 	HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 
 	// Check for HIP Errors
@@ -1759,61 +1516,33 @@ void sideBySideFrame(struct OpticalFlowCalc *ofc, float fScalar, const unsigned 
 	// Calculate the blend scalar
 	const float frame1Scalar = 1.0f - fScalar;
 	const float frame2Scalar = fScalar;
-	const unsigned int halfDimX = ofc->m_iRealDimX >> 1;
+	const unsigned int halfDimX = ofc->m_iDimX >> 1;
 	const unsigned int halfDimY = ofc->m_iDimY >> 1;
 
-	if (ofc->m_bIsHDR) {
-		if (frameCounter == 1) {
-			sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[2], ofc->m_frameHDR[2], 
-														ofc->m_frameHDR[2],
-														ofc->m_outputFrameHDR, frame1Scalar, frame2Scalar,
-														ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
-														ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
-		} else if (frameCounter == 2) {
-			sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[1], ofc->m_frameHDR[1], 
-														ofc->m_frameHDR[1],
-														ofc->m_outputFrameHDR, frame1Scalar, frame2Scalar,
-														ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
-														ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
-		} else if (frameCounter <= 3) {
-			sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[0], ofc->m_frameHDR[0], 
-														ofc->m_frameHDR[0],
-														ofc->m_outputFrameHDR, frame1Scalar, frame2Scalar,
-														ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
-														ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
-		} else {
-			sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameHDR[0], ofc->m_warpedFrame12HDR, 
-														ofc->m_warpedFrame21HDR,
-														ofc->m_outputFrameHDR, frame1Scalar, frame2Scalar,
-														ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
-														ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
-		}
+	if (frameCounter == 1) {
+		sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frame[2], ofc->m_frame[2], 
+													ofc->m_frame[2],
+													ofc->m_outputFrame, frame1Scalar, frame2Scalar,
+													ofc->m_iDimY, ofc->m_iDimX, halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
+													ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
+	} else if (frameCounter == 2) {
+		sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frame[1], ofc->m_frame[1], 
+													ofc->m_frame[1],
+													ofc->m_outputFrame, frame1Scalar, frame2Scalar,
+													ofc->m_iDimY, ofc->m_iDimX, halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
+													ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
+	} else if (frameCounter <= 3) {
+		sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frame[0], ofc->m_frame[0], 
+													ofc->m_frame[0],
+													ofc->m_outputFrame, frame1Scalar, frame2Scalar,
+													ofc->m_iDimY, ofc->m_iDimX, halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
+													ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
 	} else {
-		if (frameCounter == 1) {
-			sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[2], ofc->m_frameSDR[2], 
-														ofc->m_frameSDR[2],
-														ofc->m_outputFrameSDR, frame1Scalar, frame2Scalar,
-														ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
-														ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
-		} else if (frameCounter == 2) {
-			sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[1], ofc->m_frameSDR[1], 
-														ofc->m_frameSDR[1],
-														ofc->m_outputFrameSDR, frame1Scalar, frame2Scalar,
-														ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
-														ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
-		} else if (frameCounter <= 3) {
-			sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[0], ofc->m_frameSDR[0], 
-														ofc->m_frameSDR[0],
-														ofc->m_outputFrameSDR, frame1Scalar, frame2Scalar,
-														ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
-														ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
-		} else {
-			sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frameSDR[0], ofc->m_warpedFrame12SDR, 
-														ofc->m_warpedFrame21SDR,
-														ofc->m_outputFrameSDR, frame1Scalar, frame2Scalar,
-														ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
-														ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
-		}
+		sideBySideFrameKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_frame[0], ofc->m_warpedFrame12, 
+													ofc->m_warpedFrame21,
+													ofc->m_outputFrame, frame1Scalar, frame2Scalar,
+													ofc->m_iDimY, ofc->m_iDimX, halfDimY, halfDimX, ofc->m_iChannelIdxOffset,
+													ofc->m_fBlackLevel, ofc->m_fWhiteLevel, ofc->m_fMaxVal, ofc->m_iMiddleValue);
 	}
 	HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 
@@ -1829,15 +1558,9 @@ void sideBySideFrame(struct OpticalFlowCalc *ofc, float fScalar, const unsigned 
 */
 void drawFlowAsHSV(struct OpticalFlowCalc *ofc, const float blendScalar) {
 	struct priv *priv = (struct priv*)ofc->priv;
-	if (ofc->m_bIsHDR) {
-		convertFlowToHSVKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_blurredOffsetArray12[0], ofc->m_outputFrameHDR,
-														ofc->m_frameHDR[1], blendScalar, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,
-														ofc->m_cResolutionScalar, ofc->m_iLayerIdxOffset, ofc->m_iChannelIdxOffset, ofc->m_iFMT == HIP_FMT);
-	} else {
-		convertFlowToHSVKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_blurredOffsetArray12[0], ofc->m_outputFrameSDR,
-														ofc->m_frameSDR[1], blendScalar, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,
-														ofc->m_cResolutionScalar, ofc->m_iLayerIdxOffset, ofc->m_iChannelIdxOffset, ofc->m_iFMT == HIP_FMT);
-	}
+	convertFlowToHSVKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_blurredOffsetArray12[0], ofc->m_outputFrame,
+													ofc->m_frame[1], blendScalar, ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iDimY, ofc->m_iDimX,
+													ofc->m_cResolutionScalar, ofc->m_iLayerIdxOffset, ofc->m_iChannelIdxOffset);
 	
 	HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 
@@ -1852,15 +1575,9 @@ void drawFlowAsHSV(struct OpticalFlowCalc *ofc, const float blendScalar) {
 */
 void drawFlowAsGreyscale(struct OpticalFlowCalc *ofc) {
 	struct priv *priv = (struct priv*)ofc->priv;
-	if (ofc->m_bIsHDR) {
-		convertFlowToGreyscaleKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_blurredOffsetArray12[0], ofc->m_outputFrameHDR,
-														ofc->m_frameHDR[1], ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,
-														ofc->m_cResolutionScalar, ofc->m_iLayerIdxOffset, ofc->m_iChannelIdxOffset, ofc->m_iFMT == HIP_FMT, (int)ofc->m_fMaxVal, ofc->m_iMiddleValue);
-	} else {
-		convertFlowToGreyscaleKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_blurredOffsetArray12[0], ofc->m_outputFrameSDR,
-														ofc->m_frameSDR[1], ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iDimY, ofc->m_iDimX, ofc->m_iRealDimX,
-														ofc->m_cResolutionScalar, ofc->m_iLayerIdxOffset, ofc->m_iChannelIdxOffset, ofc->m_iFMT == HIP_FMT, (int)ofc->m_fMaxVal, ofc->m_iMiddleValue);
-	}
+	convertFlowToGreyscaleKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x2, 0, priv->m_csWarpStream1>>>(ofc->m_blurredOffsetArray12[0], ofc->m_outputFrame,
+													ofc->m_frame[1], ofc->m_iLowDimY, ofc->m_iLowDimX, ofc->m_iDimY, ofc->m_iDimX,
+													ofc->m_cResolutionScalar, ofc->m_iLayerIdxOffset, ofc->m_iChannelIdxOffset, (int)ofc->m_fMaxVal, ofc->m_iMiddleValue);
 	
 	HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 
@@ -1944,13 +1661,9 @@ void blurFlowArrays(struct OpticalFlowCalc *ofc) {
 * @param filePath: Path to the image file
 */
 void saveImage(struct OpticalFlowCalc *ofc, const char* filePath) {
-	// We don't save HDR images
-	if (ofc->m_bIsHDR)
-		return;
-
 	// Copy the image array to the CPU
 	size_t dataSize = 1.5 * ofc->m_iDimY * ofc->m_iDimX;
-	HIP_CHECK(hipMemcpy(ofc->m_imageArrayCPU, ofc->m_outputFrameSDR, dataSize, hipMemcpyDeviceToHost));
+	HIP_CHECK(hipMemcpy(ofc->m_imageArrayCPU, ofc->m_outputFrame, dataSize, hipMemcpyDeviceToHost));
 
 	// Open file in binary write mode
     FILE *file = fopen(filePath, "wb");
@@ -1979,9 +1692,9 @@ void saveImage(struct OpticalFlowCalc *ofc, const char* filePath) {
 static int counter = 0;
 void tearingTest(struct OpticalFlowCalc *ofc) {
 	struct priv *priv = (struct priv*)ofc->priv;
-	HIP_CHECK(hipMemset(ofc->m_outputFrameSDR, 0, ofc->m_iDimY * ofc->m_iDimX));
-	HIP_CHECK(hipMemset(ofc->m_outputFrameSDR + ofc->m_iDimY * ofc->m_iDimX, 128, (ofc->m_iDimY / 2) * ofc->m_iDimX));
-	tearingTestKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(ofc->m_outputFrameSDR, ofc->m_iDimY, ofc->m_iDimX, 10, counter % ofc->m_iDimX);
+	HIP_CHECK(hipMemset(ofc->m_outputFrame, 0, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short)));
+	HIP_CHECK(hipMemset(ofc->m_outputFrame + ofc->m_iDimY * ofc->m_iDimX, 128, (ofc->m_iDimY / 2) * ofc->m_iDimX * sizeof(unsigned short)));
+	tearingTestKernel<<<priv->m_grid16x16x1, priv->m_threads16x16x1, 0, priv->m_csWarpStream1>>>(ofc->m_outputFrame, ofc->m_iDimY, ofc->m_iDimX, 10, counter % ofc->m_iDimX);
 	counter++;
 	HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 	checkHIPError("tearingTest");
@@ -2057,13 +1770,10 @@ unsigned int* createGPUArrayUI(const size_t size) {
 * @param ofc: Pointer to the optical flow calculator
 * @param dimY: The height of the frame
 * @param dimX: The width of the frame
-* @param realDimX: The real width of the frame (not the stride width!)
 * @param resolutionScalar: The scalar to reduce the resolution by
 * @param flowBlurKernelSize: The size of the kernel to use for the flow blur
-* @param isHDR: Whether the frames are in HDR format
-* @param fmt: The format of the frames
 */
-void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, const int realDimX, unsigned char resolutionScalar, unsigned int flowBlurKernelSize, bool isHDR, int fmt) {
+void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, unsigned char resolutionScalar, unsigned int flowBlurKernelSize) {
 	// Private Data
 	ofc->priv = calloc(1, sizeof(struct priv));
 	struct priv *priv = (struct priv*)ofc->priv;
@@ -2090,23 +1800,9 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	// Video properties
 	ofc->m_iDimX = dimX;
 	ofc->m_iDimY = dimY;
-	ofc->m_iRealDimX = realDimX;
 	ofc->m_fBlackLevel = 0.0f;
-	ofc->m_bIsHDR = isHDR;
-	ofc->m_iFMT = fmt;
-	// P010 format
-	if (isHDR && fmt == HIP_FMT) {
-		ofc->m_fMaxVal = 65535.0f;
-		ofc->m_iMiddleValue = 32768;
-	// YUV420P10 format
-	} else if (isHDR) {
-		ofc->m_fMaxVal = 1023.0f;
-		ofc->m_iMiddleValue = 512;
-	// YUV420P or NV12 format
-	} else {
-		ofc->m_fMaxVal = 255.0f;
-		ofc->m_iMiddleValue = 128;
-	}
+	ofc->m_fMaxVal = 65535.0f;
+	ofc->m_iMiddleValue = 32768;
 	ofc->m_fWhiteLevel = ofc->m_fMaxVal;
 
 	// Optical flow calculation
@@ -2169,30 +1865,17 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	priv->m_threads8x8x1.z = 1;
 
 	// GPU Arrays
-	if (ofc->m_bIsHDR) {
-		ofc->m_frameHDR[0] = createGPUArrayUS(1.5 * dimY * dimX);
-		ofc->m_frameHDR[1] = createGPUArrayUS(1.5 * dimY * dimX);
-		ofc->m_frameHDR[2] = createGPUArrayUS(1.5 * dimY * dimX);
-		ofc->m_blurredFrameHDR[0] = createGPUArrayUS(dimY * dimX);
-		ofc->m_blurredFrameHDR[1] = createGPUArrayUS(dimY * dimX);
-		ofc->m_blurredFrameHDR[2] = createGPUArrayUS(dimY * dimX);
-		ofc->m_warpedFrame12HDR = createGPUArrayUS(1.5 * dimY * dimX);
-		ofc->m_warpedFrame21HDR = createGPUArrayUS(1.5 * dimY * dimX);
-		ofc->m_outputFrameHDR = createGPUArrayUS(1.5 * dimY * dimX);
-		ofc->m_tempFrameHDR = createGPUArrayUS((dimY / 2) * realDimX);
-	} else {
-		ofc->m_frameSDR[0] = createGPUArrayUC(1.5 * dimY * dimX);
-		ofc->m_frameSDR[1] = createGPUArrayUC(1.5 * dimY * dimX);
-		ofc->m_frameSDR[2] = createGPUArrayUC(1.5 * dimY * dimX);
-		ofc->m_blurredFrameSDR[0] = createGPUArrayUC(dimY * dimX);
-		ofc->m_blurredFrameSDR[1] = createGPUArrayUC(dimY * dimX);
-		ofc->m_blurredFrameSDR[2] = createGPUArrayUC(dimY * dimX);
-		ofc->m_warpedFrame12SDR = createGPUArrayUC(1.5 * dimY * dimX);
-		ofc->m_warpedFrame21SDR = createGPUArrayUC(1.5 * dimY * dimX);
-		ofc->m_outputFrameSDR = createGPUArrayUC(1.5 * dimY * dimX);
-		ofc->m_tempFrameSDR = createGPUArrayUC((dimY / 2) * realDimX);
-		ofc->m_imageArrayCPU = (unsigned char*)malloc(1.5 * dimY * dimX);
-	}
+	HIP_CHECK(hipSetDevice(0));
+	ofc->m_frame[0] = createGPUArrayUS(1.5 * dimY * dimX);
+	ofc->m_frame[1] = createGPUArrayUS(1.5 * dimY * dimX);
+	ofc->m_frame[2] = createGPUArrayUS(1.5 * dimY * dimX);
+	ofc->m_blurredFrame[0] = createGPUArrayUS(dimY * dimX);
+	ofc->m_blurredFrame[1] = createGPUArrayUS(dimY * dimX);
+	ofc->m_blurredFrame[2] = createGPUArrayUS(dimY * dimX);
+	ofc->m_warpedFrame12 = createGPUArrayUS(1.5 * dimY * dimX);
+	ofc->m_warpedFrame21 = createGPUArrayUS(1.5 * dimY * dimX);
+	ofc->m_outputFrame = createGPUArrayUS(1.5 * dimY * dimX);
+	ofc->m_tempFrame = createGPUArrayUS((dimY / 2) * dimX);
 	ofc->m_offsetArray12 = createGPUArrayI(2 * 5 * dimY * dimX);
 	ofc->m_offsetArray21 = createGPUArrayI(2 * dimY * dimX);
 	ofc->m_blurredOffsetArray12[0] = createGPUArrayI(2 * dimY * dimX);
@@ -2211,100 +1894,3 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	HIP_CHECK(hipStreamCreate(&priv->m_csWarpStream1));
 	HIP_CHECK(hipStreamCreate(&priv->m_csWarpStream2));
 }
-
-/*
-* Template instantiation
-*/
-template __global__ void convertNV12toYUV420PKernel(unsigned char* outputFrame, const unsigned char* inputFrame, const unsigned int dimY, 
-										   const unsigned int dimX, const unsigned int halfDimY, 
-										   const unsigned int halfDimX, const unsigned int channelIdxOffset, const unsigned int secondChannelIdxOffset);
-template __global__ void convertNV12toYUV420PKernel(unsigned short* outputFrame, const unsigned short* inputFrame, const unsigned int dimY, 
-										   const unsigned int dimX, const unsigned int halfDimY, 
-										   const unsigned int halfDimX, const unsigned int channelIdxOffset, const unsigned int secondChannelIdxOffset);
-
-template __global__ void convertYUV420PtoNV12Kernel(unsigned char* outputFrame, const unsigned char* inputFrame, const unsigned int dimY, 
-										   const unsigned int dimX, const unsigned int halfDimY, 
-										   const unsigned int halfDimX, const unsigned int channelIdxOffset);
-template __global__ void convertYUV420PtoNV12Kernel(unsigned short* outputFrame, const unsigned short* inputFrame, const unsigned int dimY, 
-										   const unsigned int dimX, const unsigned int halfDimY, 
-										   const unsigned int halfDimX, const unsigned int channelIdxOffset);
-
-template __global__ void processFrameKernel(const unsigned char* frame, unsigned char* outputFrame,
-                                 const unsigned int dimY,
-                                 const unsigned int dimX, const unsigned int realDimX, const float blackLevel, const float whiteLevel, const float maxVal);
-template __global__ void processFrameKernel(const unsigned short* frame, unsigned short* outputFrame,
-                                 const unsigned int dimY,
-                                 const unsigned int dimX, const unsigned int realDimX, const float blackLevel, const float whiteLevel, const float maxVal);
-
-template __global__ void blurFrameKernel(const unsigned char* frameArray, unsigned char* blurredFrameArray, 
-								const unsigned char kernelSize, const unsigned char chacheSize, const unsigned char boundsOffset, 
-								const unsigned char avgEntriesPerThread, const unsigned short remainder, const char lumStart,
-								const unsigned char lumEnd, const unsigned short lumPixelCount, const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX);
-template __global__ void blurFrameKernel(const unsigned short* frameArray, unsigned short* blurredFrameArray, 
-								const unsigned char kernelSize, const unsigned char chacheSize, const unsigned char boundsOffset, 
-								const unsigned char avgEntriesPerThread, const unsigned short remainder, const char lumStart,
-								const unsigned char lumEnd, const unsigned short lumPixelCount, const unsigned short dimY, const unsigned short dimX, const unsigned int realDimX);
-
-template __global__ void calcDeltaSums(unsigned int* summedUpDeltaArray, const unsigned char* frame1, const unsigned char* frame2,
-							  const int* offsetArray, const unsigned int layerIdxOffset, const unsigned int directionIdxOffset,
-						      const unsigned int dimY, const unsigned int dimX, const unsigned int lowDimY, const unsigned int lowDimX,
-							  const unsigned int windowDim, const unsigned char resolutionScalar);
-template __global__ void calcDeltaSums(unsigned int* summedUpDeltaArray, const unsigned short* frame1, const unsigned short* frame2,
-							  const int* offsetArray, const unsigned int layerIdxOffset, const unsigned int directionIdxOffset,
-						      const unsigned int dimY, const unsigned int dimX, const unsigned int lowDimY, const unsigned int lowDimX,
-							  const unsigned int windowDim, const unsigned char resolutionScalar);
-
-template __global__ void warpFrameKernel(const unsigned char* frame1, const int* offsetArray, int* hitCount,
-								unsigned char* warpedFrame, const float frameScalar, const unsigned int lowDimY, const unsigned int lowDimX,
-								const unsigned int dimY, const int dimX, const unsigned int realDimX, const unsigned char resolutionScalar,
-								const unsigned int directionIdxOffset, const unsigned int channelIdxOffset);
-template __global__ void warpFrameKernel(const unsigned short* frame1, const int* offsetArray, int* hitCount,
-								unsigned short* warpedFrame, const float frameScalar, const unsigned int lowDimY, const unsigned int lowDimX,
-								const unsigned int dimY, const int dimX, const unsigned int realDimX, const unsigned char resolutionScalar,
-								const unsigned int directionIdxOffset, const unsigned int channelIdxOffset);
-
-template __global__ void artifactRemovalKernel(const unsigned char* frame1, const int* hitCount, unsigned char* warpedFrame,
-												 const unsigned int dimY, const unsigned int dimX, const unsigned int realDimX, const unsigned int channelIdxOffset);
-template __global__ void artifactRemovalKernel(const unsigned short* frame1, const int* hitCount, unsigned short* warpedFrame,
-												 const unsigned int dimY, const unsigned int dimX, const unsigned int realDimX, const unsigned int channelIdxOffset);
-
-template __global__ void blendFrameKernel(const unsigned char* warpedFrame1, const unsigned char* warpedFrame2, unsigned char* outputFrame,
-                                 const float frame1Scalar, const float frame2Scalar, const unsigned int dimY,
-                                 const unsigned int dimX, const unsigned int realDimX, const unsigned int channelIdxOffset, const float blackLevel, const float whiteLevel, const float maxVal);
-template __global__ void blendFrameKernel(const unsigned short* warpedFrame1, const unsigned short* warpedFrame2, unsigned short* outputFrame,
-                                 const float frame1Scalar, const float frame2Scalar, const unsigned int dimY,
-                                 const unsigned int dimX, const unsigned int realDimX, const unsigned int channelIdxOffset, const float blackLevel, const float whiteLevel, const float maxVal);
-
-template __global__ void insertFrameKernel(const unsigned char* frame1, unsigned char* outputFrame, const unsigned int dimY,
-                                  const unsigned int dimX, const unsigned int realDimX, const unsigned int channelIdxOffset, const float blackLevel, const float whiteLevel, const float maxVal);
-template __global__ void insertFrameKernel(const unsigned short* frame1, unsigned short* outputFrame, const unsigned int dimY,
-								  const unsigned int dimX, const unsigned int realDimX, const unsigned int channelIdxOffset, const float blackLevel, const float whiteLevel, const float maxVal);
-
-template __global__ void sideBySideFrameKernel(const unsigned char* frame1, const unsigned char* warpedFrame1, const unsigned char* warpedFrame2, unsigned char* outputFrame, 
-									  const float frame1Scalar, const float frame2Scalar, const unsigned int dimY,
-                                      const unsigned int dimX, const unsigned int realDimX, const unsigned int halfDimY, 
-									  const unsigned int halfDimX, const unsigned int channelIdxOffset,
-									  const float blackLevel, const float whiteLevel, const float maxVal, const unsigned short middleValue);
-template __global__ void sideBySideFrameKernel(const unsigned short* frame1, const unsigned short* warpedFrame1, const unsigned short* warpedFrame2, unsigned short* outputFrame,
-									  const float frame1Scalar, const float frame2Scalar, const unsigned int dimY,
-									  const unsigned int dimX, const unsigned int realDimX, const unsigned int halfDimY, 
-									  const unsigned int halfDimX, const unsigned int channelIdxOffset,
-									  const float blackLevel, const float whiteLevel, const float maxVal, const unsigned short middleValue);
-
-template __global__ void convertFlowToHSVKernel(const int* flowArray, unsigned char* outputFrame, const unsigned char* frame1,
-                                       const float blendScalar, const unsigned int lowDimY, const unsigned int lowDimX, const unsigned int dimY, const unsigned int dimX, 
-									   const unsigned int realDimX, const unsigned char resolutionScalar, const unsigned int directionIdxOffset,
-									   const unsigned int channelIdxOffset, const bool isP010);
-template __global__ void convertFlowToHSVKernel(const int* flowArray, unsigned short* outputFrame, const unsigned short* frame1,
-									   const float blendScalar, const unsigned int lowDimY, const unsigned int lowDimX, const unsigned int dimY, const unsigned int dimX,
-									   const unsigned int realDimX, const unsigned char resolutionScalar, const unsigned int directionIdxOffset,
-									   const unsigned int channelIdxOffset, const bool isP010);
-
-template __global__ void convertFlowToGreyscaleKernel(const int* flowArray, unsigned char* outputFrame, const unsigned char* frame1,
-                                       const unsigned int lowDimY, const unsigned int lowDimX, const unsigned int dimY, const unsigned int dimX, 
-									   const unsigned int realDimX, const unsigned char resolutionScalar, const unsigned int directionIdxOffset,
-									   const unsigned int channelIdxOffset, const bool isP010, const int maxVal, const unsigned short middleValue);
-template __global__ void convertFlowToGreyscaleKernel(const int* flowArray, unsigned short* outputFrame, const unsigned short* frame1,
-									   const unsigned int lowDimY, const unsigned int lowDimX, const unsigned int dimY, const unsigned int dimX,
-									   const unsigned int realDimX, const unsigned char resolutionScalar, const unsigned int directionIdxOffset,
-									   const unsigned int channelIdxOffset, const bool isP010, const int maxVal, const unsigned short middleValue);

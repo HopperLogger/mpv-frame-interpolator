@@ -13,7 +13,7 @@ typedef struct OpticalFlowCalc {
 	void (*updateFrame)(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const unsigned int frameKernelSize, const unsigned int flowKernelSize, const bool directOutput);
 	void (*downloadFrame)(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer);
 	void (*processFrame)(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const bool firstFrame);
-	void (*blurFrameArray)(struct OpticalFlowCalc *ofc, const void* frame, void* blurredFrame,
+	void (*blurFrameArray)(struct OpticalFlowCalc *ofc, const unsigned short* frame, unsigned short* blurredFrame,
 						const int kernelSize, const bool directOutput);
 	void (*calculateOpticalFlow)(struct OpticalFlowCalc *ofc, unsigned int iNumIterations, unsigned int iNumSteps);
 	void (*flipFlow)(struct OpticalFlowCalc *ofc);
@@ -30,11 +30,8 @@ typedef struct OpticalFlowCalc {
 	// Video properties
 	unsigned int m_iDimX; // Width of the frame
 	unsigned int m_iDimY; // Height of the frame
-	unsigned int m_iRealDimX; // Real width of the frame (not the stride width!)
 	float m_fBlackLevel; // The black level used for the output frame
 	float m_fWhiteLevel; // The white level used for the output frame
-	bool m_bIsHDR; // Flag indicating if the video is HDR
-	int m_iFMT; // The format of the video
 	float m_fMaxVal; // The maximum value of the video format (255.0f for YUV420P and NV12, 1023.0f for YUV420P10, 65535.0f for P010)
 	unsigned short m_iMiddleValue; // The middle value of the video format (128 for YUV420P and NV12, 512 for YUV420P10, 32768 for P010)
 
@@ -56,20 +53,14 @@ typedef struct OpticalFlowCalc {
 	unsigned char* m_statusArray; // Array containing the calculation status of each pixel of frame1
 	unsigned int* m_summedUpDeltaArray; // Array containing the summed up delta values of each window
 	unsigned char* m_lowestLayerArray; // Array containing the comparison results of the two normalized delta arrays (true if the new value decreased)
-	unsigned char* m_outputFrameSDR; // Array containing the output frame
-	unsigned short* m_outputFrameHDR; // Array containing the output frame
+	unsigned short* m_outputFrame; // Array containing the output frame
 	int* m_hitCount12; // Array containing the number of times a pixel was hit
 	int* m_hitCount21; // Array containing the number of times a pixel was hit
-	unsigned char* m_frameSDR[3]; // Array containing the last three frames
-	unsigned short* m_frameHDR[3]; // Array containing the last three frames
-	unsigned char* m_blurredFrameSDR[3]; // Array containing the last three frames after blurring
-	unsigned short* m_blurredFrameHDR[3]; // Array containing the last three frames after blurring
-	unsigned char* m_warpedFrame12SDR; // Array containing the warped frame (frame 1 to frame 2)
-	unsigned short* m_warpedFrame12HDR; // Array containing the warped frame (frame 1 to frame 2)
-	unsigned char* m_warpedFrame21SDR; // Array containing the warped frame (frame 2 to frame 1)
-	unsigned short* m_warpedFrame21HDR; // Array containing the warped frame (frame 2 to frame 1)
-	unsigned short* m_tempFrameHDR; // Temporary array for the output frame
-	unsigned char* m_tempFrameSDR; // Temporary array for the output frame
+	unsigned short* m_frame[3]; // Array containing the last three frames
+	unsigned short* m_blurredFrame[3]; // Array containing the last three frames after blurring
+	unsigned short* m_warpedFrame12; // Array containing the warped frame (frame 1 to frame 2)
+	unsigned short* m_warpedFrame21; // Array containing the warped frame (frame 2 to frame 1)
+	unsigned short* m_tempFrame; // Temporary array for the output frame
 	unsigned char* m_imageArrayCPU; // Array containing the image data
 
 	void* priv; // Private data
@@ -81,13 +72,10 @@ typedef struct OpticalFlowCalc {
 * @param ofc: Pointer to the optical flow calculator to be initialized
 * @param dimY: The height of the frame
 * @param dimX: The width of the frame
-* @param realDimX: The real width of the frame (not the stride width!)
 * @param resolutionScalar: The resolution scalar used for the optical flow calculation
 * @param flowBlurKernelSize: The kernel size used for the flow blur
-* @param isHDR: Flag indicating if the video is HDR
-* @param fmt: The format of the video
 */
-void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, const int realDimX, unsigned char resolutionScalar, unsigned int flowBlurKernelSize, bool isHDR, int fmt);
+void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, unsigned char resolutionScalar, unsigned int flowBlurKernelSize);
 
 #ifdef __cplusplus
 }

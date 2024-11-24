@@ -19,28 +19,54 @@ build_root = meson.project_build_root()
 source_root = meson.project_source_root()
 python = find_program('python3')
 
-# HIP
-hip_compiler = find_program('hipcc', required: true)
+# --- HIP ---
+# Detect GPU vendor
+gpu_check_cmd = ['lspci', '-nn']
+gpu_check_result = run_command(gpu_check_cmd, check: false)
+
+# Default values
+gpu_vendor = 'unknown'
+hip_compiler = ''
+hip_link_args = []
+hip_include_dirs = []
+hip_arch_flag = ''
+
+if gpu_check_result.returncode() == 0
+  if gpu_check_result.stdout().contains('NVIDIA')
+    gpu_vendor = 'nvidia'
+    hip_compiler = find_program('nvcc', required: true)
+    hip_include_dirs = include_directories('/opt/cuda/include')
+    hip_link_args = ['-L/opt/cuda/lib64', '-lcudart']
+    hip_arch_flag = '--gpu-architecture=sm_89'
+  elif gpu_check_result.stdout().contains('AMD')
+    gpu_vendor = 'amd'
+    hip_compiler = find_program('hipcc', required: true)
+    hip_include_dirs = include_directories('/opt/rocm/include')
+    hip_link_args = ['-L/opt/rocm/lib', '-lamdhip64']
+    hip_arch_flag = '--offload-arch=gfx1010'
+  else
+    error('No supported GPU vendor detected.')
+  endif
+else
+  error('Failed to check GPU hardware. Is lspci installed?')
+endif
+
+# HIP sources
 hip_sources = ['video/filter/HopperRender/opticalFlowCalc.cpp']
+
+# Compile target
 hip_objects = custom_target(
     'opticalFlowCalc',
     input: hip_sources,
     output: 'opticalFlowCalc.o',
-    command: [hip_compiler, '-c', '@INPUT@', '-o', '@OUTPUT@', '--offload-arch=gfx1010']
+    command: [hip_compiler, '-c', '@INPUT@', '-o', '@OUTPUT@', hip_arch_flag]
 )
-# --gpu-architecture=sm_89   CUDA
-# --offload-arch=gfx1010    AMD
 
+# HIP dependency
 dependency_hip = declare_dependency(
-    include_directories: include_directories('/opt/rocm/include'),
-    link_args: ['-L/opt/rocm/lib', '-lamdhip64']
+    include_directories: hip_include_dirs,
+    link_args: hip_link_args
 )
-# CUDA
-# include_directories: include_directories('/opt/cuda/include'),
-# link_args: ['-L/opt/cuda/lib64', '-lcudart']
-# AMD
-# include_directories: include_directories('/opt/rocm/include'),
-# link_args: ['-L/opt/rocm/lib', '-lamdhip64'] AMD
 
 # ffmpeg
 libavcodec = dependency('libavcodec', version: '>= 60.31.102')
