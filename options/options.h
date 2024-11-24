@@ -106,7 +106,7 @@ struct mp_subtitle_opts {
     float sub_gauss;
     bool sub_gray;
     bool ass_enabled;
-    float ass_line_spacing;
+    float sub_line_spacing;
     bool ass_use_margins;
     bool sub_use_margins;
     int ass_vsfilter_color_compat;
@@ -116,8 +116,8 @@ struct mp_subtitle_opts {
     bool use_embedded_fonts;
     char **ass_style_override_list;
     char *ass_styles_file;
-    int ass_hinting;
-    int ass_shaper;
+    int sub_hinting;
+    int sub_shaper;
     double ass_prune_delay;
     bool ass_justify;
     bool sub_clear_on_seek;

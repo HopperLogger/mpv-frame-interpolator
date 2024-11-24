@@ -221,6 +221,14 @@ struct vo_wayland_tranche {
     struct wl_list link;
 };
 
+struct vo_wayland_data_offer {
+    struct wl_data_offer *offer;
+    int action; // actually enum mp_dnd_action
+    char *mime_type;
+    int fd;
+    int mime_score;
+};
+
 static bool single_output_spanned(struct vo_wayland_state *wl);
 
 static int check_for_resize(struct vo_wayland_state *wl, int edge_pixels,
@@ -251,6 +259,7 @@ static void set_surface_scaling(struct vo_wayland_state *wl);
 static void update_output_scaling(struct vo_wayland_state *wl);
 static void update_output_geometry(struct vo_wayland_state *wl, struct mp_rect old_geometry,
                                    struct mp_rect old_output_geometry);
+static void destroy_offer(struct vo_wayland_data_offer *o);
 
 /* Wayland listener boilerplate */
 static void pointer_handle_enter(void *data, struct wl_pointer *pointer,
@@ -688,11 +697,12 @@ static void data_offer_handle_offer(void *data, struct wl_data_offer *offer,
 {
     struct vo_wayland_seat *s = data;
     struct vo_wayland_state *wl = s->wl;
+    struct vo_wayland_data_offer *o = wl->pending_offer;
     int score = mp_event_get_mime_type_score(wl->vo->input_ctx, mime_type);
-    if (score > wl->dnd_mime_score && wl->opts->drag_and_drop != -2) {
-        wl->dnd_mime_score = score;
-        talloc_replace(wl, wl->dnd_mime_type, mime_type);
-        MP_VERBOSE(wl, "Given DND offer with mime type %s\n", wl->dnd_mime_type);
+    if (o->offer && score > o->mime_score && wl->opts->drag_and_drop != -2) {
+        o->mime_score = score;
+        talloc_replace(wl, o->mime_type, mime_type);
+        MP_VERBOSE(wl, "Given data offer with mime type %s\n", o->mime_type);
     }
 }
 
@@ -704,12 +714,13 @@ static void data_offer_action(void *data, struct wl_data_offer *wl_data_offer, u
 {
     struct vo_wayland_seat *s = data;
     struct vo_wayland_state *wl = s->wl;
+    struct vo_wayland_data_offer *o = wl->dnd_offer;
     if (dnd_action && wl->opts->drag_and_drop != -2) {
         if (wl->opts->drag_and_drop >= 0) {
-            wl->dnd_action = wl->opts->drag_and_drop;
+            o->action = wl->opts->drag_and_drop;
         } else {
-            wl->dnd_action = dnd_action & WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY ?
-                             DND_REPLACE : DND_APPEND;
+            o->action = dnd_action & WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY ?
+                            DND_REPLACE : DND_APPEND;
         }
 
         static const char * const dnd_action_names[] = {
@@ -718,7 +729,7 @@ static void data_offer_action(void *data, struct wl_data_offer *wl_data_offer, u
             [DND_INSERT_NEXT] = "DND_INSERT_NEXT",
         };
 
-        MP_VERBOSE(wl, "DND action is %s\n", dnd_action_names[wl->dnd_action]);
+        MP_VERBOSE(wl, "DND action is %s\n", dnd_action_names[o->action]);
     }
 }
 
@@ -733,10 +744,10 @@ static void data_device_handle_data_offer(void *data, struct wl_data_device *wl_
 {
     struct vo_wayland_seat *s = data;
     struct vo_wayland_state *wl = s->wl;
-    if (wl->dnd_offer)
-        wl_data_offer_destroy(wl->dnd_offer);
+    struct vo_wayland_data_offer *o = wl->pending_offer;
+    destroy_offer(o);
 
-    wl->dnd_offer = id;
+    o->offer = id;
     wl_data_offer_add_listener(id, &data_offer_listener, s);
 }
 
@@ -747,17 +758,22 @@ static void data_device_handle_enter(void *data, struct wl_data_device *wl_ddev,
 {
     struct vo_wayland_seat *s = data;
     struct vo_wayland_state *wl = s->wl;
-    if (wl->dnd_offer != id) {
+    struct vo_wayland_data_offer *o = wl->pending_offer;
+    if (o->offer != id) {
         MP_FATAL(wl, "DND offer ID mismatch!\n");
         return;
     }
 
+    assert(!wl->dnd_offer->offer);
+    *wl->dnd_offer = *wl->pending_offer;
+    *wl->pending_offer = (struct vo_wayland_data_offer){.fd = -1};
+    o = wl->dnd_offer;
     if (wl->opts->drag_and_drop != -2) {
         wl_data_offer_set_actions(id, WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY |
                                       WL_DATA_DEVICE_MANAGER_DND_ACTION_MOVE,
                                       WL_DATA_DEVICE_MANAGER_DND_ACTION_COPY);
-        wl_data_offer_accept(id, serial, wl->dnd_mime_type);
-        MP_VERBOSE(wl, "Accepting DND offer with mime type %s\n", wl->dnd_mime_type);
+        wl_data_offer_accept(id, serial, o->mime_type);
+        MP_VERBOSE(wl, "Accepting DND offer with mime type %s\n", o->mime_type);
     }
 
 }
@@ -766,19 +782,20 @@ static void data_device_handle_leave(void *data, struct wl_data_device *wl_ddev)
 {
     struct vo_wayland_seat *s = data;
     struct vo_wayland_state *wl = s->wl;
+    struct vo_wayland_data_offer *o = wl->dnd_offer;
 
-    if (wl->dnd_offer) {
-        if (wl->dnd_fd != -1)
+    if (o->offer) {
+        if (o->fd != -1)
             return;
-        wl_data_offer_destroy(wl->dnd_offer);
-        wl->dnd_offer = NULL;
+        wl_data_offer_destroy(o->offer);
+        o->offer = NULL;
     }
 
     if (wl->opts->drag_and_drop != -2) {
-        MP_VERBOSE(wl, "Releasing DND offer with mime type %s\n", wl->dnd_mime_type);
-        if (wl->dnd_mime_type)
-            TA_FREEP(&wl->dnd_mime_type);
-        wl->dnd_mime_score = 0;
+        MP_VERBOSE(wl, "Releasing DND offer with mime type %s\n", o->mime_type);
+        if (o->mime_type)
+            TA_FREEP(&o->mime_type);
+        o->mime_score = 0;
     }
 }
 
@@ -787,13 +804,15 @@ static void data_device_handle_motion(void *data, struct wl_data_device *wl_ddev
 {
     struct vo_wayland_seat *s = data;
     struct vo_wayland_state *wl = s->wl;
-    wl_data_offer_accept(wl->dnd_offer, time, wl->dnd_mime_type);
+    struct vo_wayland_data_offer *o = wl->dnd_offer;
+    wl_data_offer_accept(o->offer, time, o->mime_type);
 }
 
 static void data_device_handle_drop(void *data, struct wl_data_device *wl_ddev)
 {
     struct vo_wayland_seat *s = data;
     struct vo_wayland_state *wl = s->wl;
+    struct vo_wayland_data_offer *o = wl->dnd_offer;
 
     int pipefd[2];
 
@@ -803,12 +822,12 @@ static void data_device_handle_drop(void *data, struct wl_data_device *wl_ddev)
     }
 
     if (wl->opts->drag_and_drop != -2) {
-        MP_VERBOSE(wl, "Receiving DND offer with mime %s\n", wl->dnd_mime_type);
-        wl_data_offer_receive(wl->dnd_offer, wl->dnd_mime_type, pipefd[1]);
+        MP_VERBOSE(wl, "Receiving DND offer with mime %s\n", o->mime_type);
+        wl_data_offer_receive(o->offer, o->mime_type, pipefd[1]);
     }
 
     close(pipefd[1]);
-    wl->dnd_fd = pipefd[0];
+    o->fd = pipefd[0];
 }
 
 static void data_device_handle_selection(void *data, struct wl_data_device *wl_ddev,
@@ -816,13 +835,18 @@ static void data_device_handle_selection(void *data, struct wl_data_device *wl_d
 {
     struct vo_wayland_seat *s = data;
     struct vo_wayland_state *wl = s->wl;
-
-    if (wl->dnd_offer) {
-        wl_data_offer_destroy(wl->dnd_offer);
-        wl->dnd_offer = NULL;
-        MP_VERBOSE(wl, "Received a new DND offer. Releasing the previous offer.\n");
+    struct vo_wayland_data_offer *o = wl->pending_offer;
+    if (o->offer != id) {
+        MP_FATAL(wl, "Selection offer ID mismatch!\n");
+        return;
     }
 
+    if (wl->selection_offer->offer) {
+        destroy_offer(wl->selection_offer);
+        MP_VERBOSE(wl, "Received a new selection offer. Releasing the previous offer.\n");
+    }
+    *wl->selection_offer = *wl->pending_offer;
+    *wl->pending_offer = (struct vo_wayland_data_offer){.fd = -1};
 }
 
 static const struct wl_data_device_listener data_device_listener = {
@@ -992,7 +1016,9 @@ static void surface_handle_preferred_buffer_scale(void *data,
 {
     struct vo_wayland_state *wl = data;
 
-    if (wl->fractional_scale_manager || wl->scaling == scale * WAYLAND_SCALE_FACTOR)
+    if (wl->fractional_scale_manager ||
+        (wl->scaling == scale * WAYLAND_SCALE_FACTOR &&
+         wl->current_output && wl->current_output->has_surface))
         return;
 
     wl->pending_scaling = scale * WAYLAND_SCALE_FACTOR;
@@ -1224,12 +1250,12 @@ static void preferred_scale(void *data,
                             uint32_t scale)
 {
     struct vo_wayland_state *wl = data;
-    if (wl->scaling == scale)
+    if (wl->scaling == scale && wl->current_output && wl->current_output->has_surface)
         return;
 
     wl->pending_scaling = scale;
     wl->scale_configured = true;
-    MP_VERBOSE(wl, "Obtained preferred scale, %f, from the compositor.\n",
+    MP_VERBOSE(wl, "Obtained preferred fractional scale, %f, from the compositor.\n",
                wl->pending_scaling / WAYLAND_SCALE_FACTOR);
     wl->need_rescale = true;
 
@@ -1674,7 +1700,7 @@ static void registry_handle_add(void *data, struct wl_registry *reg, uint32_t id
 
     if (!strcmp(interface, wl_data_device_manager_interface.name) && (ver >= 3) && found++) {
         ver = 3;
-        wl->dnd_devman = wl_registry_bind(reg, id, &wl_data_device_manager_interface, ver);
+        wl->devman = wl_registry_bind(reg, id, &wl_data_device_manager_interface, ver);
     }
 
     if (!strcmp(interface, wl_output_interface.name) && (ver >= 2) && found++) {
@@ -1830,21 +1856,23 @@ static void apply_keepaspect(struct vo_wayland_state *wl, int *width, int *heigh
     }
 }
 
-static void free_dnd_data(struct vo_wayland_state *wl)
+static void destroy_offer(struct vo_wayland_data_offer *o)
 {
-    // caller should close wl->dnd_fd if appropriate
-
-    wl->dnd_action = -1;
-    TA_FREEP(&wl->dnd_mime_type);
-    wl->dnd_mime_score = 0;
+    TA_FREEP(&o->mime_type);
+    if (o->fd != -1)
+        close(o->fd);
+    if (o->offer)
+        wl_data_offer_destroy(o->offer);
+    *o = (struct vo_wayland_data_offer){.fd = -1, .action = -1};
 }
 
 static void check_dnd_fd(struct vo_wayland_state *wl)
 {
-    if (wl->dnd_fd == -1)
+    struct vo_wayland_data_offer *o = wl->dnd_offer;
+    if (o->fd == -1)
         return;
 
-    struct pollfd fdp = { wl->dnd_fd, POLLIN | POLLHUP, 0 };
+    struct pollfd fdp = { o->fd, POLLIN | POLLHUP, 0 };
     if (poll(&fdp, 1, 0) <= 0)
         return;
 
@@ -1856,7 +1884,7 @@ static void check_dnd_fd(struct vo_wayland_state *wl)
         };
 
         while (1) {
-            data_read = read(wl->dnd_fd, file_list.start + file_list.len, chunk_size);
+            data_read = read(o->fd, file_list.start + file_list.len, chunk_size);
             if (data_read == -1 && errno == EINTR)
                 continue;
             else if (data_read <= 0)
@@ -1871,24 +1899,22 @@ static void check_dnd_fd(struct vo_wayland_state *wl)
         } else {
             MP_VERBOSE(wl, "Read %zu bytes from the DND fd\n", file_list.len);
 
-            if (wl->dnd_offer)
-                wl_data_offer_finish(wl->dnd_offer);
+            if (o->offer)
+                wl_data_offer_finish(o->offer);
 
-            assert(wl->dnd_action >= 0);
-            mp_event_drop_mime_data(wl->vo->input_ctx, wl->dnd_mime_type,
-                                    file_list, wl->dnd_action);
+            assert(o->action >= 0);
+            mp_event_drop_mime_data(wl->vo->input_ctx, o->mime_type,
+                                    file_list, o->action);
         }
 
         talloc_free(file_list.start);
-        free_dnd_data(wl);
+        destroy_offer(o);
     }
 
     if (fdp.revents & (POLLIN | POLLERR | POLLHUP)) {
-        if (wl->dnd_action >= 0)
+        if (o->action >= 0)
             MP_VERBOSE(wl, "DND aborted (hang up or error)\n");
-        free_dnd_data(wl);
-        close(wl->dnd_fd);
-        wl->dnd_fd = -1;
+        destroy_offer(o);
     }
 }
 
@@ -3040,10 +3066,13 @@ bool vo_wayland_init(struct vo *vo)
         .scaling = WAYLAND_SCALE_FACTOR,
         .wakeup_pipe = {-1, -1},
         .display_fd = -1,
-        .dnd_fd = -1,
+        .pending_offer = talloc_zero(wl, struct vo_wayland_data_offer),
+        .dnd_offer = talloc_zero(wl, struct vo_wayland_data_offer),
+        .selection_offer = talloc_zero(wl, struct vo_wayland_data_offer),
         .cursor_visible = true,
         .opts_cache = m_config_cache_alloc(wl, vo->global, &vo_sub_opts),
     };
+    wl->pending_offer->fd = wl->dnd_offer->fd = wl->selection_offer->fd = -1;
     wl->opts = wl->opts_cache->opts;
 
     wl_list_init(&wl->output_list);
@@ -3130,10 +3159,10 @@ bool vo_wayland_init(struct vo *vo)
     }
 #endif
 
-    if (wl->dnd_devman) {
+    if (wl->devman) {
         struct vo_wayland_seat *seat;
         wl_list_for_each(seat, &wl->seat_list, link) {
-            seat->dnd_ddev = wl_data_device_manager_get_data_device(wl->dnd_devman, seat->seat);
+            seat->dnd_ddev = wl_data_device_manager_get_data_device(wl->devman, seat->seat);
             wl_data_device_add_listener(seat->dnd_ddev, &data_device_listener, seat);
         }
     } else {
@@ -3269,9 +3298,9 @@ void vo_wayland_uninit(struct vo *vo)
     if (!wl)
         return;
 
-    if (wl->dnd_fd != -1)
-        close(wl->dnd_fd);
-    free_dnd_data(wl);
+    destroy_offer(wl->pending_offer);
+    destroy_offer(wl->dnd_offer);
+    destroy_offer(wl->selection_offer);
 
     mp_input_put_key(wl->vo->input_ctx, MP_INPUT_RELEASE_ALL);
 
@@ -3310,11 +3339,8 @@ void vo_wayland_uninit(struct vo *vo)
     if (wl->content_type_manager)
         wp_content_type_manager_v1_destroy(wl->content_type_manager);
 
-    if (wl->dnd_devman)
-        wl_data_device_manager_destroy(wl->dnd_devman);
-
-    if (wl->dnd_offer)
-        wl_data_offer_destroy(wl->dnd_offer);
+    if (wl->devman)
+        wl_data_device_manager_destroy(wl->devman);
 
     if (wl->fback_pool)
         clean_feedback_pool(wl->fback_pool);
