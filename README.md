@@ -8,6 +8,9 @@ The goal is to achieve pretty decent frame interpolation with a variety of user 
 The filter can be easially used with [SMPlayer](https://github.com/smplayer-dev/smplayer).
 > Please keep in mind that this project is still in ongoing development and there are very likely some bugs depending on the environment you're running and the setting you use. The interpolation quality is also not perfect yet, but pretty decent most of the time, especially for 24 fps -> 60 fps conversion.
 
+## Contribution
+Apart from the meson.build script and a few modifications to some mpv source files, the main HopperRender code lives in `mpv/video/filter/HopperRender/`
+
 ## Features
 - Realtime frame interpolation of any source framerate to your monitors refresh-rate
 - Compatible with HDR video
