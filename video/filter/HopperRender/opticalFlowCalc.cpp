@@ -1240,7 +1240,6 @@ void blurFrameArray(struct OpticalFlowCalc *ofc, const unsigned short* frame, un
 * @param directOutput: Whether to output the blurred frame directly
 */
 void updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const unsigned int frameKernelSize, const unsigned int flowKernelSize, const bool directOutput) {
-	struct priv *priv = (struct priv*)ofc->priv;
 	ofc->m_iFlowBlurKernelSize = flowKernelSize;
 
 	HIP_CHECK(hipMemcpy(ofc->m_frame[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyHostToDevice));
@@ -1271,8 +1270,6 @@ void updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const u
 * @param pOutBuffer: Pointer to the output buffer
 */
 void downloadFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer) {
-	struct priv *priv = (struct priv*)ofc->priv;
-
 	HIP_CHECK(hipMemcpy(pOutBuffer[0], ofc->m_outputFrame, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToHost));
 	HIP_CHECK(hipMemcpy(pOutBuffer[1], ofc->m_outputFrame + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToHost));
 	

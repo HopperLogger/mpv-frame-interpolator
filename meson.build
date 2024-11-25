@@ -25,23 +25,16 @@ gpu_check_cmd = ['lspci', '-nn']
 gpu_check_result = run_command(gpu_check_cmd, check: false)
 
 # Default values
-gpu_vendor = 'unknown'
-hip_compiler = ''
+hip_compiler = find_program('hipcc', required: true)
 hip_link_args = []
-hip_include_dirs = []
+hip_include_dirs = include_directories('/opt/rocm/include')
 hip_arch_flag = ''
 
 if gpu_check_result.returncode() == 0
   if gpu_check_result.stdout().contains('NVIDIA')
-    gpu_vendor = 'nvidia'
-    hip_compiler = find_program('nvcc', required: true)
-    hip_include_dirs = include_directories('/opt/cuda/include')
     hip_link_args = ['-L/opt/cuda/lib64', '-lcudart']
     hip_arch_flag = '--gpu-architecture=sm_89'
   elif gpu_check_result.stdout().contains('AMD')
-    gpu_vendor = 'amd'
-    hip_compiler = find_program('hipcc', required: true)
-    hip_include_dirs = include_directories('/opt/rocm/include')
     hip_link_args = ['-L/opt/rocm/lib', '-lamdhip64']
     hip_arch_flag = '--offload-arch=gfx1010'
   else
