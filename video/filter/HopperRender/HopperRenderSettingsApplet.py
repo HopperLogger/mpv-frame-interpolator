@@ -10,15 +10,6 @@ FIFO_PATH = "/tmp/hopperrender" # FIFO used to comunicate with the video filter
 BUFFER_SIZE = 512               # Size of the buffer used to read from the FIFO
 UPDATE_INTERVAL = 1/60          # Interval at which the update function will be called
 
-# Slider callback functions
-def on_frame_blur_slider_change(slider):
-    value = int(slider.get_value())
-    print(value + 100, flush=True)
-
-def on_flow_blur_slider_change(slider):
-    value = int(slider.get_value())
-    print(value + 200, flush=True)
-
 # Callback functions for the radio items
 def on_warped_frame12_activate(widget):
     if widget.get_active():
@@ -54,47 +45,23 @@ def on_sidebyside2_activate(widget):
 
 def on_tearingtest_activate(widget):
     if widget.get_active():
-        print(19, flush=True)
+        print(9, flush=True)
 
 def on_shader_bright_activate(widget):
     if widget.get_active():
-        print(9, flush=True)
+        print(10, flush=True)
 
 def on_shader_full_activate(widget):
     if widget.get_active():
-        print(10, flush=True)
+        print(11, flush=True)
 
 def on_shader_calm_activate(widget):
     if widget.get_active():
-        print(11, flush=True)
+        print(12, flush=True)
 
 def on_shader_off_activate(widget):
     if widget.get_active():
-        print(12, flush=True)
-
-def on_scalar_0_activate(widget):
-    if widget.get_active():
         print(13, flush=True)
-
-def on_scalar_1_activate(widget):
-    if widget.get_active():
-        print(14, flush=True)
-
-def on_scalar_2_activate(widget):
-    if widget.get_active():
-        print(15, flush=True)
-
-def on_scalar_3_activate(widget):
-    if widget.get_active():
-        print(16, flush=True)
-
-def on_scalar_4_activate(widget):
-    if widget.get_active():
-        print(17, flush=True)
-
-def on_scalar_5_activate(widget):
-    if widget.get_active():
-        print(18, flush=True)
 
 def on_activation_toggle(widget):
     print(0, flush=True)
@@ -138,17 +105,6 @@ class HopperRenderSettings:
         main_menu.append(shader_item)
         shader_menu = Gtk.Menu()
         shader_item.set_submenu(shader_menu)
-
-        # Calculation resolution menu
-        scalar_item = Gtk.MenuItem(label="Calc Res")
-        main_menu.append(scalar_item)
-        scalar_menu = Gtk.Menu()
-        scalar_item.set_submenu(scalar_menu)
-
-                # Adding a new menu item to open the slider window
-        slider_item = Gtk.MenuItem(label="Open Sliders")
-        slider_item.connect("activate", self.open_slider_window)
-        main_menu.append(slider_item)
 
         # Frame output radio items
         frame_output_group = None
@@ -220,40 +176,6 @@ class HopperRenderSettings:
         shader_off_item.connect("activate", on_shader_off_activate)
         shader_menu.append(shader_off_item)
 
-        # Resolution scalar radio items
-        scalar_group = None
-
-        self.scalar_0_item = Gtk.RadioMenuItem.new_with_label(scalar_group, "0")
-        self.scalar_0_item.connect("activate", on_scalar_0_activate)
-        scalar_menu.append(self.scalar_0_item)
-        scalar_group = self.scalar_0_item.get_group()
-
-        self.scalar_1_item = Gtk.RadioMenuItem.new_with_label(scalar_group, "1")
-        self.scalar_1_item.connect("activate", on_scalar_1_activate)
-        scalar_menu.append(self.scalar_1_item)
-        scalar_group = self.scalar_1_item.get_group()
-
-        self.scalar_2_item = Gtk.RadioMenuItem.new_with_label(scalar_group, "2")
-        self.scalar_2_item.set_active(True)
-        self.scalar_2_item.connect("activate", on_scalar_2_activate)
-        scalar_menu.append(self.scalar_2_item)
-        scalar_group = self.scalar_2_item.get_group()
-
-        self.scalar_3_item = Gtk.RadioMenuItem.new_with_label(scalar_group, "3")
-        self.scalar_3_item.connect("activate", on_scalar_3_activate)
-        scalar_menu.append(self.scalar_3_item)
-        scalar_group = self.scalar_3_item.get_group()
-
-        self.scalar_4_item = Gtk.RadioMenuItem.new_with_label(scalar_group, "4")
-        self.scalar_4_item.connect("activate", on_scalar_4_activate)
-        scalar_menu.append(self.scalar_4_item)
-        scalar_group = self.scalar_4_item.get_group()
-
-        self.scalar_5_item = Gtk.RadioMenuItem.new_with_label(scalar_group, "5")
-        self.scalar_5_item.connect("activate", on_scalar_5_activate)
-        scalar_menu.append(self.scalar_5_item)
-        scalar_group = self.scalar_5_item.get_group()
-
         # Activation toggle
         activation_toggle = Gtk.CheckMenuItem(label="Activate")
         activation_toggle.set_active(True)
@@ -270,37 +192,6 @@ class HopperRenderSettings:
         indicator.set_menu(main_menu)
         GLib.idle_add(self.update)  # Add the update function that will listen on the FIFO for changes
         Gtk.main()
-
-    # Function to open a new window with a slider
-    def open_slider_window(self, source):
-        # Create a new window
-        self.window = Gtk.Window(title="Slider Window")
-        self.window.set_default_size(300, 200)
-
-        # Create a box to contain the slider
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        self.window.add(vbox)
-
-        # Create a horizontal slider
-        frame_blur_label = Gtk.Label(label="Frame Blur")
-        self.frame_blur_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
-        self.frame_blur_slider.set_value(16)
-        self.frame_blur_slider.connect("value-changed", on_frame_blur_slider_change)
-
-        # Create a horizontal slider
-        flow_blur_label = Gtk.Label(label="Flow Blur")
-        self.flow_blur_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 100, 1)
-        self.flow_blur_slider.set_value(32)
-        self.flow_blur_slider.connect("value-changed", on_flow_blur_slider_change)
-
-        # Add the slider to the box
-        vbox.pack_start(frame_blur_label, True, True, 0)
-        vbox.pack_start(self.frame_blur_slider, True, True, 0)
-        vbox.pack_start(flow_blur_label, True, True, 0)
-        vbox.pack_start(self.flow_blur_slider, True, True, 0)
-
-        # Show all components
-        self.window.show_all()
 
     # Update function that listens on the FIFO for changes
     def update(self):

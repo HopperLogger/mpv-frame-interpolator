@@ -9,10 +9,10 @@ extern "C" {
 
 typedef struct OpticalFlowCalc {
 	void (*free)(struct OpticalFlowCalc *ofc);
-	void (*adjustFrameScalar)(struct OpticalFlowCalc *ofc);
-	void (*updateFrame)(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const unsigned int frameKernelSize, const unsigned int flowKernelSize, const bool directOutput);
-	void (*downloadFrame)(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer);
-	void (*processFrame)(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const bool firstFrame);
+	void (*reinit)(struct OpticalFlowCalc *ofc);
+	void (*updateFrame)(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const unsigned int frameKernelSize, const bool directOutput);
+	void (*downloadFrame)(struct OpticalFlowCalc *ofc, const unsigned short* pInBuffer, unsigned char** pOutBuffer);
+	void (*processFrame)(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const int frameCounter);
 	void (*blurFrameArray)(struct OpticalFlowCalc *ofc, const unsigned short* frame, unsigned short* blurredFrame,
 						const int kernelSize, const bool directOutput);
 	void (*calculateOpticalFlow)(struct OpticalFlowCalc *ofc, unsigned int iNumIterations, unsigned int iNumSteps);
@@ -44,6 +44,7 @@ typedef struct OpticalFlowCalc {
 	unsigned int m_iLayerIdxOffset; // m_iLowDimY * m_iLowDimX
 	unsigned int m_iChannelIdxOffset; // m_iDimY * m_iDimX
 	unsigned int m_iFlowBlurKernelSize; // The kernel size used for the flow blur
+	volatile bool m_bOFCTerminate; // Whether or not the optical flow calculator should terminate
 
 	// GPU Arrays
 	int* m_offsetArray12; // Array containing x,y offsets for each pixel of frame1
