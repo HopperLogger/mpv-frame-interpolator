@@ -293,22 +293,22 @@ __global__ void normalizeDeltaSums(const unsigned int* summedUpDeltaArray, unsig
 	// Check if the thread is a window represent
 	if (isWindowRepresent) {
 		// Get the current window information
-		const int offsetX = offsetArray[cz * layerIdxOffset + threadIndex2D];
-		const int offsetY = offsetArray[directionIdxOffset + cz * layerIdxOffset + threadIndex2D];
+		const int offsetX = -offsetArray[cz * layerIdxOffset + threadIndex2D];
+		const int offsetY = -offsetArray[directionIdxOffset + cz * layerIdxOffset + threadIndex2D];
 
 		// Calculate the not overlapping pixels
 		int overlapX;
 		int overlapY;
 
 		// Calculate the number of not overlapping pixels
-		if ((cx + windowDim + abs(offsetX) > lowDimX) || (cx - offsetX < 0)) {
-			overlapX = abs(offsetX);
+		if ((cx + windowDim + offsetX > lowDimX) || (cx + offsetX < 0)) {
+			overlapX = abs(offsetX) + (windowDim > lowDimX) ? (windowDim - lowDimX) : 0;
 		} else {
 			overlapX = 0;
 		}
 
-		if ((cy + windowDim + abs(offsetY) > lowDimY) || (cy - offsetY < 0)) {
-			overlapY = abs(offsetY);
+		if ((cy + windowDim + offsetY > lowDimY) || (cy + offsetY < 0)) {
+			overlapY = abs(offsetY) + (windowDim > lowDimY) ? (windowDim - lowDimY) : 0;
 		} else {
 			overlapY = 0;
 		}
@@ -1688,7 +1688,7 @@ void blurFlowArrays(struct OpticalFlowCalc *ofc) {
 void saveImage(struct OpticalFlowCalc *ofc, const char* filePath) {
 	// Copy the image array to the CPU
 	size_t dataSize = 1.5 * ofc->m_iDimY * ofc->m_iDimX;
-	HIP_CHECK(hipMemcpy(ofc->m_imageArrayCPU, ofc->m_outputFrame, dataSize, hipMemcpyDeviceToHost));
+	HIP_CHECK(hipMemcpy(ofc->m_imageArrayCPU, ofc->m_outputFrame, dataSize * sizeof(unsigned short), hipMemcpyDeviceToHost));
 
 	// Open file in binary write mode
     FILE *file = fopen(filePath, "wb");
@@ -1698,7 +1698,7 @@ void saveImage(struct OpticalFlowCalc *ofc, const char* filePath) {
     }
 
     // Write the array to the file
-    size_t written = fwrite(ofc->m_imageArrayCPU, sizeof(unsigned char), dataSize, file);
+    size_t written = fwrite(ofc->m_imageArrayCPU, sizeof(unsigned short), dataSize, file);
     if (written != dataSize) {
         perror("Error writing to file");
         fclose(file);
@@ -1902,6 +1902,7 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ofc->m_warpedFrame21 = createGPUArrayUS(1.5 * dimY * dimX);
 	ofc->m_outputFrame = createGPUArrayUS(1.5 * dimY * dimX);
 	ofc->m_tempFrame = createGPUArrayUS((dimY / 2) * dimX);
+	ofc->m_imageArrayCPU = (unsigned short*)malloc(3 * dimY * dimX);
 	ofc->m_offsetArray12 = createGPUArrayI(2 * 5 * dimY * dimX);
 	ofc->m_offsetArray21 = createGPUArrayI(2 * dimY * dimX);
 	ofc->m_blurredOffsetArray12[0] = createGPUArrayI(2 * dimY * dimX);

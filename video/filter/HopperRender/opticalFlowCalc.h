@@ -62,7 +62,7 @@ typedef struct OpticalFlowCalc {
 	unsigned short* m_warpedFrame12; // Array containing the warped frame (frame 1 to frame 2)
 	unsigned short* m_warpedFrame21; // Array containing the warped frame (frame 2 to frame 1)
 	unsigned short* m_tempFrame; // Temporary array for the output frame
-	unsigned char* m_imageArrayCPU; // Array containing the image data
+	unsigned short* m_imageArrayCPU; // Array containing the image data
 
 	void* priv; // Private data
 } OpticalFlowCalc;
