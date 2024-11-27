@@ -94,7 +94,7 @@ struct priv {
 	unsigned char m_cResolutionScalar; // Determines which resolution scalar will be used for the optical flow calculation (0: Full resolution, 1: Half resolution, 2: Quarter resolution, 3: Eighth resolution, 4: Sixteenth resolution, ...)
 	unsigned int m_iNumSteps; // Number of steps executed to find the ideal offset (limits the maximum offset distance per iteration)
 	double m_dScalar; // The scalar used to determine the position between frame1 and frame2
-	bool m_bReinit; // Tells the OFC to reset its buffers
+	volatile bool m_bOFCBusy; // Whether or not the optical flow calculation is currently running
 
 	// Frame output
 	struct mp_image_pool *m_miSWPool; // The software image pool used to store the source frames
@@ -117,43 +117,35 @@ struct priv {
 
 // Prototypes
 void *vf_HopperRender_optical_flow_calc_thread(void *arg);
-void *vf_HopperRender_start_AppIndicator_script(void *arg);
-
-/*
-* Applies the new resolution scalar to the optical flow calculator
-*
-* @param priv: The video filter private data
-*/
-static void vf_HopperRender_adjust_frame_scalar(struct priv *priv)
-{
-	printf("Adjusting frame scalar\n");
-	// Here we just adjust all the variables that are affected by the new resolution scalar
-	priv->ofc->m_iFlowBlurKernelSize = priv->m_iFlowBlurKernelSize >> priv->m_cResolutionScalar;
-	if (priv->m_isInterpolationState == TooSlow) priv->m_isInterpolationState = Active;
-	//priv->m_iNumSteps = MIN_NUM_STEPS;
-	priv->ofc->m_cResolutionScalar = priv->m_cResolutionScalar;
-	priv->ofc->m_iLowDimX = priv->m_iDimX >> priv->m_cResolutionScalar;
-	priv->ofc->m_iLowDimY = priv->m_iDimY >> priv->m_cResolutionScalar;
-	priv->ofc->m_iDirectionIdxOffset = priv->ofc->m_iNumLayers * priv->ofc->m_iLowDimY * priv->ofc->m_iLowDimX;
-	priv->ofc->m_iLayerIdxOffset = priv->ofc->m_iLowDimY * priv->ofc->m_iLowDimX;
-	priv->ofc->adjustFrameScalar(priv->ofc);
-	priv->m_bReinit = false;
-}
+void *vf_HopperRender_launch_AppIndicator_script(void *arg);
 
 /*
 * Processes the commands received from the AppIndicator
 *
 * @param priv: The video filter private data
-* @param code: The received command code
 */
-static void vf_HopperRender_process_AppIndicator_command(struct priv *priv, int code)
+static void vf_HopperRender_process_AppIndicator_command(struct priv *priv)
 {
+	// Read the command from the pipe
+	int code = -1;
+	char buffer[256];
+    ssize_t bytesRead;
+    while ((bytesRead = read(priv->m_tdAppIndicatorThreadData.pipe_fd[0], buffer, sizeof(buffer) - 1)) > 0) {
+        buffer[bytesRead] = '\0';
+        if (buffer[0] != '\n') {
+            code = atoi(buffer);
+			break;
+        }
+    }
+
+	// Process the command
 	switch (code) {
 		// **** Activation Status ****
 		case 0:
 			if (priv->m_isInterpolationState != Deactivated) {
 				priv->m_isInterpolationState = Deactivated;
 				priv->m_iIntFrameNum = 0;
+				priv->ofc->m_bOFCTerminate = true;
 			} else {
 				priv->m_isInterpolationState = Active;
 			}
@@ -183,69 +175,183 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv, int 
 		case 8:
 			priv->m_foFrameOutput = SideBySide2;
 			break;
-		// **** Shaders ****
 		case 9:
+			priv->m_foFrameOutput = TearingTest;
+			break;
+		// **** Shaders ****
+		case 10:
 			priv->ofc->m_fBlackLevel = 0.0f;
 			priv->ofc->m_fWhiteLevel = 220.0f;
 			priv->ofc->m_fBlackLevel *= 256.0f;
 			priv->ofc->m_fWhiteLevel *= 256.0f;
 			break;
-		case 10:
+		case 11:
 			priv->ofc->m_fBlackLevel = 16.0f;
 			priv->ofc->m_fWhiteLevel = 219.0f;
 			priv->ofc->m_fBlackLevel *= 256.0f;
 			priv->ofc->m_fWhiteLevel *= 256.0f;
 			break;
-		case 11:
+		case 12:
 			priv->ofc->m_fBlackLevel = 10.0f;
 			priv->ofc->m_fWhiteLevel = 225.0f;
 			priv->ofc->m_fBlackLevel *= 256.0f;
 			priv->ofc->m_fWhiteLevel *= 256.0f;
 			break;
-		case 12:
+		case 13:
 			priv->ofc->m_fBlackLevel = 0.0f;
 			priv->ofc->m_fWhiteLevel = 255.0f;
 			priv->ofc->m_fBlackLevel *= 256.0f;
 			priv->ofc->m_fWhiteLevel *= 256.0f;
 			break;
-		case 13:
-			priv->m_cResolutionScalar = 0;
-			priv->m_bReinit = true;
-			break;
-		case 14:
-			priv->m_cResolutionScalar = 1;
-			priv->m_bReinit = true;
-			break;
-		case 15:
-			priv->m_cResolutionScalar = 2;
-			priv->m_bReinit = true;
-			break;
-		case 16:
-			priv->m_cResolutionScalar = 3;
-			priv->m_bReinit = true;
-			break;
-		case 17:
-			priv->m_cResolutionScalar = 4;
-			priv->m_bReinit = true;
-			break;
-		case 18:
-			priv->m_cResolutionScalar = 5;
-			priv->m_bReinit = true;
-			break;
-		case 19:
-			priv->m_foFrameOutput = TearingTest;
-			break;
 		default:
-			if (code >= 100 && code < 200) {
-				priv->m_iFrameBlurKernelSize = code - 100;
-			} else if (code >= 200 && code < 300) {
-				priv->m_iFlowBlurKernelSize = code - 200;
-			} else if (code >= 300 && code < 400) {
-				priv->m_iNumIterations = code - 300;
-			} else if (code >= 400 && code < 500) {
-				priv->m_iNumSteps = code - 400;
-			}
 			break;
+	}
+}
+
+/*
+* Sends the current info to the AppIndicator status widget
+*
+* @param priv: The video filter private data
+*/
+static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv, double warpCalcDurations[100], double currTotalWarpDuration)
+{
+	char buffer2[512];
+	memset(buffer2, 0, sizeof(buffer2));
+    int offset = snprintf(buffer2, sizeof(buffer2), 
+                          "Num Steps: %d\nCalc Res: %dx%d\nTarget Time: %06.2f ms (%.1f fps)\nFrame Time: %06.2f ms (%.3f fps | %.2fx)\nOfc: %06.2f ms (%.0f fps)\nWarp Time: %06.2f ms (%.0f fps)",
+                          priv->m_iNumSteps, priv->m_iDimX >> priv->m_cResolutionScalar, priv->m_iDimY >> priv->m_cResolutionScalar, priv->m_dTargetPTS * 1000.0, 1.0 / priv->m_dTargetPTS,
+						  priv->m_dSourceFrameTime * 1000.0, 1.0 / priv->m_dSourceFrameTime, priv->m_dPlaybackSpeed, priv->m_dOFCCalcDuration * 1000.0, 1.0 / priv->m_dOFCCalcDuration, currTotalWarpDuration * 1000.0, 1.0 / currTotalWarpDuration);
+
+    for (int i = 0; i < 10; i++) {
+		if (i < min(priv->m_iNumIntFrames, 10)) {
+        	offset += snprintf(buffer2 + offset, sizeof(buffer2) - offset, "\nWarp%d: %06.2f ms", i, warpCalcDurations[i] * 1000.0);
+		} else {
+			offset += snprintf(buffer2 + offset, sizeof(buffer2) - offset, "\n");
+		}
+    }
+	if (write(priv->m_iAppIndicatorFileDesc, buffer2, sizeof(buffer2)) == -1) {
+		perror("write");
+		close(priv->m_iAppIndicatorFileDesc);
+		exit(EXIT_FAILURE);
+	}
+
+	// Save the stats to a file
+	FILE *file = fopen("/home/julian/ofclog.txt", "a");
+	if (file == NULL) {
+		perror("Error opening file");
+		return;
+	}
+	char buffer[512];
+	memset(buffer, 0, sizeof(buffer));
+	sprintf(buffer, "%f\n", priv->m_dOFCCalcDuration);
+	fprintf(file, "%s", buffer);
+	fclose(file);
+}
+
+/*
+* Applies the new resolution scalar to the optical flow calculator and clears the offset arrays
+*
+* @param priv: The video filter private data
+*/
+static void vf_HopperRender_reinit_ofc(struct priv *priv)
+{
+	// Here we just adjust all the variables that are affected by the new resolution scalar
+	priv->ofc->m_iFlowBlurKernelSize = priv->m_iFlowBlurKernelSize >> priv->m_cResolutionScalar;
+	if (priv->m_isInterpolationState == TooSlow) priv->m_isInterpolationState = Active;
+	priv->ofc->m_cResolutionScalar = priv->m_cResolutionScalar;
+	priv->ofc->m_iLowDimX = priv->m_iDimX >> priv->m_cResolutionScalar;
+	priv->ofc->m_iLowDimY = priv->m_iDimY >> priv->m_cResolutionScalar;
+	priv->ofc->m_iDirectionIdxOffset = priv->ofc->m_iNumLayers * priv->ofc->m_iLowDimY * priv->ofc->m_iLowDimX;
+	priv->ofc->m_iLayerIdxOffset = priv->ofc->m_iLowDimY * priv->ofc->m_iLowDimX;
+	priv->ofc->reinit(priv->ofc);
+}
+
+/*
+* Adjust optical flow calculation settings for optimal performance and quality
+*
+* @param f: The video filter instance
+* @param OFCisDone: Whether or not the optical flow calculation finished on time
+*/
+static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool OFCisDone)
+{
+	struct priv *priv = f->priv;
+
+	// Calculate the calculation durations
+	double warpCalcDurations[100];
+	double currTotalWarpDuration = 0.0;
+	for (int i = 0; i < min(priv->m_iNumIntFrames, 100); i++) {
+		warpCalcDurations[i] = (priv->m_teWarpCalcEnd[i].tv_sec - priv->m_teWarpCalcStart[i].tv_sec) + ((priv->m_teWarpCalcEnd[i].tv_usec - priv->m_teWarpCalcStart[i].tv_usec) / 1000000.0);
+		currTotalWarpDuration += warpCalcDurations[i];
+	}
+	double currTotalCalcDuration = max(priv->m_dOFCCalcDuration, currTotalWarpDuration);
+	
+	// Send the stats to the AppIndicator status widget
+	vf_HopperRender_update_AppIndicator_widget(priv, warpCalcDurations, currTotalWarpDuration);
+
+	/*
+	* Calculation took too long (OFC had to be interupted)
+	*/
+	if (!OFCisDone) {
+		// OFC interruption is critical, so we reduce the resolution
+		if (AUTO_FRAME_SCALE && priv->m_cResolutionScalar < 5) {
+			priv->m_cResolutionScalar += 1;
+			vf_HopperRender_reinit_ofc(priv);
+		}
+		return;
+
+	/*
+	* Calculation took longer than the threshold
+	*/
+	} else if ((currTotalCalcDuration + currTotalCalcDuration * 0.2) > priv->m_dSourceFrameTime) {
+		if (LOG_PERFORMANCE) MP_TRACE(f, "Calculation took too long %.3f sec AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, priv->m_dSourceFrameTime, priv->m_iNumSteps, priv->m_cResolutionScalar);
+
+		// Decrease the number of steps to reduce calculation time
+		if (AUTO_STEPS_ADJUST && priv->m_iNumSteps > MIN_NUM_STEPS) {
+			priv->m_iNumSteps -= 1;
+			return;
+		}
+
+		// We can't reduce the number of steps any further, so we reduce the resolution divider instead
+		if (AUTO_FRAME_SCALE && priv->m_cResolutionScalar < 5) {
+			// To avoid unnecessary adjustments, we only adjust the resolution divider if we have been too slow for a while
+			priv->m_cNumTimesTooSlow += 1;
+			if (priv->m_cNumTimesTooSlow > 1) {
+				priv->m_cNumTimesTooSlow = 0;
+				priv->m_cResolutionScalar += 1;
+				vf_HopperRender_reinit_ofc(priv);
+			}
+			return;
+		}
+
+		// Disable Interpolation if we are too slow
+		if ((AUTO_FRAME_SCALE || AUTO_STEPS_ADJUST) && ((currTotalCalcDuration + currTotalCalcDuration * 0.05) > priv->m_dSourceFrameTime)) priv->m_isInterpolationState = TooSlow;
+
+	/*
+	* We have left over capacity
+	*/
+	} else if ((currTotalCalcDuration + currTotalCalcDuration * 0.4) < priv->m_dSourceFrameTime) {
+		if (LOG_PERFORMANCE) MP_TRACE(f, "Calculation has capacity %.3f sec AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, priv->m_dSourceFrameTime, priv->m_iNumSteps, priv->m_cResolutionScalar);
+
+		// Increase the frame scalar if we have enough leftover capacity
+		if (AUTO_FRAME_SCALE && priv->m_bPlaybackChanged && priv->m_cResolutionScalar > 0 && priv->m_iNumSteps >= MAX_NUM_STEPS) {
+			// Only allow a quality increase if something changed, like speed or we are at the beginning of the video
+			if (priv->m_dCurrPlaybackPTS > 5.0) {
+				priv->m_bPlaybackChanged = false;
+				return;
+			}
+			priv->m_cNumTimesTooSlow = 0;
+			priv->m_cResolutionScalar -= 1;
+			vf_HopperRender_reinit_ofc(priv);
+			priv->m_iNumSteps = MIN_NUM_STEPS;
+		} else if (AUTO_STEPS_ADJUST) {
+			priv->m_iNumSteps = min(priv->m_iNumSteps + 1, MAX_NUM_STEPS);
+		}
+
+	/*
+	* Calculation took as long as it should
+	*/
+	} else {
+		if (LOG_PERFORMANCE) MP_TRACE(f, "Calculation took %.3f sec AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, priv->m_dSourceFrameTime, priv->m_iNumSteps, priv->m_cResolutionScalar);
 	}
 }
 
@@ -270,10 +376,19 @@ void *vf_HopperRender_optical_flow_calc_thread(void *arg)
     while (1) {
         sigwait(&set, &sig);
         if (sig == SIGUSR1) {
+			priv->m_bOFCBusy = true;
+
+			// Swap the blurred offset arrays
+			int* temp0 = priv->ofc->m_blurredOffsetArray12[0];
+			priv->ofc->m_blurredOffsetArray12[0] = priv->ofc->m_blurredOffsetArray12[1];
+			priv->ofc->m_blurredOffsetArray12[1] = temp0;
+
+			temp0 = priv->ofc->m_blurredOffsetArray21[0];
+			priv->ofc->m_blurredOffsetArray21[0] = priv->ofc->m_blurredOffsetArray21[1];
+			priv->ofc->m_blurredOffsetArray21[1] = temp0;
+
 			// Calculate the optical flow (frame 1 to frame 2)
-			if (priv->m_foFrameOutput != BlurredFrames) {
-				priv->ofc->calculateOpticalFlow(priv->ofc, priv->m_iNumIterations, priv->m_iNumSteps);
-			}
+			priv->ofc->calculateOpticalFlow(priv->ofc, priv->m_iNumIterations, priv->m_iNumSteps);
 
 			// Flip the flow array to get the flow from frame 2 to frame 1
 			if (priv->m_foFrameOutput == WarpedFrame21 || 
@@ -284,16 +399,19 @@ void *vf_HopperRender_optical_flow_calc_thread(void *arg)
 			}
 
 			// Blur the flow arrays
-			if (priv->m_foFrameOutput != BlurredFrames) {
-				priv->ofc->blurFlowArrays(priv->ofc);
+			priv->ofc->blurFlowArrays(priv->ofc);
+
+			// Clear the flow arrays if we aborted calculation
+			if (priv->ofc->m_bOFCTerminate) {
+				priv->ofc->reinit(priv->ofc);
 			}
 
+			// Collect the calculation duration
 			gettimeofday(&priv->m_teOFCCalcEnd, NULL);
 			priv->m_dOFCCalcDuration = (priv->m_teOFCCalcEnd.tv_sec - priv->m_teOFCCalcStart.tv_sec) + ((priv->m_teOFCCalcEnd.tv_usec - priv->m_teOFCCalcStart.tv_usec) / 1000000.0);
 
-			if (priv->m_bReinit) {
-				vf_HopperRender_adjust_frame_scalar(priv);
-			}
+			priv->m_bOFCBusy = false;
+			priv->ofc->m_bOFCTerminate = false;
 
         } else if (sig == SIGTERM) {
 			pthread_exit(NULL);
@@ -330,149 +448,6 @@ static void vf_HopperRender_init(struct mp_filter *f, int dimY, int dimX)
 		perror("pthread_create");
 		exit(EXIT_FAILURE);
 	}
-
-	// Send the resolution to the AppIndicator status widget
-	char buffer2[512];
-	memset(buffer2, 0, sizeof(buffer2));
-	for (int i = 0; i < 6; i++) {
-		snprintf(buffer2, sizeof(buffer2), "RES%d %dx%d", i, dimX >> i, dimY >> i);
-		if (write(priv->m_iAppIndicatorFileDesc, buffer2, sizeof(buffer2)) == -1) {
-			perror("write");
-			close(priv->m_iAppIndicatorFileDesc);
-			exit(EXIT_FAILURE);
-		}
-	}
-}
-
-/*
-* Processes commands send to the video filter (by mpv).
-*
-* @param f: The video filter instance
-* @param cmd: The command to process
-*/
-static bool vf_HopperRender_command(struct mp_filter *f, struct mp_filter_command *cmd)
-{
-	struct priv *priv = f->priv;
-
-	// Speed change event
-	if (cmd->type == MP_FILTER_COMMAND_TEXT) {
-		priv->m_dPlaybackSpeed = cmd->speed;
-		priv->m_dSourceFrameTime = 1.0 / (priv->m_dSourceFPS * priv->m_dPlaybackSpeed);
-		priv->m_bPlaybackChanged = true;
-	}
-
-	// If the source is already at or above 60 FPS, we don't need interpolation
-	if (priv->m_dSourceFrameTime <= priv->m_dTargetPTS) {
-		priv->m_isInterpolationState = NotNeeded;
-	// Reset the state either because the fps/speed change now requires interpolation, or we could now be fast enough to interpolate
-	} else if (priv->m_isInterpolationState != Deactivated) {
-		priv->m_isInterpolationState = Active;
-	}
-	return true;
-}
-
-/*
-* Sends the current info to the AppIndicator status widget
-*
-* @param priv: The video filter private data
-*/
-static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv, double warpCalcDurations[100], double currTotalWarpDuration)
-{
-	char buffer2[512];
-	memset(buffer2, 0, sizeof(buffer2));
-    int offset = snprintf(buffer2, sizeof(buffer2), 
-                          "Num Steps: %d\nCalc Res: %dx%d\nTarget Time: %06.2f ms (%.1f fps)\nFrame Time: %06.2f ms (%.3f fps | %.2fx)\nOfc: %06.2f ms (%.0f fps)\nWarp Time: %06.2f ms (%.0f fps)",
-                          priv->m_iNumSteps, priv->m_iDimX >> priv->m_cResolutionScalar, priv->m_iDimY >> priv->m_cResolutionScalar, priv->m_dTargetPTS * 1000.0, 1.0 / priv->m_dTargetPTS,
-						  priv->m_dSourceFrameTime * 1000.0, 1.0 / priv->m_dSourceFrameTime, priv->m_dPlaybackSpeed, priv->m_dOFCCalcDuration * 1000.0, 1.0 / priv->m_dOFCCalcDuration, currTotalWarpDuration * 1000.0, 1.0 / currTotalWarpDuration);
-
-    for (int i = 0; i < 10; i++) {
-		if (i < min(priv->m_iNumIntFrames, 10)) {
-        	offset += snprintf(buffer2 + offset, sizeof(buffer2) - offset, "\nWarp%d: %06.2f ms", i, warpCalcDurations[i] * 1000.0);
-		} else {
-			offset += snprintf(buffer2 + offset, sizeof(buffer2) - offset, "\n");
-		}
-    }
-	if (write(priv->m_iAppIndicatorFileDesc, buffer2, sizeof(buffer2)) == -1) {
-		perror("write");
-		close(priv->m_iAppIndicatorFileDesc);
-		exit(EXIT_FAILURE);
-	}
-}
-
-/*
-* Adjust optical flow calculation settings for optimal performance and quality
-*
-* @param f: The video filter instance
-*/
-static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f)
-{
-	struct priv *priv = f->priv;
-
-	// Calculate the calculation durations
-	double warpCalcDurations[100];
-	double currTotalWarpDuration = 0.0;
-	for (int i = 0; i < min(priv->m_iNumIntFrames, 100); i++) {
-		warpCalcDurations[i] = (priv->m_teWarpCalcEnd[i].tv_sec - priv->m_teWarpCalcStart[i].tv_sec) + ((priv->m_teWarpCalcEnd[i].tv_usec - priv->m_teWarpCalcStart[i].tv_usec) / 1000000.0);
-		currTotalWarpDuration += warpCalcDurations[i];
-	}
-	double currTotalCalcDuration = max(priv->m_dOFCCalcDuration, currTotalWarpDuration);
-	
-	// Send the stats to the AppIndicator status widget
-	vf_HopperRender_update_AppIndicator_widget(priv, warpCalcDurations, currTotalWarpDuration);
-	
-	/*
-	* Calculation took too long
-	*/
-	if ((currTotalCalcDuration + currTotalCalcDuration * 0.3) > priv->m_dSourceFrameTime) {
-		if (LOG_PERFORMANCE) MP_TRACE(f, "[HopperRender] Calculation took too long %.3f sec AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, priv->m_dSourceFrameTime, priv->m_iNumSteps, priv->m_cResolutionScalar);
-
-		// Decrease the number of steps to reduce calculation time
-		if (AUTO_STEPS_ADJUST && priv->m_iNumSteps > MIN_NUM_STEPS) {
-			priv->m_iNumSteps -= 1;
-			return;
-		}
-
-		// We can't reduce the number of steps any further, so we reduce the resolution divider instead
-		if (AUTO_FRAME_SCALE && priv->m_cResolutionScalar < 5) {
-			// To avoid unnecessary adjustments, we only adjust the resolution divider if we have been too slow for a while
-			priv->m_cNumTimesTooSlow += 1;
-			if (priv->m_cNumTimesTooSlow > 1) {
-				priv->m_cNumTimesTooSlow = 0;
-				priv->m_cResolutionScalar += 1;
-				priv->m_bReinit = true;
-			}
-			return;
-		}
-
-		// Disable Interpolation if we are too slow
-		if ((AUTO_FRAME_SCALE || AUTO_STEPS_ADJUST) && ((currTotalCalcDuration + currTotalCalcDuration * 0.05) > priv->m_dSourceFrameTime)) priv->m_isInterpolationState = TooSlow;
-
-	/*
-	* We have left over capacity
-	*/
-	} else if ((currTotalCalcDuration + currTotalCalcDuration * 0.4) < priv->m_dSourceFrameTime) {
-		if (LOG_PERFORMANCE) MP_TRACE(f, "[HopperRender] Calculation has capacity %.3f sec AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, priv->m_dSourceFrameTime, priv->m_iNumSteps, priv->m_cResolutionScalar);
-
-		// Increase the frame scalar if we have enough leftover capacity
-		if (AUTO_FRAME_SCALE && priv->m_bPlaybackChanged && priv->m_cResolutionScalar > 0 && priv->m_iNumSteps >= MAX_NUM_STEPS) {
-			// Only allow a quality increase if something changed, like speed or we are at the beginning of the video
-			if (priv->m_dCurrPlaybackPTS > 5.0) {
-				priv->m_bPlaybackChanged = false;
-			}
-			priv->m_cNumTimesTooSlow = 0;
-			priv->m_cResolutionScalar -= 1;
-			priv->m_bReinit = true;
-			priv->m_iNumSteps = max(MIN_NUM_STEPS, priv->m_iNumSteps / 2);
-		} else if (AUTO_STEPS_ADJUST) {
-			priv->m_iNumSteps = min(priv->m_iNumSteps + 1, MAX_NUM_STEPS);
-		}
-
-	/*
-	* Calculation takes as long as it should
-	*/
-	} else {
-		if (LOG_PERFORMANCE) MP_TRACE(f, "[HopperRender] Calculation took %.3f sec AVG SFT: %.3f NumSteps: %d RES SCALAR: %d\n", currTotalCalcDuration, priv->m_dSourceFrameTime, priv->m_iNumSteps, priv->m_cResolutionScalar);
-	}
 }
 
 /*
@@ -485,20 +460,6 @@ static int dump_iter = 0;
 static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char** planes)
 {
 	struct priv *priv = f->priv;
-
-	if (priv->m_iIntFrameNum == 0) {
-		// Swap the blurred offset arrays
-		int* temp0 = priv->ofc->m_blurredOffsetArray12[0];
-		priv->ofc->m_blurredOffsetArray12[0] = priv->ofc->m_blurredOffsetArray12[1];
-		priv->ofc->m_blurredOffsetArray12[1] = temp0;
-
-		temp0 = priv->ofc->m_blurredOffsetArray21[0];
-		priv->ofc->m_blurredOffsetArray21[0] = priv->ofc->m_blurredOffsetArray21[1];
-		priv->ofc->m_blurredOffsetArray21[1] = temp0;
-		
-		// Tell the thread to calculate the optical flow
-		pthread_kill(priv->m_ptOFCThreadID, SIGUSR1);
-	}
 	
 	if (priv->m_iIntFrameNum < 100) gettimeofday(&priv->m_teWarpCalcStart[priv->m_iIntFrameNum], NULL);
 	
@@ -545,37 +506,13 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 	}
 	
 	// Download the result to the output buffer
-	priv->ofc->downloadFrame(priv->ofc, planes);
+	priv->ofc->downloadFrame(priv->ofc, priv->ofc->m_outputFrame, planes);
 	if (priv->m_iIntFrameNum < 100) gettimeofday(&priv->m_teWarpCalcEnd[priv->m_iIntFrameNum], NULL);
-
-	// Adjust the settings to process everything fast enough
-	if (priv->m_foFrameOutput != BlurredFrames && 
-		priv->m_iIntFrameNum == priv->m_iNumIntFrames - 1 && 
-		!TEST_MODE) {
-		vf_HopperRender_auto_adjust_settings(f);
-	}
 
 	priv->m_dScalar += priv->m_dTargetPTS / priv->m_dSourceFrameTime;
 	if (priv->m_dScalar >= 1.0) {
 		priv->m_dScalar -= 1.0;
 	}
-}
-
-/*
-* Helper function to handle AppIndicator commands
-*
-* @param priv: The video filter private data
-*/
-static void vf_HopperRender_redirect_AppIndicator_command(struct priv *priv)
-{
-    char buffer[256];
-    ssize_t bytesRead;
-    while ((bytesRead = read(priv->m_tdAppIndicatorThreadData.pipe_fd[0], buffer, sizeof(buffer) - 1)) > 0) {
-        buffer[bytesRead] = '\0';
-        if (buffer[0] != '\n') {
-            vf_HopperRender_process_AppIndicator_command(priv, atoi(buffer));
-        }
-    }
 }
 
 /*
@@ -619,7 +556,6 @@ static void vf_HopperRender_process_intermediate_frame(struct mp_filter *f)
 static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 {
 	struct priv *priv = f->priv;
-    vf_HopperRender_redirect_AppIndicator_command(priv);
 
     // Read the new source frame
     struct mp_frame frame = mp_pin_out_read(priv->conv->f->pins[1]);
@@ -633,6 +569,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 
     // Initialize the filter if needed
     if (!priv->m_bInitialized) {
+		priv->m_dSourceFPS = img->nominal_fps;
 		priv->m_miRefImage = mp_image_new_ref(img);
         vf_HopperRender_init(f, img->h, img->w);
         priv->m_bInitialized = true;
@@ -641,13 +578,12 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
     // Update timestamps and source information
 	priv->m_iFrameCounter += 1;
 	priv->m_dCurrSourcePTS = img->pts;
-    if (priv->m_iFrameCounter <= 4 || priv->m_isInterpolationState != Active) {
-        priv->m_dCurrPlaybackPTS = img->pts; // The first four frames we take the original PTS (see output: 1.0, 2.0, 3.0, 4.0, 4.1, ...)
+    if (priv->m_iFrameCounter <= 3 || priv->m_isInterpolationState != Active) {
+        priv->m_dCurrPlaybackPTS = img->pts; // The first three frames we take the original PTS (see output: 1.0, 2.0, 3.0, 3.1, ...)
     } else {
         priv->m_dCurrPlaybackPTS += priv->m_dTargetPTS * priv->m_dPlaybackSpeed; // The rest of the frames we increase in 60fps steps
     }
 	img->pts = priv->m_dCurrPlaybackPTS;
-    priv->m_dSourceFPS = img->nominal_fps;
     priv->m_dSourceFrameTime = 1.0 / (priv->m_dSourceFPS * priv->m_dPlaybackSpeed);
 	if (priv->m_isInterpolationState == Active) {
 		priv->m_iNumIntFrames = (int)floor((1.0 - priv->m_dScalar) / (priv->m_dTargetPTS / priv->m_dSourceFrameTime)) + 1;
@@ -655,17 +591,35 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 		priv->m_iNumIntFrames = 1;
 	}
 
-    // Update the GPU arrays
-    gettimeofday(&priv->m_teOFCCalcStart, NULL);
-    priv->ofc->updateFrame(priv->ofc, img->planes, priv->m_iFrameBlurKernelSize, priv->m_iFlowBlurKernelSize >> priv->m_cResolutionScalar, priv->m_foFrameOutput == BlurredFrames);
+	// Check if the OFC is still busy
+	bool OFCisDone = true;
+	while (priv->m_bOFCBusy) {
+		if (OFCisDone) {
+			OFCisDone = false;
+			MP_WARN(f, "OFC was too slow!\n");
+			priv->ofc->m_bOFCTerminate = true; // Interrupts the OFC calculator
+		}
+	}
 
-	// Don't interpolate the first three frames (as we need three frames in the buffer to interpolate)
-    if (priv->m_isInterpolationState == Active && (priv->m_iFrameCounter > 3 || priv->m_foFrameOutput == SideBySide2)) {
+	// Adjust the settings to process everything fast enough
+	vf_HopperRender_auto_adjust_settings(f, OFCisDone);
+
+    // Upload the source frame to the GPU buffers and blur it for OFC calculation
+    gettimeofday(&priv->m_teOFCCalcStart, NULL);
+    priv->ofc->updateFrame(priv->ofc, img->planes, priv->m_iFrameBlurKernelSize, priv->m_foFrameOutput == BlurredFrames);
+
+	// Calculate the optical flow
+	if (priv->m_isInterpolationState == Active && priv->m_iFrameCounter >= 2 && priv->m_foFrameOutput != BlurredFrames && priv->m_foFrameOutput != TearingTest) {
+		pthread_kill(priv->m_ptOFCThreadID, SIGUSR1);
+	}
+
+	// Interpolate the frames
+    if (priv->m_isInterpolationState == Active && (priv->m_iFrameCounter >= 3 || priv->m_foFrameOutput == SideBySide2) && priv->m_iNumIntFrames > 1) {
 		vf_HopperRender_interpolate_frame(f, img->planes);
         priv->m_iIntFrameNum = 1;
         mp_filter_internal_mark_progress(f);
     } else {
-        priv->ofc->processFrame(priv->ofc, img->planes, priv->m_iFrameCounter == 1);
+        priv->ofc->processFrame(priv->ofc, img->planes, priv->m_iFrameCounter);
     }
 
     // Deliver the source frame
@@ -683,26 +637,20 @@ static void vf_HopperRender_process(struct mp_filter *f)
 
 	// Convert the incoming frames using the autoconvert filter (Any -> P010)
 	if (mp_pin_can_transfer_data(priv->conv->f->pins[0], f->ppins[0])) {
-        struct mp_frame frame = mp_pin_out_read(f->ppins[0]);
-        mp_pin_in_write(priv->conv->f->pins[0], frame);
-    }
+        mp_pin_in_write(priv->conv->f->pins[0], mp_pin_out_read(f->ppins[0]));
+	}
 
-    // Process intermediate frames if needed
+    // Process intermediate frames
     if (priv->m_iIntFrameNum > 0 && mp_pin_in_needs_data(f->ppins[1])) {
         vf_HopperRender_process_intermediate_frame(f);
         return;
     }
 
-    // Process a new source frame if available
+    // Process a new source frame
     if (priv->m_iIntFrameNum == 0 && mp_pin_can_transfer_data(f->ppins[1], priv->conv->f->pins[1])) {
+		vf_HopperRender_process_AppIndicator_command(priv);
         vf_HopperRender_process_new_source_frame(f);
-    }
-
-	/* MP_TRACE(f, "[HopperRender] FN: %d - IN: %d - PTS: %f - PPTS: %f - Delta: %f\n",
-           priv->m_iFrameCounter, priv->m_iIntFrameNum, 
-           priv->m_dCurrSourcePTS + priv->m_dTargetPTS * priv->m_dPlaybackSpeed * priv->m_iIntFrameNum,
-           priv->m_dCurrPlaybackPTS, 
-           fabs((priv->m_dCurrSourcePTS + priv->m_dTargetPTS * priv->m_dPlaybackSpeed * priv->m_iIntFrameNum) - priv->m_dCurrPlaybackPTS)); */
+	}
 }
 
 /*
@@ -710,7 +658,7 @@ static void vf_HopperRender_process(struct mp_filter *f)
 *
 * @param arg: The thread data
 */
-void *vf_HopperRender_start_AppIndicator_script(void *arg)
+void *vf_HopperRender_launch_AppIndicator_script(void *arg)
 {
 	ThreadData *data = (ThreadData *)arg;
     if (pipe(data->pipe_fd) == -1) {
@@ -767,6 +715,48 @@ void *vf_HopperRender_start_AppIndicator_script(void *arg)
 }
 
 /*
+* Processes commands send to the video filter (by mpv).
+*
+* @param f: The video filter instance
+* @param cmd: The command to process
+*/
+static bool vf_HopperRender_command(struct mp_filter *f, struct mp_filter_command *cmd)
+{
+	struct priv *priv = f->priv;
+
+	// Speed change event
+	if (cmd->type == MP_FILTER_COMMAND_TEXT) {
+		priv->m_dPlaybackSpeed = cmd->speed;
+		priv->m_dSourceFrameTime = 1.0 / (priv->m_dSourceFPS * priv->m_dPlaybackSpeed);
+		priv->m_bPlaybackChanged = true;
+		priv->ofc->m_bOFCTerminate = true;
+	}
+
+	// If the source is already at or above 60 FPS, we don't need interpolation
+	if (priv->m_dSourceFrameTime <= priv->m_dTargetPTS) {
+		priv->m_isInterpolationState = NotNeeded;
+	// Reset the state either because the fps/speed change now requires interpolation, or we could now be fast enough to interpolate
+	} else if (priv->m_isInterpolationState != Deactivated) {
+		priv->m_isInterpolationState = Active;
+	}
+	return true;
+}
+
+/*
+* Resets the video filter on seek
+*
+* @param f: The video filter instance
+*/
+static void vf_HopperRender_reset(struct mp_filter *f)
+{
+    struct priv *priv = f->priv;
+    priv->m_iFrameCounter = 0;
+	priv->m_iIntFrameNum = 0;
+	priv->m_dScalar = 0.0;
+	priv->ofc->m_bOFCTerminate = true;
+}
+
+/*
 * Terminates the AppIndicator widget
 *
 * @param data: The thread data
@@ -797,27 +787,13 @@ static void vf_HopperRender_uninit(struct mp_filter *f)
 	mp_image_pool_clear(priv->m_miSWPool);
 	close(priv->m_iAppIndicatorFileDesc);
 	if (priv->m_bInitialized) {
+		priv->ofc->m_bOFCTerminate = true;
 		pthread_kill(priv->m_ptOFCThreadID, SIGTERM);
     	pthread_join(priv->m_ptOFCThreadID, NULL);
 		priv->ofc->free(priv->ofc);
 	}
 	free(priv->ofc);
 	vf_HopperRender_terminate_AppIndicator_script(&priv->m_tdAppIndicatorThreadData);
-    //pthread_join(priv->thread, NULL);
-	//free(priv);
-}
-
-/*
-* Resets the video filter on seek
-*
-* @param f: The video filter instance
-*/
-static void vf_HopperRender_reset(struct mp_filter *f)
-{
-    struct priv *priv = f->priv;
-    priv->m_iFrameCounter = 0;
-	priv->m_iIntFrameNum = 0;
-	priv->m_dScalar = 0.0;
 }
 
 // Filter definition
@@ -856,10 +832,10 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
         }
     }
 
-	// Start the AppIndicator widget
+	// Launch the AppIndicator widget
 	pthread_t thread;
 	priv->m_iAppIndicatorFileDesc = -1;
-	pthread_create(&thread, NULL, vf_HopperRender_start_AppIndicator_script, &priv->m_tdAppIndicatorThreadData);
+	pthread_create(&thread, NULL, vf_HopperRender_launch_AppIndicator_script, &priv->m_tdAppIndicatorThreadData);
 	pthread_detach(thread);
 	sleep(1);
 	priv->m_iAppIndicatorFileDesc = open(fifo, O_WRONLY);
@@ -876,7 +852,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 	// Initialize the autoconvert filter
 	priv->conv = mp_autoconvert_create(f);
     if (!priv->conv) {
-        talloc_free(f);
+        talloc_free(options);
         return NULL;
     }
     mp_autoconvert_add_imgfmt(priv->conv, IMGFMT_P010, 0);
@@ -915,7 +891,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 	priv->m_cResolutionScalar = INITIAL_RESOLUTION_SCALAR;
 	priv->m_iNumSteps = INITIAL_NUM_STEPS;
 	priv->m_dScalar = 0.0;
-	priv->m_bReinit = false;
+	priv->m_bOFCBusy = false;
 
 	// Frame output
 	priv->m_miSWPool = mp_image_pool_new(NULL);

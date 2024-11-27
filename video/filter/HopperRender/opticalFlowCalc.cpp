@@ -1157,7 +1157,7 @@ void checkHIPError(const char* functionName) {
 *
 * @param ofc: Pointer to the optical flow calculator
 */
-void adjustFrameScalar(struct OpticalFlowCalc *ofc) {
+void reinit(struct OpticalFlowCalc *ofc) {
 	struct priv *priv = (struct priv*)ofc->priv;
 	priv->m_lowGrid32x32x1.x = (int)(fmax(ceil((double)(ofc->m_iLowDimX) / 32.0), 1.0));
 	priv->m_lowGrid32x32x1.y = (int)(fmax(ceil((double)(ofc->m_iLowDimY) / 32.0), 1.0));
@@ -1236,12 +1236,9 @@ void blurFrameArray(struct OpticalFlowCalc *ofc, const unsigned short* frame, un
 * @param ofc: Pointer to the optical flow calculator
 * @param pInBuffer: Pointer to the input frame
 * @param frameKernelSize: Size of the kernel to use for the frame blur
-* @param flowKernelSize: Size of the kernel to use for the flow blur
 * @param directOutput: Whether to output the blurred frame directly
 */
-void updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const unsigned int frameKernelSize, const unsigned int flowKernelSize, const bool directOutput) {
-	ofc->m_iFlowBlurKernelSize = flowKernelSize;
-
+void updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const unsigned int frameKernelSize, const bool directOutput) {
 	HIP_CHECK(hipMemcpy(ofc->m_frame[0], pInBuffer[0], ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyHostToDevice));
 	HIP_CHECK(hipMemcpy(ofc->m_frame[0] + ofc->m_iDimY * ofc->m_iDimX, pInBuffer[1], (ofc->m_iDimY / 2) * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyHostToDevice));
 
@@ -1267,11 +1264,12 @@ void updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const u
 * Downloads the output frame from the GPU to the CPU
 *
 * @param ofc: Pointer to the optical flow calculator
+* @param pInBuffer: Pointer to the input buffer
 * @param pOutBuffer: Pointer to the output buffer
 */
-void downloadFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer) {
-	HIP_CHECK(hipMemcpy(pOutBuffer[0], ofc->m_outputFrame, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToHost));
-	HIP_CHECK(hipMemcpy(pOutBuffer[1], ofc->m_outputFrame + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToHost));
+void downloadFrame(struct OpticalFlowCalc *ofc, const unsigned short* pInBuffer, unsigned char** pOutBuffer) {
+	HIP_CHECK(hipMemcpy(pOutBuffer[0], pInBuffer, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToHost));
+	HIP_CHECK(hipMemcpy(pOutBuffer[1], pInBuffer + ofc->m_iDimY * ofc->m_iDimX, (ofc->m_iDimY >> 1) * ofc->m_iDimX * sizeof(unsigned short), hipMemcpyDeviceToHost));
 	
 	// Check for HIP Errors
 	checkHIPError("downloadFrame");
@@ -1282,12 +1280,28 @@ void downloadFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer) {
 *
 * @param ofc: Pointer to the optical flow calculator
 * @param pOutBuffer: Pointer to the output frame
-* @param firstFrame: Whether this is the first frame
+* @param frameCounter: The current source frame counter
+*
+* @note: Calling this function repeatedly starting from the first frame (i.e. frameCounter == 1) will result in the following frame output:
+* 	     - Frame 1
+*		 - Frame 1
+*		 - Frame 2
+*		 - Frame 3
+* 	     - Frame 4
+*		 - ...
 */
-void processFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const bool firstFrame) {
-	struct priv *priv = (struct priv*)ofc->priv;
+void processFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const int frameCounter) {
+	//struct priv *priv = (struct priv*)ofc->priv;
 
-	if (ofc->m_fBlackLevel == 0.0f && ofc->m_fWhiteLevel == 1023.0f) {
+	// First frame is directly output, therefore we don't change the output buffer
+	if (frameCounter == 1) {
+		return;
+	// After the first frame, we always output the previous frame
+	} else {
+		ofc->downloadFrame(ofc, ofc->m_frame[1], pOutBuffer);
+	}
+
+/* 	if (ofc->m_fBlackLevel == 0.0f && ofc->m_fWhiteLevel == 1023.0f) {
 		HIP_CHECK(hipMemcpy(ofc->m_outputFrame, firstFrame ? ofc->m_frame[2] : ofc->m_frame[1], ofc->m_iDimY * ofc->m_iDimX * 3, hipMemcpyDeviceToDevice));
 		downloadFrame(ofc, pOutBuffer);
 	} else {
@@ -1297,7 +1311,7 @@ void processFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const
 		HIP_CHECK(hipStreamSynchronize(priv->m_csWarpStream1));
 		HIP_CHECK(hipMemcpy(ofc->m_outputFrame + ofc->m_iChannelIdxOffset, (firstFrame ? ofc->m_frame[2] : ofc->m_frame[1]) + ofc->m_iChannelIdxOffset, ofc->m_iDimY * (ofc->m_iDimX >> 1) * sizeof(unsigned short), hipMemcpyDeviceToDevice));
 		downloadFrame(ofc, pOutBuffer);
-	}
+	} */
 
 	// Check for HIP Errors
 	checkHIPError("processFrame");
@@ -1312,8 +1326,9 @@ void processFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const
 */
 void calculateOpticalFlow(struct OpticalFlowCalc *ofc, unsigned int iNumIterations, unsigned int iNumSteps) {
 	struct priv *priv = (struct priv*)ofc->priv;
-	// Reset variables
-	unsigned int iNumStepsPerIter = iNumSteps; // Number of steps executed to find the ideal offset (limits the maximum offset)
+
+	// Number of steps executed to find the ideal offset (limits the maximum offset)
+	unsigned int iNumStepsPerIter = iNumSteps;
 
 	// We set the initial window size to the next larger power of 2
 	unsigned int windowDim = 1;
@@ -1349,6 +1364,8 @@ void calculateOpticalFlow(struct OpticalFlowCalc *ofc, unsigned int iNumIteratio
 
 		// Each step we adjust the offset array to find the ideal offset
 		for (unsigned int step = 0; step < iNumStepsPerIter; step++) {
+			if (ofc->m_bOFCTerminate) return;
+
 			// Reset the summed up delta array
 			HIP_CHECK(hipMemset(ofc->m_summedUpDeltaArray, 0, 5 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(unsigned int)));
 
@@ -1597,6 +1614,8 @@ void drawFlowAsGreyscale(struct OpticalFlowCalc *ofc) {
 */
 void flipFlow(struct OpticalFlowCalc *ofc) {
 	struct priv *priv = (struct priv*)ofc->priv;
+	if (ofc->m_bOFCTerminate) return;
+
 	// Reset the offset array
 	HIP_CHECK(hipMemset(ofc->m_offsetArray21, 0, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(int)));
 
@@ -1616,6 +1635,7 @@ void flipFlow(struct OpticalFlowCalc *ofc) {
 */
 void blurFlowArrays(struct OpticalFlowCalc *ofc) {
 	struct priv *priv = (struct priv*)ofc->priv;
+	if (ofc->m_bOFCTerminate) return;
 	const unsigned char boundsOffset = ofc->m_iFlowBlurKernelSize >> 1;
 	const unsigned char chacheSize = ofc->m_iFlowBlurKernelSize + (boundsOffset << 1);
 	const size_t sharedMemSize = chacheSize * chacheSize * sizeof(int);
@@ -1785,7 +1805,7 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	
 	// Functions
 	ofc->free = free;
-	ofc->adjustFrameScalar = adjustFrameScalar;
+	ofc->reinit = reinit;
 	ofc->updateFrame = updateFrame;
 	ofc->downloadFrame = downloadFrame;
 	ofc->processFrame = processFrame;
@@ -1819,6 +1839,7 @@ void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ofc->m_iLayerIdxOffset = ofc->m_iLowDimY * ofc->m_iLowDimX;
 	ofc->m_iChannelIdxOffset = ofc->m_iDimY * ofc->m_iDimX;
 	ofc->m_iFlowBlurKernelSize = flowBlurKernelSize;
+	ofc->m_bOFCTerminate = false;
 
 	// Girds
 	priv->m_lowGrid32x32x1.x = static_cast<int>(fmax(ceil(static_cast<double>(ofc->m_iLowDimX) / 32.0), 1.0));
