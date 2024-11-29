@@ -512,7 +512,7 @@ static void vf_HopperRender_process_intermediate_frame(struct mp_filter *f)
     vf_HopperRender_interpolate_frame(f, img->planes);
 	
     // Update playback timestamp
-    priv->m_dCurrPlaybackPTS += priv->m_dTargetPTS;
+    priv->m_dCurrPlaybackPTS += priv->m_dTargetPTS * priv->m_dPlaybackSpeed;
     img->pts = priv->m_dCurrPlaybackPTS;
 
     // Determine if we need to process the next intermediate frame
@@ -560,7 +560,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
     if (priv->m_iFrameCounter <= 3 || priv->m_isInterpolationState != Active) {
         priv->m_dCurrPlaybackPTS = img->pts; // The first three frames we take the original PTS (see output: 1.0, 2.0, 3.0, 3.1, ...)
     } else {
-        priv->m_dCurrPlaybackPTS += priv->m_dTargetPTS; // The rest of the frames we increase in 60fps steps
+        priv->m_dCurrPlaybackPTS += priv->m_dTargetPTS * priv->m_dPlaybackSpeed; // The rest of the frames we increase in 60fps steps
     }
 	img->pts = priv->m_dCurrPlaybackPTS;
     priv->m_dSourceFrameTime = 1.0 / (priv->m_dSourceFPS * priv->m_dPlaybackSpeed);
@@ -709,6 +709,7 @@ static bool vf_HopperRender_command(struct mp_filter *f, struct mp_filter_comman
 		priv->m_dSourceFrameTime = 1.0 / (priv->m_dSourceFPS * priv->m_dPlaybackSpeed);
 		priv->m_iIntFrameNum = 0;
 		priv->m_dScalar = 0.0;
+		priv->m_iFrameCounter = 0;
 	}
 
 	// If the source is already at or above 60 FPS, we don't need interpolation
