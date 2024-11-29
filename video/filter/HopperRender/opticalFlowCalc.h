@@ -15,7 +15,7 @@ typedef struct OpticalFlowCalc {
 	void (*processFrame)(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const int frameCounter);
 	void (*blurFrameArray)(struct OpticalFlowCalc *ofc, const unsigned short* frame, unsigned short* blurredFrame,
 						const int kernelSize, const bool directOutput);
-	void (*calculateOpticalFlow)(struct OpticalFlowCalc *ofc, unsigned int iNumIterations, unsigned int iNumSteps);
+	void (*calculateOpticalFlow)(struct OpticalFlowCalc *ofc, unsigned int iNumIterations);
 	void (*flipFlow)(struct OpticalFlowCalc *ofc);
 	void (*blurFlowArrays)(struct OpticalFlowCalc *ofc);
 	void (*warpFrames)(struct OpticalFlowCalc *ofc, float fScalar, const int outputMode);
@@ -47,12 +47,12 @@ typedef struct OpticalFlowCalc {
 	volatile bool m_bOFCTerminate; // Whether or not the optical flow calculator should terminate
 
 	// GPU Arrays
-	int* m_offsetArray12; // Array containing x,y offsets for each pixel of frame1
-	int* m_offsetArray21; // Array containing x,y offsets for each pixel of frame2
-	int* m_blurredOffsetArray12[2]; // Array containing x,y offsets for each pixel of frame1
-	int* m_blurredOffsetArray21[2]; // Array containing x,y offsets for each pixel of frame2
-	unsigned char* m_statusArray; // Array containing the calculation status of each pixel of frame1
+	char* m_offsetArray12; // Array containing x,y offsets for each pixel of frame1
+	char* m_offsetArray21; // Array containing x,y offsets for each pixel of frame2
+	char* m_blurredOffsetArray12[2]; // Array containing x,y offsets for each pixel of frame1
+	char* m_blurredOffsetArray21[2]; // Array containing x,y offsets for each pixel of frame2
 	unsigned int* m_summedUpDeltaArray; // Array containing the summed up delta values of each window
+	double* m_normalizedDeltaArray; // Array containing the normalized delta values of each window
 	unsigned char* m_lowestLayerArray; // Array containing the comparison results of the two normalized delta arrays (true if the new value decreased)
 	unsigned short* m_outputFrame; // Array containing the output frame
 	int* m_hitCount12; // Array containing the number of times a pixel was hit
