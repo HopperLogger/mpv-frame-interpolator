@@ -11,8 +11,8 @@ __kernel void setInitialOffsetKernel(__global char* offsetArray,
 	const int cz = get_global_id(2);
 	
 	if (cy < lowDimY && cx < lowDimX) {
-		int offsetX = (cz % searchWindowSize) - (searchWindowSize / 2);
-		int offsetY = (cz / searchWindowSize) - (searchWindowSize / 2);
+		char offsetX = (cz % searchWindowSize) - (searchWindowSize / 2);
+		char offsetY = (cz / searchWindowSize) - (searchWindowSize / 2);
 
 		offsetArray[cz * layerIdxOffset + cy * lowDimX + cx] = offsetX;
 		offsetArray[directionIdxOffset + cz * layerIdxOffset + cy * lowDimX + cx] = offsetY;

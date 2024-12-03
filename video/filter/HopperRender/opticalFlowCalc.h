@@ -29,24 +29,17 @@ typedef struct OpticalFlowCalc {
     cl_kernel m_clKernel;
 
 	// Grids
-	size_t m_lowGrid32x32x1[3];
 	size_t m_lowGrid16x16x5[3];
-	size_t m_lowGrid16x16x4[3];
 	size_t m_lowGrid16x16x2[3];
 	size_t m_lowGrid16x16x1[3];
 	size_t m_lowGrid8x8x5[3];
-	size_t m_lowGrid8x8x1[3];
 	size_t m_grid16x16x2[3];
 	size_t m_grid16x16x1[3];
 	size_t m_halfGrid16x16x2[3];
-	size_t m_halfGrid16x16x1[3];
 	size_t m_grid8x8x2[3];
-	size_t m_grid8x8x1[3];
 	
 	// Threads
 	size_t m_threads16x16x1[3];
-	size_t m_threads8x8x5[3];
-	size_t m_threads8x8x2[3];
 	size_t m_threads8x8x1[3];
 
 	// Queues
@@ -68,7 +61,6 @@ typedef struct OpticalFlowCalc {
 	cl_mem m_blurredFrame[3]; // Array containing the last three frames after blurring
 	cl_mem m_warpedFrame12; // Array containing the warped frame (frame 1 to frame 2)
 	cl_mem m_warpedFrame21; // Array containing the warped frame (frame 2 to frame 1)
-	cl_mem m_tempFrame; // Temporary array for the output frame
 	unsigned short* m_imageArrayCPU; // Array containing the image data
 
 	// Kernels
@@ -93,8 +85,9 @@ typedef struct OpticalFlowCalc {
 	cl_kernel m_tearingTestKernel;
 } OpticalFlowCalc;
 
-bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, const int resolutionScalar);
+bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, const int resolutionScalar, const int searchRadius);
 void freeOFC(struct OpticalFlowCalc *ofc);
+bool adjustSearchRadius(struct OpticalFlowCalc *ofc, int newSearchRadius);
 bool setKernelParameters(struct OpticalFlowCalc *ofc);
 bool updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const bool directOutput);
 bool downloadFrame(struct OpticalFlowCalc *ofc, const cl_mem pInBuffer, unsigned char** pOutBuffer);

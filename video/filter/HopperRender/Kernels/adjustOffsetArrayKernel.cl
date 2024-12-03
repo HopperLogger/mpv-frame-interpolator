@@ -1,6 +1,6 @@
 // Kernel that adjusts the offset array based on the comparison results
 __kernel void adjustOffsetArrayKernel(__global char* offsetArray,
-									  __global const unsigned char* globalLowestLayerArray,
+									  __global const unsigned short* globalLowestLayerArray,
 									  const int windowDim,
 									  const int directionIdxOffset,
 									  const int layerIdxOffset, 
@@ -19,7 +19,7 @@ __kernel void adjustOffsetArrayKernel(__global char* offsetArray,
 		// We only need the lowestLayer if we are still searching
 		const int wx = (cx / windowDim) * windowDim;
 		const int wy = (cy / windowDim) * windowDim;
-		unsigned char lowestLayer = globalLowestLayerArray[wy * lowDimX + wx];
+		unsigned short lowestLayer = globalLowestLayerArray[wy * lowDimX + wx];
 
 		char idealX = offsetArray[lowestLayer * layerIdxOffset + threadIndex2D];
 		char idealY = offsetArray[directionIdxOffset + lowestLayer * layerIdxOffset + threadIndex2D];

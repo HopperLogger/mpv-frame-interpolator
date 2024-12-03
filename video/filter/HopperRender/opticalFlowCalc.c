@@ -1,6 +1,7 @@
 #define CL_TARGET_OPENCL_VERSION 300
 #define FRAME_BLUR_KERNEL_SIZE 16
 #define FLOW_BLUR_KERNEL_SIZE 8
+#define MAX_SEARCH_RADIUS 512
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -701,21 +702,36 @@ bool tearingTest(struct OpticalFlowCalc *ofc) {
 }
 
 /*
+* Adjusts the search radius of the optical flow calculation
+*
+* @param ofc: Pointer to the optical flow calculator
+* @param newSearchRadius: The new search radius
+*/
+bool adjustSearchRadius(struct OpticalFlowCalc *ofc, int newSearchRadius) {
+    ofc->m_iNumLayers = newSearchRadius;
+	ofc->m_lowGrid16x16x5[2] = newSearchRadius;
+	ofc->m_lowGrid8x8x5[2] = newSearchRadius;
+    int searchWindowSize = sqrt((double)ofc->m_iNumLayers);
+    cl_int err = clSetKernelArg(ofc->m_setInitialOffsetKernel, 1, sizeof(int), &searchWindowSize);
+    err |= clSetKernelArg(ofc->m_determineLowestLayerKernel, 3, sizeof(int), &ofc->m_iNumLayers);
+    err |= clSetKernelArg(ofc->m_adjustOffsetArrayKernel, 6, sizeof(int), &ofc->m_iNumLayers);
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "Error: Unable to set kernel arguments\n");
+        return 1;
+    }
+    return 0;
+}
+
+/*
 * Sets the kernel parameters and other kernel related variables used in the optical flow calculation
 *
 * @param ofc: Pointer to the optical flow calculator
 */
 bool setKernelParameters(struct OpticalFlowCalc *ofc) {
     // Define the global and local work sizes
-	ofc->m_lowGrid32x32x1[0] = ceil(ofc->m_iLowDimX / 32.0) * 32.0;
-	ofc->m_lowGrid32x32x1[1] = ceil(ofc->m_iLowDimY / 32.0) * 32.0;
-    ofc->m_lowGrid32x32x1[2] = 1;
 	ofc->m_lowGrid16x16x5[0] = ceil(ofc->m_iLowDimX / 16.0) * 16.0;
 	ofc->m_lowGrid16x16x5[1] = ceil(ofc->m_iLowDimY / 16.0) * 16.0;
 	ofc->m_lowGrid16x16x5[2] = ofc->m_iNumLayers;
-	ofc->m_lowGrid16x16x4[0] = ceil(ofc->m_iLowDimX / 16.0) * 16.0;
-	ofc->m_lowGrid16x16x4[1] = ceil(ofc->m_iLowDimY / 16.0) * 16.0;
-	ofc->m_lowGrid16x16x4[2] = 4;
     ofc->m_lowGrid16x16x2[0] = ceil(ofc->m_iLowDimX / 16.0) * 16.0;
 	ofc->m_lowGrid16x16x2[1] = ceil(ofc->m_iLowDimY / 16.0) * 16.0;
     ofc->m_lowGrid16x16x2[2] = 2;
@@ -725,9 +741,6 @@ bool setKernelParameters(struct OpticalFlowCalc *ofc) {
 	ofc->m_lowGrid8x8x5[0] = ceil(ofc->m_iLowDimX / 8.0) * 8.0;
 	ofc->m_lowGrid8x8x5[1] = ceil(ofc->m_iLowDimY / 8.0) * 8.0;
 	ofc->m_lowGrid8x8x5[2] = ofc->m_iNumLayers;
-	ofc->m_lowGrid8x8x1[0] = ceil(ofc->m_iLowDimX / 8.0) * 8.0;
-	ofc->m_lowGrid8x8x1[1] = ceil(ofc->m_iLowDimY / 8.0) * 8.0;
-    ofc->m_lowGrid8x8x1[2] = 1;
 	ofc->m_grid16x16x2[0] = ceil(ofc->m_iDimX / 16.0) * 16.0;
 	ofc->m_grid16x16x2[1] = ceil(ofc->m_iDimY / 16.0) * 16.0;
     ofc->m_grid16x16x2[2] = 2;
@@ -737,25 +750,13 @@ bool setKernelParameters(struct OpticalFlowCalc *ofc) {
     ofc->m_halfGrid16x16x2[0] = ceil((ofc->m_iDimX / 2) / 16.0) * 16.0;
 	ofc->m_halfGrid16x16x2[1] = ceil(ofc->m_iDimY / 16.0) * 16.0;
     ofc->m_halfGrid16x16x2[2] = 2;
-	ofc->m_halfGrid16x16x1[0] = ceil((ofc->m_iDimX / 2) / 16.0) * 16.0;
-	ofc->m_halfGrid16x16x1[1] = ceil(ofc->m_iDimY / 16.0) * 16.0;
-    ofc->m_halfGrid16x16x1[2] = 1;
     ofc->m_grid8x8x2[0] = ceil(ofc->m_iDimX / 8.0) * 8.0;
 	ofc->m_grid8x8x2[1] = ceil(ofc->m_iDimY / 8.0) * 8.0;
     ofc->m_grid8x8x2[2] = 2;
-	ofc->m_grid8x8x1[0] = ceil(ofc->m_iDimX / 8.0) * 8.0;
-	ofc->m_grid8x8x1[1] = ceil(ofc->m_iDimY / 8.0) * 8.0;
-    ofc->m_grid8x8x1[2] = 1;
 
 	ofc->m_threads16x16x1[0] = 16;
 	ofc->m_threads16x16x1[1] = 16;
     ofc->m_threads16x16x1[2] = 1;
-	ofc->m_threads8x8x5[0] = 8;
-	ofc->m_threads8x8x5[1] = 8;
-	ofc->m_threads8x8x5[2] = 5;
-	ofc->m_threads8x8x2[0] = 8;
-	ofc->m_threads8x8x2[1] = 8;
-	ofc->m_threads8x8x2[2] = 2;
 	ofc->m_threads8x8x1[0] = 8;
 	ofc->m_threads8x8x1[1] = 8;
     ofc->m_threads8x8x1[2] = 1;
@@ -939,17 +940,30 @@ void freeOFC(struct OpticalFlowCalc *ofc) {
 
 // Detects the OpenCL platforms and devices
 static bool detectDevices(struct OpticalFlowCalc *ofc) {
+    // Capabilities we are going to check for
+    cl_ulong availableVRAM;
+    const cl_ulong requiredVRAM = (32 * ofc->m_iDimY * ofc->m_iDimX) +
+                                  ((ofc->m_iNumLayers + 5) * 2 * ofc->m_iLowDimY * ofc->m_iLowDimX) +
+                                  (ofc->m_iNumLayers * ofc->m_iLowDimY * ofc->m_iLowDimX * 12) +
+                                  (ofc->m_iLowDimY * ofc->m_iLowDimX * 2);
+    size_t maxWorkGroupSizes[3];
+    const size_t requiredWorkGroupSizes[3] = {16, 16, 1};
+    cl_ulong maxSharedMemSize;
+    const cl_ulong requiredSharedMemSize = 2048;
+
+    // Query the available platforms
     cl_uint numPlatforms;
     cl_int err = clGetPlatformIDs(0, NULL, &numPlatforms);
     if (err != CL_SUCCESS || numPlatforms == 0) {
         printf("Error getting platform count: %d\n", err);
         return 1;
     }
-
     cl_platform_id platforms[8];
     clGetPlatformIDs(numPlatforms, platforms, NULL);
 
+    // Iterate over the available platforms
     for (cl_uint i = 0; i < numPlatforms; ++i) {
+        // Query the available devices of this platform
         cl_uint numDevices;
         clGetDeviceIDs(platforms[i], CL_DEVICE_TYPE_ALL, 0, NULL, &numDevices);
 
@@ -958,26 +972,17 @@ static bool detectDevices(struct OpticalFlowCalc *ofc) {
         cl_device_id devices[8];
         clGetDeviceIDs(platforms[i], CL_DEVICE_TYPE_ALL, numDevices, devices, NULL);
 
+        // Iterate over the available devices
         for (cl_uint j = 0; j < numDevices; ++j) {
+            // Get the capabilities of the device
             char deviceName[128];
             clGetDeviceInfo(devices[j], CL_DEVICE_NAME, sizeof(deviceName), deviceName, NULL);
-
-            cl_ulong availableVRAM;
             clGetDeviceInfo(devices[j], CL_DEVICE_GLOBAL_MEM_SIZE, sizeof(availableVRAM), &availableVRAM, NULL);
-            const cl_ulong requiredVRAM = (33 * ofc->m_iDimY * ofc->m_iDimX) +
-                                  ((ofc->m_iNumLayers + 5) * 2 * ofc->m_iLowDimY * ofc->m_iLowDimX) +
-                                  (ofc->m_iNumLayers * ofc->m_iLowDimY * ofc->m_iLowDimX * 12) +
-                                  (ofc->m_iLowDimY * ofc->m_iLowDimX);
-
-            size_t maxWorkGroupSizes[3];
             clGetDeviceInfo(devices[j], CL_DEVICE_MAX_WORK_ITEM_SIZES, sizeof(maxWorkGroupSizes), maxWorkGroupSizes, NULL);
-            const size_t requiredWorkGroupSizes[3] = {16, 16, 1};
-
-            cl_ulong maxSharedMemSize;
             clGetDeviceInfo(devices[j], CL_DEVICE_LOCAL_MEM_SIZE, sizeof(maxSharedMemSize), &maxSharedMemSize, NULL);
-            const cl_ulong requiredSharedMemSize = 2048;
 
-            if (availableVRAM > requiredVRAM && 
+            // Check if the device meets the requirements
+            if (availableVRAM >= requiredVRAM && 
                 maxSharedMemSize >= requiredSharedMemSize && 
                 maxWorkGroupSizes[0] >= requiredWorkGroupSizes[0] &&
                 maxWorkGroupSizes[1] >= requiredWorkGroupSizes[1] &&
@@ -988,7 +993,18 @@ static bool detectDevices(struct OpticalFlowCalc *ofc) {
             }
         }
     }
+
+    // No suitable device found
     printf("Error: No suitable OpenCL GPU found! Please make sure that your GPU supports OpenCL 1.2 or higher and the OpenCL drivers are installed.\n");
+    if (availableVRAM < requiredVRAM) {
+        printf("Error: Not enough VRAM available! Required: %lu MB, Available: %lu MB\n", requiredVRAM / 1024 / 1024, availableVRAM / 1024 / 1024);
+    }
+    if (maxSharedMemSize < requiredSharedMemSize) {
+        printf("Error: Not enough shared memory available! Required: %lu bytes, Available: %lu bytes\n", requiredSharedMemSize, maxSharedMemSize);
+    }
+    if (maxWorkGroupSizes[0] < requiredWorkGroupSizes[0] || maxWorkGroupSizes[1] < requiredWorkGroupSizes[1] || maxWorkGroupSizes[2] < requiredWorkGroupSizes[2]) {
+        printf("Error: Not enough work group sizes available! Required: %lu, %lu, %lu, Available: %lu, %lu, %lu\n", requiredWorkGroupSizes[0], requiredWorkGroupSizes[1], requiredWorkGroupSizes[2], maxWorkGroupSizes[0], maxWorkGroupSizes[1], maxWorkGroupSizes[2]);
+    }
     return 1;
 }
 
@@ -999,8 +1015,9 @@ static bool detectDevices(struct OpticalFlowCalc *ofc) {
 * @param dimY: The height of the frame
 * @param dimX: The width of the frame
 * @param resolutionScalar: The resolution scalar used for the optical flow calculation
+* @param searchRadius: The search radius used for the optical flow calculation
 */
-bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, const int resolutionScalar)
+bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, const int resolutionScalar, const int searchRadius)
 {
 	// Video properties
 	ofc->m_iDimX = dimX;
@@ -1014,7 +1031,7 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ofc->m_cResolutionScalar = resolutionScalar;
 	ofc->m_iLowDimX = dimX >> ofc->m_cResolutionScalar;
 	ofc->m_iLowDimY = dimY >> ofc->m_cResolutionScalar;
-	ofc->m_iNumLayers = 128;
+	ofc->m_iNumLayers = searchRadius;
 	ofc->m_iDirectionIdxOffset = ofc->m_iLowDimY * ofc->m_iLowDimX;
 	ofc->m_iLayerIdxOffset = 2 * ofc->m_iLowDimY * ofc->m_iLowDimX;
 	ofc->m_iChannelIdxOffset = ofc->m_iDimY * ofc->m_iDimX;
@@ -1068,25 +1085,24 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
     }
 
 	// Allocate the GPU Arrays
-    ERR_CHECK(cl_create_buffer(&ofc->m_frame[0], ofc->m_clContext, CL_MEM_READ_WRITE, 3 * dimY * dimX, "frame[0]"));
-	ERR_CHECK(cl_create_buffer(&ofc->m_frame[1], ofc->m_clContext, CL_MEM_READ_WRITE, 3 * dimY * dimX, "frame[1]"));
-	ERR_CHECK(cl_create_buffer(&ofc->m_frame[2], ofc->m_clContext, CL_MEM_READ_WRITE, 3 * dimY * dimX, "frame[2]"));
+    ERR_CHECK(cl_create_buffer(&ofc->m_frame[0], ofc->m_clContext, CL_MEM_READ_ONLY, 3 * dimY * dimX, "frame[0]"));
+	ERR_CHECK(cl_create_buffer(&ofc->m_frame[1], ofc->m_clContext, CL_MEM_READ_ONLY, 3 * dimY * dimX, "frame[1]"));
+	ERR_CHECK(cl_create_buffer(&ofc->m_frame[2], ofc->m_clContext, CL_MEM_READ_ONLY, 3 * dimY * dimX, "frame[2]"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_blurredFrame[0], ofc->m_clContext, CL_MEM_READ_WRITE, dimY * dimX * sizeof(unsigned short), "blurredFrame[0]"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_blurredFrame[1], ofc->m_clContext, CL_MEM_READ_WRITE, dimY * dimX * sizeof(unsigned short), "blurredFrame[1]"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_blurredFrame[2], ofc->m_clContext, CL_MEM_READ_WRITE, dimY * dimX * sizeof(unsigned short), "blurredFrame[2]"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_warpedFrame12, ofc->m_clContext, CL_MEM_READ_WRITE, 3 * dimY * dimX, "warpedFrame12"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_warpedFrame21, ofc->m_clContext, CL_MEM_READ_WRITE, 3 * dimY * dimX, "warpedFrame21"));
-	ERR_CHECK(cl_create_buffer(&ofc->m_outputFrame, ofc->m_clContext, CL_MEM_READ_WRITE, 3 * dimY * dimX, "outputFrame"));
-	ERR_CHECK(cl_create_buffer(&ofc->m_tempFrame, ofc->m_clContext, CL_MEM_READ_WRITE, (dimY / 2) * dimX * sizeof(unsigned short), "tempFrame"));
-	ERR_CHECK(cl_create_buffer(&ofc->m_offsetArray12, ofc->m_clContext, CL_MEM_READ_WRITE, ofc->m_iNumLayers * 2 * ofc->m_iLowDimY * ofc->m_iLowDimX, "offsetArray12"));
+	ERR_CHECK(cl_create_buffer(&ofc->m_outputFrame, ofc->m_clContext, CL_MEM_WRITE_ONLY, 3 * dimY * dimX, "outputFrame"));
+	ERR_CHECK(cl_create_buffer(&ofc->m_offsetArray12, ofc->m_clContext, CL_MEM_READ_WRITE, MAX_SEARCH_RADIUS * 2 * ofc->m_iLowDimY * ofc->m_iLowDimX, "offsetArray12"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_offsetArray21, ofc->m_clContext, CL_MEM_READ_WRITE, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX, "offsetArray21"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_blurredOffsetArray12[0], ofc->m_clContext, CL_MEM_READ_WRITE, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX, "blurredOffsetArray12[0]"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_blurredOffsetArray21[0], ofc->m_clContext, CL_MEM_READ_WRITE, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX, "blurredOffsetArray21[0]"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_blurredOffsetArray12[1], ofc->m_clContext, CL_MEM_READ_WRITE, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX, "blurredOffsetArray12[1]"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_blurredOffsetArray21[1], ofc->m_clContext, CL_MEM_READ_WRITE, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX, "blurredOffsetArray21[1]"));
-	ERR_CHECK(cl_create_buffer(&ofc->m_summedUpDeltaArray, ofc->m_clContext, CL_MEM_READ_WRITE, ofc->m_iNumLayers * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(unsigned int), "summedUpDeltaArray"));
-	ERR_CHECK(cl_create_buffer(&ofc->m_normalizedDeltaArray, ofc->m_clContext, CL_MEM_READ_WRITE, ofc->m_iNumLayers * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(double), "normalizedDeltaArray"));
-	ERR_CHECK(cl_create_buffer(&ofc->m_lowestLayerArray, ofc->m_clContext, CL_MEM_READ_WRITE, ofc->m_iLowDimY * ofc->m_iLowDimX, "lowestLayerArray"));
+	ERR_CHECK(cl_create_buffer(&ofc->m_summedUpDeltaArray, ofc->m_clContext, CL_MEM_READ_WRITE, MAX_SEARCH_RADIUS * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(unsigned int), "summedUpDeltaArray"));
+	ERR_CHECK(cl_create_buffer(&ofc->m_normalizedDeltaArray, ofc->m_clContext, CL_MEM_READ_WRITE, MAX_SEARCH_RADIUS * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(double), "normalizedDeltaArray"));
+	ERR_CHECK(cl_create_buffer(&ofc->m_lowestLayerArray, ofc->m_clContext, CL_MEM_READ_WRITE, ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(unsigned short), "lowestLayerArray"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_hitCount12, ofc->m_clContext, CL_MEM_READ_WRITE, dimY * dimX * sizeof(int), "hitCount12"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_hitCount21, ofc->m_clContext, CL_MEM_READ_WRITE, dimY * dimX * sizeof(int), "hitCount21"));
     ofc->m_imageArrayCPU = (unsigned short*)malloc(3 * dimY * dimX);
