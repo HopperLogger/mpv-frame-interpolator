@@ -16,6 +16,7 @@
 #include "filters/filter_internal.h"
 #include "filters/user_filters.h"
 #include "video/mp_image_pool.h"
+#include "options/m_option.h"
 #include "filters/f_autoconvert.h"
 #include "opticalFlowCalc.h"
 
@@ -54,7 +55,14 @@ typedef enum InterpolationState {
 	TooSlow
 } InterpolationState;
 
+struct HopperRender_opts {
+    int frame_output;
+};
+
 struct priv {
+	// HopperRender options
+	struct HopperRender_opts *opts;
+
 	// Autoconverter
 	struct mp_autoconvert *conv;
 
@@ -804,6 +812,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
         return NULL;
     }
 	struct priv *priv = f->priv;
+	priv->opts = talloc_steal(priv, options);
 
 	// Create the fifo for the AppIndicator widget if it doesn't exist
 	char* fifo = "/tmp/hopperrender";
@@ -844,7 +853,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 	priv->m_ptOFCThreadID = 0;
 
     // Settings
-	priv->m_foFrameOutput = BlendedFrame;
+	priv->m_foFrameOutput = (FrameOutput)priv->opts->frame_output;
 	priv->m_iNumIterations = NUM_ITERATIONS;
 	priv->m_iSearchRadius = INITIAL_SEARCH_RADIUS;
 	priv->m_bInitialized = false;
@@ -891,12 +900,19 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
     return f;
 }
 
+#define OPT_BASE_STRUCT struct HopperRender_opts
+static const m_option_t vf_opts_fields[] = {
+    {"FrameOutput", OPT_INT(frame_output), M_RANGE(0, 8),
+        OPTDEF_INT(2)}
+};
+
 // Filter entry
 const struct mp_user_filter_entry vf_HopperRender = {
     .desc = {
         .description = "Optical-Flow Frame Interpolation",
         .name = "HopperRender",
-        .priv_size = sizeof(struct priv)
+        .priv_size = sizeof(struct priv),
+		.options = vf_opts_fields
     },
     .create = vf_HopperRender_create
 };
