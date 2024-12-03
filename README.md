@@ -3,7 +3,7 @@
 </div>
 
 # HopperRender
-A fork of mpv-player/mpv, enhanced with real-time frame interpolation using CUDA/HIP. This integration allows for smoother video playback by generating intermediate frames between existing ones, leveraging the GPU for efficient, high-performance processing.
+A fork of mpv-player/mpv, enhanced with real-time frame interpolation using OpenCL. This integration allows for smoother video playback by generating intermediate frames between existing ones, leveraging the GPU for efficient, high-performance processing.
 The goal is to achieve pretty decent frame interpolation with a variety of user customizable settings.
 The filter can be easially used with [SMPlayer](https://github.com/smplayer-dev/smplayer).
 > Please keep in mind that this project is still in ongoing development and there are very likely some bugs depending on the environment you're running and the setting you use. The interpolation quality is also not perfect yet, but pretty decent most of the time, especially for 24 fps -> 60 fps conversion.
@@ -22,78 +22,34 @@ Apart from the meson.build script and a few modifications to some mpv source fil
 - Automatic scene change detection to prevent them from being interpolated _(currently deactivated)_
 
 ## How to get started?
-This filter uses the HIP API and can be compiled on either NVIDIA or AMD systems.
+This filter uses the OpenCL API and can be compiled on any system that has the OpenCL driver and header files installed.
 The compilation is the same as for the [mpv](https://github.com/mpv-player/mpv) base. You can either manually build [mpv](https://github.com/mpv-player/mpv) or use the automated [mpv-build](https://github.com/mpv-player/mpv-build) script and replace the mpv folder with this repo.
 
-### Installation for NVIDIA:
-1. Install [ROCm](https://rocm.docs.amd.com/projects/radeon/en/latest/docs/install/native_linux/install-radeon.html) by following the installation instructions on AMD's site (for most distros) or run `yay -S rocm-hip-sdk` (on Arch Linux)
-2. Install the [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) by following the installation instructions on NVIDIA's site (for most distros) or run `yay -S cuda` (on Arch Linux)
-3. Add the following lines to your ~/.bashrc file (assuming CUDA was installed to `/opt/cuda`):
-   
-   `export PATH=/opt/cuda/bin:$PATH`
-   
-   `export LD_LIBRARY_PATH=/opt/cuda/lib64:$LD_LIBRARY_PATH`
+### Compilation
+1. Make sure you have all the dependencies needed to compile mpv. You can check for missing libraries in the meson build log, or checkout the Troubleshooting section.
+2. Install the OpenCL driver for your GPU `opencl-nvidia`, `opencl-amd` or `intel-opencl-runtime`
+3. Install the OpenCL headers `opencl-headers`
+4. Clone the mpv-build repository `git clone https://github.com/mpv-player/mpv-build.git`
+5. Change to the build directory `cd mpv-build`
+6. Run the automated build script to do a proper compilation of ffmpeg and mpv `./rebuild -j 8`
+7. Clone the HopperRender repository `git clone https://github.com/HopperLogger/mpv-frame-interpolator.git`
+8. Replace the original mpv directory with the HopperRender repository `mv mpv-frame-interpolator mpv`
+9. Run the build again, but this time compiling mpv with HopperRender `./build -j 8`
+10. Install the final build `sudo ./install`
 
-   `export HIP_PLATFORM=nvidia`
-
-   `export CUDA_PATH=/opt/cuda`
-
-   `export ROCM_PATH=/opt/rocm`
-
-   `export PATH=$ROCM_PATH/bin:$PATH`
-
-   `export PATH=/opt/rocm/lib/llvm/bin:$PATH`
-   
-   `export LD_LIBRARY_PATH=$ROCM_PATH/lib:$ROCM_PATH/lib64:$LD_LIBRARY_PATH`
-4. `git clone https://github.com/mpv-player/mpv-build.git`
-5. `cd mpv-build`
-6. `./rebuild -j 8`
-7. `git clone https://github.com/HopperLogger/mpv-frame-interpolator.git`
-8. `rm -r -f mpv`
-9. `mv mpv-frame-interpolator mpv`
-10. Add your GPU Architecture to the `mpv-build/mpv/meson.build` file (line 36) (see [CUDA Archs](https://developer.nvidia.com/cuda-gpus) for a list of architectures)
-11. `./build -j 8`
-12. `sudo ./install`
-13. To use it in your terminal, run: `/usr/local/bin/mpv /path/to/video --vf=HopperRender`
-14. To use it in [SMPlayer](https://www.smplayer.info/), install SMPlayer via your distro's software manager or download it from the website.
-15. In the SMPlayer preferences, set the path to the multimedia engine to '/usr/local/bin/mpv'
-16. Goto Advanced->MPlayer/mpv and enter '--vf=HopperRender' in the options field.
-
-### Installation for AMD:
-1. Install [ROCm](https://rocm.docs.amd.com/projects/radeon/en/latest/docs/install/native_linux/install-radeon.html) by following the installation instructions on AMD's site (for most distros) or run `yay -S rocm-hip-sdk` (on Arch Linux)
-2. Add the following lines to your ~/.bashrc file (assuming ROCm was installed to `/opt/rocm`):
-   
-   `export HIP_PLATFORM=amd`
-   
-   `export ROCM_PATH=/opt/rocm`
-   
-   `export PATH=$ROCM_PATH/bin:$PATH`
-   
-   `export PATH=/opt/rocm/lib/llvm/bin:$PATH`
-   
-   `export LD_LIBRARY_PATH=$ROCM_PATH/lib:$ROCM_PATH/lib64:$LD_LIBRARY_PATH`
-3. Refresh your shell with `source ~/.bashrc`
-4. `git clone https://github.com/mpv-player/mpv-build.git`
-5. `cd mpv-build`
-6. `./rebuild -j 8`
-7. `git clone https://github.com/HopperLogger/mpv-frame-interpolator.git`
-8. `rm -r -f mpv`
-9. `mv mpv-frame-interpolator mpv`
-10. Add your GPU Architecture to the `mpv-build/mpv/meson.build` file (line 39) (run `rocminfo` to find it, starts with gfx and should be in the Agent section)
-11. `./build -j 8`
-12. `sudo ./install`
-13. To use it in your terminal, run: `/usr/local/bin/mpv /path/to/video --vf=HopperRender`
-14. To use it in [SMPlayer](https://www.smplayer.info/), install SMPlayer via your distro's software manager or download it from the website.
-15. In the SMPlayer preferences, set the path to the multimedia engine to '/usr/local/bin/mpv'
-16. Goto Advanced->MPlayer/mpv and enter '--vf=HopperRender' in the options field.
+### Testing and SMPlayer integration
+- To use it in your terminal, run: `/usr/local/bin/mpv /path/to/video --vf=HopperRender`
+- To use it in [SMPlayer](https://www.smplayer.info/), install SMPlayer via your distro's software manager or download it from the website.
+- In the SMPlayer preferences, set the path to the multimedia engine to '/usr/local/bin/mpv'
+- Goto Advanced->MPlayer/mpv and enter '--vf=HopperRender' in the options field.
 
 That's it! You can now play a video with SMPlayer and HopperRender will interpolate it to your monitor's native refresh-rate.
 
 ## Troubleshooting
+- Make sure not to move, rename, or delete the mpv-build folder and clone it to your home folder, as the filter depends on the AppIndicator Python script and OpenCL kernels to be at a constant path.
 - The following are a few libraries recommended for propper mpv and ffmpeg compilation:
 ```
-sudo apt-get update
-sudo apt-get install build-essential pkg-config \
+[PACKAGE-INSTALLER]  build-essential pkg-config \
                      yasm nasm libx264-dev libx265-dev \
                      libfdk-aac-dev libvpx-dev libopus-dev \
                      libnuma-dev libass-dev libfreetype6-dev \
@@ -129,7 +85,6 @@ git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git
 cd nv-codec-headers
 sudo make install
 ```
-- Make sure not to move, rename, or delete the mpv-build folder, as the filter depends on the AppIndicator python script to be at the path `~/mpv-build/mpv/video/filter/HopperRender/HopperRenderSettingsApplet.py`
 
 ## Settings
 You can access the filter status and settings when playing back a video with HopperRender by right clicking on the HopperRender icon in the pannel _(tested on the Cinnamon Desktop Enviornment)_.
