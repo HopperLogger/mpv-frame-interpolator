@@ -20,8 +20,12 @@
 #include "opticalFlowCalc.h"
 
 #define INITIAL_RESOLUTION_SCALAR 2 // The initial resolution scalar (0: Full resolution, 1: Half resolution, 2: Quarter resolution, 3: Eighth resolution, 4: Sixteenth resolution, ...)
+#define INITIAL_SEARCH_RADIUS 128 // The initial radius in which the optical flow calculation will search for the best match
 #define NUM_ITERATIONS 11 // Number of iterations to use in the optical flow calculation (0: As many as possible)
-#define AUTO_FRAME_SCALE 0 // Whether to automatically reduce/increase the calculation resolution depending on performance (0: Disabled, 1: Enabled)
+#define AUTO_FRAME_SCALE 1 // Whether to automatically reduce/increase the calculation resolution depending on performance (0: Disabled, 1: Enabled)
+#define AUTO_SEARCH_RADIUS_ADJUST 1 // Whether to automatically reduce/increase the number of calculation steps depending on performance (0: Disabled, 1: Enabled)
+#define MIN_SEARCH_RADIUS 32 // The minimum number of calculation steps (if below this, resolution will be decreased or calculation disabled)
+#define MAX_SEARCH_RADIUS 512 // The maximum number of calculation steps (if reached, resolution will be increased or steps will be kept at this number)
 #define LOG_PERFORMANCE 0 // Whether or not to print debug messages regarding calculation performance (0: Disabled, 1: Enabled)
 #define MAX_NUM_BUFFERED_IMG 50 // The maximum number of buffered images allowed to be in the image pool
 #define DUMP_IMAGES 0 // Whether or not to dump the images to disk (0: Disabled, 1: Enabled)
@@ -62,6 +66,7 @@ struct priv {
     // Settings
 	FrameOutput m_foFrameOutput; // What frame output to use
 	int m_iNumIterations; // Number of iterations to use in the optical flow calculation (0: As many as possible)
+	int m_iSearchRadius; // The radius in which the optical flow calculation will search for the best match
 	bool m_bInitialized; // Whether or not the filter has been initialized
 	double m_dTargetPTS; // The target presentation time stamp (PTS) of the video
 	
@@ -248,8 +253,8 @@ static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv, double
 	char buffer2[512];
 	memset(buffer2, 0, sizeof(buffer2));
     int offset = snprintf(buffer2, sizeof(buffer2), 
-                          "Calc Res: %dx%d\nTarget Time: %06.2f ms (%.1f fps)\nFrame Time: %06.2f ms (%.3f fps | %.2fx)\nOfc: %06.2f ms (%.0f fps)\nWarp Time: %06.2f ms (%.0f fps)",
-                          priv->m_iDimX >> priv->m_cResolutionScalar, priv->m_iDimY >> priv->m_cResolutionScalar, priv->m_dTargetPTS * 1000.0, 1.0 / priv->m_dTargetPTS,
+                          "Search Radius: %d\nCalc Res: %dx%d\nTarget Time: %06.2f ms (%.1f fps)\nFrame Time: %06.2f ms (%.3f fps | %.2fx)\nOfc: %06.2f ms (%.0f fps)\nWarp Time: %06.2f ms (%.0f fps)",
+                          priv->m_iSearchRadius, priv->m_iDimX >> priv->m_cResolutionScalar, priv->m_iDimY >> priv->m_cResolutionScalar, priv->m_dTargetPTS * 1000.0, 1.0 / priv->m_dTargetPTS,
 						  priv->m_dSourceFrameTime * 1000.0, 1.0 / priv->m_dSourceFrameTime, priv->m_dPlaybackSpeed, priv->m_dOFCCalcDuration * 1000.0, 1.0 / priv->m_dOFCCalcDuration, currTotalWarpDuration * 1000.0, 1.0 / currTotalWarpDuration);
 
     for (int i = 0; i < 10; i++) {
@@ -286,6 +291,7 @@ static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv, double
 static void vf_HopperRender_reinit_ofc(struct mp_filter *f)
 {
 	struct priv *priv = f->priv;
+	priv->ofc->m_iNumLayers = priv->m_iSearchRadius;
 	// Here we just adjust all the variables that are affected by the new resolution scalar
 	if (priv->m_isInterpolationState == TooSlow) priv->m_isInterpolationState = Active;
 	priv->ofc->m_cResolutionScalar = priv->m_cResolutionScalar;
@@ -335,8 +341,13 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 	} else if ((currTotalCalcDuration + currTotalCalcDuration * 0.2) > priv->m_dSourceFrameTime) {
 		if (LOG_PERFORMANCE) MP_TRACE(f, "Calculation took too long %.3f sec AVG SFT: %.3f RES SCALAR: %d\n", currTotalCalcDuration, priv->m_dSourceFrameTime, priv->m_cResolutionScalar);
 
+		// Decrease the number of steps to reduce calculation time
+		if (AUTO_SEARCH_RADIUS_ADJUST && priv->m_iSearchRadius > MIN_SEARCH_RADIUS) {
+			priv->m_iSearchRadius -= 8;
+			return;
+
 		// We can't reduce the number of steps any further, so we reduce the resolution divider instead
-		if (AUTO_FRAME_SCALE && priv->m_cResolutionScalar < 5) {
+		} else if (AUTO_FRAME_SCALE && priv->m_cResolutionScalar < 5) {
 			// To avoid unnecessary adjustments, we only adjust the resolution divider if we have been too slow for a while
 			priv->m_cNumTimesTooSlow += 1;
 			if (priv->m_cNumTimesTooSlow > 1) {
@@ -348,7 +359,7 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 		}
 
 		// Disable Interpolation if we are too slow
-		if (AUTO_FRAME_SCALE && ((currTotalCalcDuration + currTotalCalcDuration * 0.05) > priv->m_dSourceFrameTime)) priv->m_isInterpolationState = TooSlow;
+		if ((AUTO_FRAME_SCALE || AUTO_SEARCH_RADIUS_ADJUST) && ((currTotalCalcDuration + currTotalCalcDuration * 0.05) > priv->m_dSourceFrameTime)) priv->m_isInterpolationState = TooSlow;
 
 	/*
 	* We have left over capacity
@@ -357,10 +368,14 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 		if (LOG_PERFORMANCE) MP_TRACE(f, "Calculation has capacity %.3f sec AVG SFT: %.3f RES SCALAR: %d\n", currTotalCalcDuration, priv->m_dSourceFrameTime, priv->m_cResolutionScalar);
 
 		// Increase the frame scalar if we have enough leftover capacity
-		if (AUTO_FRAME_SCALE && priv->m_cResolutionScalar > 2) {
+		if (AUTO_FRAME_SCALE && priv->m_cResolutionScalar > 2 && priv->m_iSearchRadius >= MAX_SEARCH_RADIUS) {
 			priv->m_cNumTimesTooSlow = 0;
 			priv->m_cResolutionScalar -= 1;
+			priv->m_iSearchRadius = MIN_SEARCH_RADIUS;
 			vf_HopperRender_reinit_ofc(f);
+		} else if (AUTO_SEARCH_RADIUS_ADJUST && priv->m_iSearchRadius < MAX_SEARCH_RADIUS) {
+			priv->m_iSearchRadius = min(priv->m_iSearchRadius + 8, MAX_SEARCH_RADIUS);
+			adjustSearchRadius(priv->ofc, priv->m_iSearchRadius);
 		}
 
 	/*
@@ -448,7 +463,7 @@ static void vf_HopperRender_init(struct mp_filter *f, int dimY, int dimX)
 	priv->m_iDimY = dimY;
 
 	// Initialize the optical flow calculator
-	ERR_CHECK(initOpticalFlowCalc(priv->ofc, dimY, dimX, priv->m_cResolutionScalar), "initOpticalFlowCalc", f);
+	ERR_CHECK(initOpticalFlowCalc(priv->ofc, dimY, dimX, priv->m_cResolutionScalar, priv->m_iSearchRadius), "initOpticalFlowCalc", f);
 	
 	// Create the optical flow calc thread
 	ERR_CHECK(pthread_create(&priv->m_ptOFCThreadID, NULL, vf_HopperRender_optical_flow_calc_thread, priv), "pthread_create", f);
@@ -831,6 +846,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
     // Settings
 	priv->m_foFrameOutput = BlendedFrame;
 	priv->m_iNumIterations = NUM_ITERATIONS;
+	priv->m_iSearchRadius = INITIAL_SEARCH_RADIUS;
 	priv->m_bInitialized = false;
 	struct mp_stream_info *info = mp_filter_find_stream_info(f);
     double display_fps = 60.0;
