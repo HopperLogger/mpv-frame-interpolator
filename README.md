@@ -40,7 +40,7 @@ Releases can be found on the [release list][releases].
 =======
 ## Troubleshooting
 - Make sure not to move, rename, or delete the mpv-build folder and clone it to your home folder, as the filter depends on the AppIndicator Python script and OpenCL kernels to be at a constant path.
-- The following are a few libraries recommended for propper mpv and ffmpeg compilation:
+- The following are a few libraries recommended for proper mpv and ffmpeg compilation:
 ```
 [PACKAGE-INSTALLER]  build-essential pkg-config \
                      yasm nasm libx264-dev libx265-dev \
@@ -80,6 +80,7 @@ sudo make install
 ```
 >>>>>>> c551218157 (Update README.md)
 
+<<<<<<< HEAD
 - A not too ancient Linux (usually, only the latest releases of distributions
   are actively supported), Windows 10 1607 or later, or macOS 10.15 or later.
 - A somewhat capable CPU. Hardware decoding might help if the CPU is too slow to
@@ -94,6 +95,10 @@ sudo make install
   sure the graphics drivers are current. In some cases, ancient fallback video
   output methods can help (such as `--vo=xv` on Linux), but this use is not
   recommended or supported.
+=======
+## Settings
+You can access the filter status and settings when playing back a video with HopperRender by right clicking on the HopperRender icon in the panel _(tested on the Cinnamon Desktop Enviornment)_.
+>>>>>>> 7320a9392f (Update README.md)
 
 mpv does not go out of its way to break on older hardware or old, unsupported
 operating systems, but development is not done with them in mind. Keeping
@@ -102,6 +107,17 @@ a happy accident.
 
 ## Downloads
 
+<<<<<<< HEAD
+=======
+    - _Grey Flow: Visualizes the optical flow as a black and white representation, where the brightness indicates the magnitude of movement_
+    - _Blurred Frames: Outputs the blurred source frames_
+    - _Side-by-side 1: Shows the difference between no interpolation on the left, and interpolation on the right (split in the middle)_
+    - _Side-by-side 2: Shows the difference between no interpolation on the left, and interpolation on the right (scaled down side by side)_
+    - _Tearing Test_: Runs a white bar across the screen. Allows you to check for stuttering or tearing.
+- You can select a shader that changes the dynamic range of the video
+- You can select the calculation resolution used to calculate the optical flow _(this does not affect the output resolution!)_
+- In the status section, you can see the current state of HopperRender, the number of calculation steps that are currently performed, the source framerate, the frame and calculation resolutions, as well as much more technical details
+>>>>>>> 7320a9392f (Update README.md)
 
 For semi-official builds and third-party packages please see
 [mpv.io/installation](https://mpv.io/installation/).
