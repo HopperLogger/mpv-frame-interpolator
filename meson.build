@@ -19,47 +19,8 @@ build_root = meson.project_build_root()
 source_root = meson.project_source_root()
 python = find_program('python3')
 
-# --- HIP ---
-# Detect GPU vendor
-gpu_check_cmd = ['lspci', '-nn']
-gpu_check_result = run_command(gpu_check_cmd, check: false)
-
-# Default values
-hip_compiler = find_program('hipcc', required: true)
-hip_link_args = []
-hip_include_dirs = include_directories('/opt/rocm/include')
-hip_arch_flag = ''
-
-if gpu_check_result.returncode() == 0
-  if gpu_check_result.stdout().contains('NVIDIA')
-    hip_link_args = ['-L/opt/cuda/lib64', '-lcudart']
-    hip_arch_flag = '--gpu-architecture=sm_89'
-  elif gpu_check_result.stdout().contains('AMD')
-    hip_link_args = ['-L/opt/rocm/lib', '-lamdhip64']
-    hip_arch_flag = '--offload-arch=gfx1010'
-  else
-    error('No supported GPU vendor detected.')
-  endif
-else
-  error('Failed to check GPU hardware. Is lspci installed?')
-endif
-
-# HIP sources
-hip_sources = ['video/filter/HopperRender/opticalFlowCalc.cpp']
-
-# Compile target
-hip_objects = custom_target(
-    'opticalFlowCalc',
-    input: hip_sources,
-    output: 'opticalFlowCalc.o',
-    command: [hip_compiler, '-c', '@INPUT@', '-o', '@OUTPUT@', hip_arch_flag]
-)
-
-# HIP dependency
-dependency_hip = declare_dependency(
-    include_directories: hip_include_dirs,
-    link_args: hip_link_args
-)
+# OpenCL
+dependency_opencl = dependency('OpenCL', required: true)
 
 # ffmpeg
 libavcodec = dependency('libavcodec', version: '>= 60.31.102')
@@ -84,7 +45,7 @@ dependencies = [libass,
                 libplacebo,
                 libswresample,
                 libswscale,
-                dependency_hip]
+                dependency_opencl]
 
 # Keeps track of all enabled/disabled features
 features = {
@@ -255,6 +216,7 @@ sources = files(
     'video/decode/vd_lavc.c',
     'video/filter/refqueue.c',
     'video/filter/HopperRender/vf_HopperRender.c',
+    'video/filter/HopperRender/opticalFlowCalc.c',
     'video/filter/vf_format.c',
     'video/filter/vf_sub.c',
     'video/fmt-conversion.c',
@@ -311,7 +273,6 @@ sources = files(
     'ta/ta_talloc.c',
     'ta/ta_utils.c',
 )
-sources += hip_objects
 
 
 # compiler stuff

@@ -1,6 +1,5 @@
 #include <stdlib.h>
 #include <string.h>
-#include <sys/time.h>
 #include <math.h>
 #include <sched.h>
 #include <pthread.h>
@@ -11,7 +10,6 @@
 #include <sys/types.h>
 #include <fcntl.h>
 #include <sys/time.h>
-#include <math.h>
 #include <sys/stat.h>
 
 #include "common/msg.h"
@@ -22,8 +20,6 @@
 #include "opticalFlowCalc.h"
 
 #define INITIAL_RESOLUTION_SCALAR 2 // The initial resolution scalar (0: Full resolution, 1: Half resolution, 2: Quarter resolution, 3: Eighth resolution, 4: Sixteenth resolution, ...)
-#define FRAME_BLUR_KERNEL_SIZE 16 // The size of the blur kernel used to blur the source frames before calculating the optical flow
-#define FLOW_BLUR_KERNEL_SIZE 64 // The size of the blur kernel used to blur the offset calculated by the optical flow
 #define NUM_ITERATIONS 11 // Number of iterations to use in the optical flow calculation (0: As many as possible)
 #define AUTO_FRAME_SCALE 0 // Whether to automatically reduce/increase the calculation resolution depending on performance (0: Disabled, 1: Enabled)
 #define LOG_PERFORMANCE 0 // Whether or not to print debug messages regarding calculation performance (0: Disabled, 1: Enabled)
@@ -65,15 +61,13 @@ struct priv {
 
     // Settings
 	FrameOutput m_foFrameOutput; // What frame output to use
-	unsigned int m_iNumIterations; // Number of iterations to use in the optical flow calculation (0: As many as possible)
-	unsigned int m_iFrameBlurKernelSize; // The size of the blur kernel used to blur the source frames before calculating the optical flow
-	unsigned int m_iFlowBlurKernelSize; // The size of the blur kernel used to blur the offset calculated by the optical flow
+	int m_iNumIterations; // Number of iterations to use in the optical flow calculation (0: As many as possible)
 	bool m_bInitialized; // Whether or not the filter has been initialized
 	double m_dTargetPTS; // The target presentation time stamp (PTS) of the video
 	
 	// Video info
-	unsigned int m_iDimX; // The width of the frame
-	unsigned int m_iDimY; // The height of the frame
+	int m_iDimX; // The width of the frame
+	int m_iDimY; // The height of the frame
 	struct mp_image *m_miRefImage; // The reference image used for the optical flow calculation
 
 	// Timings
@@ -85,9 +79,10 @@ struct priv {
 	
 	// Optical flow calculation
 	struct OpticalFlowCalc* ofc; // Optical flow calculator struct
-	unsigned char m_cResolutionScalar; // Determines which resolution scalar will be used for the optical flow calculation (0: Full resolution, 1: Half resolution, 2: Quarter resolution, 3: Eighth resolution, 4: Sixteenth resolution, ...)
+	int m_cResolutionScalar; // Determines which resolution scalar will be used for the optical flow calculation (0: Full resolution, 1: Half resolution, 2: Quarter resolution, 3: Eighth resolution, 4: Sixteenth resolution, ...)
 	double m_dScalar; // The scalar used to determine the position between frame1 and frame2
 	volatile bool m_bOFCBusy; // Whether or not the optical flow calculation is currently running
+	bool m_bOFCFailed; // Whether or not the optical flow calculation has failed
 
 	// Frame output
 	struct mp_image_pool *m_miSWPool; // The software image pool used to store the source frames
@@ -96,7 +91,7 @@ struct priv {
 	int m_iNumIntFrames; // Number of interpolated frames for every source frame
 
 	// Performance and activation status
-	unsigned char m_cNumTimesTooSlow; // The number of times the interpolation has been too slow
+	int m_cNumTimesTooSlow; // The number of times the interpolation has been too slow
 	InterpolationState m_isInterpolationState; // The state of the filter (0: Deactivated, 1: Not Needed, 2: Active, 3: Too Slow)
 	struct timeval m_teOFCCalcStart; // The start time of the optical flow calculation
 	struct timeval m_teOFCCalcEnd; // The end time of the optical flow calculation
@@ -108,9 +103,51 @@ struct priv {
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
+#define ERR_CHECK(cond, func, f) if (cond) { MP_ERR(f, "Error in %s\n", func); vf_HopperRender_uninit(f); mp_filter_internal_mark_failed(f); return; }
+
 // Prototypes
 void *vf_HopperRender_optical_flow_calc_thread(void *arg);
 void *vf_HopperRender_launch_AppIndicator_script(void *arg);
+
+/*
+* Terminates the AppIndicator widget
+*
+* @param data: The thread data
+*/
+static void vf_HopperRender_terminate_AppIndicator_script(ThreadData *data)
+{
+    if (data->pid > 0) {
+        // Send SIGINT signal to the process to terminate it
+        if (kill(data->pid, SIGINT) == -1) {
+            perror("kill");
+        } else {
+            // Wait for the process to terminate
+            waitpid(data->pid, NULL, 0);
+        }
+        close(data->pipe_fd[0]); // Close read end
+    }
+}
+
+/*
+* Frees the video filter.
+*
+* @param f: The video filter instance
+*/
+static void vf_HopperRender_uninit(struct mp_filter *f)
+{
+    struct priv *priv = f->priv;
+	mp_image_unrefp(&priv->m_miRefImage);
+	mp_image_pool_clear(priv->m_miSWPool);
+	close(priv->m_iAppIndicatorFileDesc);
+	if (priv->m_bInitialized) {
+		priv->ofc->m_bOFCTerminate = true;
+		pthread_kill(priv->m_ptOFCThreadID, SIGTERM);
+    	pthread_join(priv->m_ptOFCThreadID, NULL);
+		freeOFC(priv->ofc);
+	}
+	free(priv->ofc);
+	vf_HopperRender_terminate_AppIndicator_script(&priv->m_tdAppIndicatorThreadData);
+}
 
 /*
 * Processes the commands received from the AppIndicator
@@ -244,19 +281,19 @@ static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv, double
 /*
 * Applies the new resolution scalar to the optical flow calculator and clears the offset arrays
 *
-* @param priv: The video filter private data
+* @param f: The video filter instance
 */
-static void vf_HopperRender_reinit_ofc(struct priv *priv)
+static void vf_HopperRender_reinit_ofc(struct mp_filter *f)
 {
+	struct priv *priv = f->priv;
 	// Here we just adjust all the variables that are affected by the new resolution scalar
-	priv->ofc->m_iFlowBlurKernelSize = priv->m_iFlowBlurKernelSize >> priv->m_cResolutionScalar;
 	if (priv->m_isInterpolationState == TooSlow) priv->m_isInterpolationState = Active;
 	priv->ofc->m_cResolutionScalar = priv->m_cResolutionScalar;
 	priv->ofc->m_iLowDimX = priv->m_iDimX >> priv->m_cResolutionScalar;
 	priv->ofc->m_iLowDimY = priv->m_iDimY >> priv->m_cResolutionScalar;
-	priv->ofc->m_iDirectionIdxOffset = priv->ofc->m_iNumLayers * priv->ofc->m_iLowDimY * priv->ofc->m_iLowDimX;
-	priv->ofc->m_iLayerIdxOffset = priv->ofc->m_iLowDimY * priv->ofc->m_iLowDimX;
-	priv->ofc->reinit(priv->ofc);
+	priv->ofc->m_iDirectionIdxOffset = priv->ofc->m_iLowDimY * priv->ofc->m_iLowDimX;
+	priv->ofc->m_iLayerIdxOffset = 2 * priv->ofc->m_iLowDimY * priv->ofc->m_iLowDimX;
+	ERR_CHECK(setKernelParameters(priv->ofc), "reinit", f);
 }
 
 /*
@@ -288,7 +325,7 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 		// OFC interruption is critical, so we reduce the resolution
 		if (AUTO_FRAME_SCALE && priv->m_cResolutionScalar < 5) {
 			priv->m_cResolutionScalar += 1;
-			vf_HopperRender_reinit_ofc(priv);
+			vf_HopperRender_reinit_ofc(f);
 		}
 		return;
 
@@ -305,7 +342,7 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 			if (priv->m_cNumTimesTooSlow > 1) {
 				priv->m_cNumTimesTooSlow = 0;
 				priv->m_cResolutionScalar += 1;
-				vf_HopperRender_reinit_ofc(priv);
+				vf_HopperRender_reinit_ofc(f);
 			}
 			return;
 		}
@@ -323,7 +360,7 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 		if (AUTO_FRAME_SCALE && priv->m_cResolutionScalar > 2) {
 			priv->m_cNumTimesTooSlow = 0;
 			priv->m_cResolutionScalar -= 1;
-			vf_HopperRender_reinit_ofc(priv);
+			vf_HopperRender_reinit_ofc(f);
 		}
 
 	/*
@@ -357,32 +394,23 @@ void *vf_HopperRender_optical_flow_calc_thread(void *arg)
         if (sig == SIGUSR1) {
 			priv->m_bOFCBusy = true;
 
-			// Swap the blurred offset arrays
-			char* temp0 = priv->ofc->m_blurredOffsetArray12[0];
-			priv->ofc->m_blurredOffsetArray12[0] = priv->ofc->m_blurredOffsetArray12[1];
-			priv->ofc->m_blurredOffsetArray12[1] = temp0;
-
-			temp0 = priv->ofc->m_blurredOffsetArray21[0];
-			priv->ofc->m_blurredOffsetArray21[0] = priv->ofc->m_blurredOffsetArray21[1];
-			priv->ofc->m_blurredOffsetArray21[1] = temp0;
-
 			// Calculate the optical flow (frame 1 to frame 2)
-			priv->ofc->calculateOpticalFlow(priv->ofc, priv->m_iNumIterations);
+			if (calculateOpticalFlow(priv->ofc, priv->m_iNumIterations)) goto fail;
 
 			// Flip the flow array to get the flow from frame 2 to frame 1
 			if (priv->m_foFrameOutput == WarpedFrame21 || 
 				priv->m_foFrameOutput == BlendedFrame || 
 				priv->m_foFrameOutput == SideBySide1 || 
 				priv->m_foFrameOutput == SideBySide2) {
-				priv->ofc->flipFlow(priv->ofc);
+				if (flipFlow(priv->ofc)) goto fail;
 			}
 
 			// Blur the flow arrays
-			priv->ofc->blurFlowArrays(priv->ofc);
+			if (blurFlowArrays(priv->ofc)) goto fail;
 
 			// Clear the flow arrays if we aborted calculation
 			if (priv->ofc->m_bOFCTerminate) {
-				priv->ofc->reinit(priv->ofc);
+				if (setKernelParameters(priv->ofc)) goto fail;
 			}
 
 			// Collect the calculation duration
@@ -393,14 +421,15 @@ void *vf_HopperRender_optical_flow_calc_thread(void *arg)
 			priv->ofc->m_bOFCTerminate = false;
 
         } else if (sig == SIGTERM) {
+			fail:
+			priv->m_bOFCBusy = false;
+			priv->m_bOFCFailed = true;
+			priv->ofc->m_bOFCTerminate = false;
 			pthread_exit(NULL);
             break;
         }
     }
 }
-
-// Optical flow calculation initialization (declared in HIP C++ file)
-extern void initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, unsigned char resolutionScalar, unsigned int flowBlurKernelSize);
 
 /*
 * Initializes the video filter.
@@ -419,14 +448,10 @@ static void vf_HopperRender_init(struct mp_filter *f, int dimY, int dimX)
 	priv->m_iDimY = dimY;
 
 	// Initialize the optical flow calculator
-	initOpticalFlowCalc(priv->ofc, dimY, dimX, priv->m_cResolutionScalar, priv->m_iFlowBlurKernelSize >> priv->m_cResolutionScalar);
+	ERR_CHECK(initOpticalFlowCalc(priv->ofc, dimY, dimX, priv->m_cResolutionScalar), "initOpticalFlowCalc", f);
 	
 	// Create the optical flow calc thread
-	int ret = pthread_create(&priv->m_ptOFCThreadID, NULL, vf_HopperRender_optical_flow_calc_thread, priv);
-	if (ret != 0) {
-		perror("pthread_create");
-		exit(EXIT_FAILURE);
-	}
+	ERR_CHECK(pthread_create(&priv->m_ptOFCThreadID, NULL, vf_HopperRender_optical_flow_calc_thread, priv), "pthread_create", f);
 }
 
 /*
@@ -445,34 +470,34 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 	// Warp frames
 	if (priv->m_foFrameOutput != HSVFlow && 
 		priv->m_foFrameOutput != BlurredFrames) {
-		priv->ofc->warpFrames(priv->ofc, priv->m_dScalar, priv->m_foFrameOutput);
+		ERR_CHECK(warpFrames(priv->ofc, priv->m_dScalar, priv->m_foFrameOutput), "warpFrames", f);
 	}
 	
 	// Blend the frames together
 	if (priv->m_foFrameOutput == BlendedFrame || 
 		priv->m_foFrameOutput == SideBySide1) {
-		priv->ofc->blendFrames(priv->ofc, priv->m_dScalar);
+		ERR_CHECK(blendFrames(priv->ofc, priv->m_dScalar), "blendFrames", f);
 	}
 	
 	// Draw the flow as an HSV image
 	if (priv->m_foFrameOutput == HSVFlow) {
-		priv->ofc->drawFlowAsHSV(priv->ofc, 0.5f);
-	// Draw the flow as a greyscale image
+		ERR_CHECK(drawFlowAsHSV(priv->ofc, 0.5f), "drawFlowAsHSV", f);
+	// Draw the flow as a grayscale image
 	} else if (priv->m_foFrameOutput == GreyFlow) {
-		priv->ofc->drawFlowAsGreyscale(priv->ofc);
+		ERR_CHECK(drawFlowAsGrayscale(priv->ofc), "drawFlowAsGrayscale", f);
 	// Show side by side comparison
 	} else if (priv->m_foFrameOutput == SideBySide1) {
-		priv->ofc->insertFrame(priv->ofc);
+		ERR_CHECK(insertFrame(priv->ofc), "insertFrame", f);
 	} else if (priv->m_foFrameOutput == SideBySide2) {
-	    priv->ofc->sideBySideFrame(priv->ofc, priv->m_dScalar, priv->m_iFrameCounter);
+	    ERR_CHECK(sideBySideFrame(priv->ofc, priv->m_dScalar, priv->m_iFrameCounter), "sideBySideFrame", f);
 	} else if (priv->m_foFrameOutput == TearingTest) {
-		priv->ofc->tearingTest(priv->ofc);
+		ERR_CHECK(tearingTest(priv->ofc), "tearingTest", f);
 	}
 
 	// Save the result to a file
 	if (DUMP_IMAGES) {
 		// Get the home directory from the environment
-		const char *home = getenv("HOME");
+		const char* home = getenv("HOME");
 		if (home == NULL) {
 			MP_ERR(f, "HOME environment variable is not set.\n");
 			mp_filter_internal_mark_failed(f);
@@ -481,11 +506,11 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 		char path[32];
 		snprintf(path, sizeof(path), "%s/dump/%d.bin", home, dump_iter);
 		dump_iter++;
-		priv->ofc->saveImage(priv->ofc, path);
+		ERR_CHECK(saveImage(priv->ofc, path), "saveImage", f);
 	}
 	
 	// Download the result to the output buffer
-	priv->ofc->downloadFrame(priv->ofc, priv->ofc->m_outputFrame, planes);
+	ERR_CHECK(downloadFrame(priv->ofc, priv->ofc->m_outputFrame, planes), "downloadFrame", f);
 	if (priv->m_iIntFrameNum < 100) gettimeofday(&priv->m_teWarpCalcEnd[priv->m_iIntFrameNum], NULL);
 
 	priv->m_dScalar += priv->m_dTargetPTS / priv->m_dSourceFrameTime;
@@ -580,12 +605,15 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 		}
 	}
 
+	// Check if the OFC failed
+	ERR_CHECK(priv->m_bOFCFailed, "OFC failed", f);
+
 	// Adjust the settings to process everything fast enough
 	vf_HopperRender_auto_adjust_settings(f, OFCisDone);
 
     // Upload the source frame to the GPU buffers and blur it for OFC calculation
     gettimeofday(&priv->m_teOFCCalcStart, NULL);
-    priv->ofc->updateFrame(priv->ofc, img->planes, priv->m_iFrameBlurKernelSize, priv->m_foFrameOutput == BlurredFrames);
+    ERR_CHECK(updateFrame(priv->ofc, img->planes, priv->m_foFrameOutput == BlurredFrames), "updateFrame", f);
 
 	// Calculate the optical flow
 	if (priv->m_isInterpolationState == Active && priv->m_iFrameCounter >= 2 && priv->m_foFrameOutput != BlurredFrames && priv->m_foFrameOutput != TearingTest) {
@@ -598,7 +626,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
         priv->m_iIntFrameNum = 1;
         mp_filter_internal_mark_progress(f);
     } else {
-        priv->ofc->processFrame(priv->ofc, img->planes, priv->m_iFrameCounter);
+        ERR_CHECK(processFrame(priv->ofc, img->planes, priv->m_iFrameCounter), "processFrame", f);
     }
 
     // Deliver the source frame
@@ -654,7 +682,7 @@ void *vf_HopperRender_launch_AppIndicator_script(void *arg)
         close(data->pipe_fd[1]); // Close original write end
 
         // Get the home directory from the environment
-		const char *home = getenv("HOME");
+		const char* home = getenv("HOME");
 		if (home == NULL) {
 			// Handle error if HOME is not set
 			fprintf(stderr, "HOME environment variable is not set.\n");
@@ -666,7 +694,7 @@ void *vf_HopperRender_launch_AppIndicator_script(void *arg)
 		snprintf(full_path, sizeof(full_path), "%s/mpv-build/mpv/video/filter/HopperRender/HopperRenderSettingsApplet.py", home);
 
 		// Use the constructed path in execlp
-		execlp("python3", "python3", full_path, (char *)NULL);
+		execlp("python3", "python3", full_path, (char*)NULL);
 
 		// If execlp returns, there was an error
 		perror("execlp");
@@ -736,46 +764,6 @@ static void vf_HopperRender_reset(struct mp_filter *f)
 	priv->ofc->m_bOFCTerminate = true;
 }
 
-/*
-* Terminates the AppIndicator widget
-*
-* @param data: The thread data
-*/
-static void vf_HopperRender_terminate_AppIndicator_script(ThreadData *data)
-{
-    if (data->pid > 0) {
-        // Send SIGINT signal to the process to terminate it
-        if (kill(data->pid, SIGINT) == -1) {
-            perror("kill");
-        } else {
-            // Wait for the process to terminate
-            waitpid(data->pid, NULL, 0);
-        }
-        close(data->pipe_fd[0]); // Close read end
-    }
-}
-
-/*
-* Frees the video filter.
-*
-* @param f: The video filter instance
-*/
-static void vf_HopperRender_uninit(struct mp_filter *f)
-{
-    struct priv *priv = f->priv;
-	mp_image_unrefp(&priv->m_miRefImage);
-	mp_image_pool_clear(priv->m_miSWPool);
-	close(priv->m_iAppIndicatorFileDesc);
-	if (priv->m_bInitialized) {
-		priv->ofc->m_bOFCTerminate = true;
-		pthread_kill(priv->m_ptOFCThreadID, SIGTERM);
-    	pthread_join(priv->m_ptOFCThreadID, NULL);
-		priv->ofc->free(priv->ofc);
-	}
-	free(priv->ofc);
-	vf_HopperRender_terminate_AppIndicator_script(&priv->m_tdAppIndicatorThreadData);
-}
-
 // Filter definition
 static const struct mp_filter_info vf_HopperRender_filter = {
     .name = "HopperRender",
@@ -803,7 +791,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 	struct priv *priv = f->priv;
 
 	// Create the fifo for the AppIndicator widget if it doesn't exist
-	char *fifo = "/tmp/hopperrender";
+	char* fifo = "/tmp/hopperrender";
 	if (access(fifo, F_OK) == -1) {
         if (mkfifo(fifo, 0666) != 0) {
 			MP_ERR(f, "Failed to create pipe for HopperRender.\n");
@@ -843,8 +831,6 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
     // Settings
 	priv->m_foFrameOutput = BlendedFrame;
 	priv->m_iNumIterations = NUM_ITERATIONS;
-	priv->m_iFrameBlurKernelSize = FRAME_BLUR_KERNEL_SIZE;
-	priv->m_iFlowBlurKernelSize = FLOW_BLUR_KERNEL_SIZE;
 	priv->m_bInitialized = false;
 	struct mp_stream_info *info = mp_filter_find_stream_info(f);
     double display_fps = 60.0;
@@ -870,6 +856,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 	priv->m_cResolutionScalar = INITIAL_RESOLUTION_SCALAR;
 	priv->m_dScalar = 0.0;
 	priv->m_bOFCBusy = false;
+	priv->m_bOFCFailed = false;
 
 	// Frame output
 	priv->m_miSWPool = mp_image_pool_new(NULL);
