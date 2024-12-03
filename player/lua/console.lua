@@ -38,9 +38,6 @@ local opts = {
     font_hw_ratio = 'auto',
 }
 
--- Apply user-set options
-require 'mp.options'.read_options(opts)
-
 local styles = {
     -- Colors are stolen from base16 Eighties by Chris Kempson
     -- and converted to BGR as is required by ASS.
@@ -392,6 +389,11 @@ local function fuzzy_find(needle, haystacks, case_sensitive)
     return result
 end
 
+local function mpv_color_to_ass(color)
+    return color:sub(8,9) .. color:sub(6,7) ..  color:sub(4,5),
+           string.format('%x', 255 - tonumber('0x' .. color:sub(2,3)))
+end
+
 local function populate_log_with_matches()
     if not selectable_items or selected_match == 0 then
         return
@@ -433,13 +435,17 @@ local function populate_log_with_matches()
         local style = ''
         local terminal_style = ''
 
-        if i == selected_match then
-            style = styles.selected_suggestion
-            terminal_style = terminal_styles.selected_suggestion
-        end
         if matches[i].index == default_item then
-            style = style .. styles.default_item
-            terminal_style = terminal_style .. terminal_styles.default_item
+            style = styles.default_item
+            terminal_style = terminal_styles.default_item
+        end
+        if i == selected_match then
+            local color, alpha = mpv_color_to_ass(mp.get_property('osd-selected-color'))
+            local outline_color, outline_alpha =
+                mpv_color_to_ass(mp.get_property('osd-selected-outline-color'))
+            style = style .. "{\\b1\\1c&H" .. color .. "&\\1a&H" .. alpha ..
+                             "&\\3c&H" .. outline_color .. "&\\3a&H" .. outline_alpha .. "&}"
+            terminal_style = terminal_style .. terminal_styles.selected_suggestion
         end
 
         log[#log + 1] = {
@@ -1112,6 +1118,10 @@ local function get_clipboard(clip)
             return res.stdout
         end
     elseif platform == 'wayland' then
+        -- Wayland clipboard is only updated on window focus
+        if clip and mp.get_property_native('focused') then
+            return mp.get_property('clipboard/text', '')
+        end
         local res = utils.subprocess({
             args = { 'wl-paste', clip and '-n' or  '-np' },
             playback_only = false,
@@ -1120,30 +1130,7 @@ local function get_clipboard(clip)
             return res.stdout
         end
     elseif platform == 'windows' then
-        local res = utils.subprocess({
-            args = { 'powershell', '-NoProfile', '-Command', [[& {
-                Trap {
-                    Write-Error -ErrorRecord $_
-                    Exit 1
-                }
-
-                $clip = ""
-                if (Get-Command "Get-Clipboard" -errorAction SilentlyContinue) {
-                    $clip = Get-Clipboard -Raw -Format Text -TextFormatType UnicodeText
-                } else {
-                    Add-Type -AssemblyName PresentationCore
-                    $clip = [Windows.Clipboard]::GetText()
-                }
-
-                $clip = $clip -Replace "`r",""
-                $u8clip = [System.Text.Encoding]::UTF8.GetBytes($clip)
-                [Console]::OpenStandardOutput().Write($u8clip, 0, $u8clip.Length)
-            }]] },
-            playback_only = false,
-        })
-        if not res.error then
-            return res.stdout
-        end
+        return mp.get_property('clipboard/text', '')
     elseif platform == 'darwin' then
         local res = utils.subprocess({
             args = { 'pbpaste' },
@@ -1277,10 +1264,10 @@ local function file_list(directory)
     return files
 end
 
-local function handle_file_completion(before_cur, path_pos)
+local function handle_file_completion(before_cur)
     local directory, last_component_pos =
-        before_cur:sub(path_pos):match('(.-)()[^' .. path_separator ..']*$')
-    completion_pos = path_pos + last_component_pos - 1
+        before_cur:sub(completion_pos):match('(.-)()[^' .. path_separator ..']*$')
+    completion_pos = completion_pos + last_component_pos - 1
 
     if directory:find('^~' .. path_separator) then
         local home = mp.command_native({'expand-path', '~/'})
@@ -1298,7 +1285,7 @@ local function handle_file_completion(before_cur, path_pos)
     return file_list(directory), before_cur
 end
 
-local function handle_choice_completion(option, before_cur, path_pos)
+local function handle_choice_completion(option, before_cur)
     local info = mp.get_property_native('option-info/' .. option, {})
 
     if info.type == 'Flag' then
@@ -1306,7 +1293,7 @@ local function handle_choice_completion(option, before_cur, path_pos)
     end
 
     if info['expects-file'] then
-        return handle_file_completion(before_cur, path_pos)
+        return handle_file_completion(before_cur)
     end
 
     -- Fix completing the empty value for --dscale and --cscale.
@@ -1315,6 +1302,79 @@ local function handle_choice_completion(option, before_cur, path_pos)
     end
 
     return info.choices, before_cur
+end
+
+local function command_flags_at_1st_argument_list(command)
+    local flags = {
+        ['playlist-next'] = {'weak', 'force'},
+        ['playlist-play-index'] = {'current'},
+        ['playlist-remove'] = {'current'},
+        ['rescan-external-files'] = {'reselect', 'keep-selection'},
+        ['revert-seek'] = {'mark', 'mark-permanent'},
+        ['screenshot'] = {'subtitles', 'video', 'window', 'each-frame'},
+        ['stop'] = {'keep-playlist'},
+    }
+    flags['playlist-prev'] = flags['playlist-next']
+    flags['screenshot-raw'] = flags.screenshot
+
+    return flags[command]
+end
+
+local function command_flags_at_2nd_argument_list(command)
+    local flags = {
+        ['apply-profile'] = {'default', 'restore'},
+        ['loadfile'] = {'replace', 'append', 'append-play', 'insert-next',
+                        'insert-next-play', 'insert-at', 'insert-at-play'},
+        ['screenshot-to-file'] = {'subtitles', 'video', 'window', 'each-frame'},
+        ['seek'] = {'relative', 'absolute', 'absolute-percent',
+                    'relative-percent', 'keyframes', 'exact'},
+        ['sub-add'] = {'select', 'auto', 'cached'},
+        ['sub-seek'] = {'primary', 'secondary'},
+    }
+    flags.loadlist = flags.loadfile
+    flags['audio-add'] = flags['sub-add']
+    flags['video-add'] = flags['sub-add']
+    flags['sub-step'] = flags['sub-seek']
+
+    return flags[command]
+end
+
+local function list_executables()
+    local executable_map = {}
+    local path = os.getenv('PATH') or ''
+    local separator = platform == 'windows' and ';' or ':'
+    local exts = {}
+
+    for ext in (os.getenv('PATHEXT') or ''):gmatch('[^;]+') do
+        exts[ext:lower()] = true
+    end
+
+    for directory in path:gmatch('[^' .. separator .. ']+') do
+        for _, executable in pairs(utils.readdir(directory, 'files') or {}) do
+            if not next(exts) or exts[(executable:match('%.%w+$') or ''):lower()] then
+                executable_map[executable] = true
+            end
+        end
+    end
+
+    local executables = {}
+    for executable, _ in pairs(executable_map) do
+        executables[#executables + 1] = executable
+    end
+
+    return executables
+end
+
+local function list_filter_labels(type)
+    local values = {'all'}
+
+    for _, value in pairs(mp.get_property_native(type)) do
+        if value.label then
+            values[#values + 1] = value.label
+        end
+    end
+
+    return values
 end
 
 local function common_prefix_length(s1, s2)
@@ -1371,7 +1431,8 @@ cycle_through_suggestions = function (backwards)
 
     local before_cur = line:sub(1, completion_pos - 1) ..
                        suggestion_buffer[selected_suggestion_index] .. completion_append
-    line = before_cur .. strip_common_characters(line:sub(cursor), completion_append)
+    line = before_cur .. strip_common_characters(line:sub(cursor),
+        suggestion_buffer[selected_suggestion_index] .. completion_append)
     cursor = before_cur:len() + 1
     update()
 end
@@ -1383,6 +1444,7 @@ complete = function ()
         completion_old_cursor = cursor
         mp.commandv('script-message-to', input_caller, 'input-event',
                     'complete', utils.format_json({line:sub(1, cursor - 1)}))
+        update()
         return
     end
 
@@ -1450,21 +1512,22 @@ complete = function ()
         return
     end
 
+    completion_pos = tokens[#tokens].pos
+
     local add_actions = {
         ['add'] = true, ['append'] = true, ['pre'] = true, ['set'] = true
     }
 
     local first_useful_token = tokens[first_useful_token_index]
 
-    completion_pos = before_cur:match('${[=>]?()[%w_/-]*$')
-    if completion_pos then
+    local property_pos = before_cur:match('${[=>]?()[%w_/-]*$')
+    if property_pos then
+        completion_pos = property_pos
         completions = property_list()
-        completion_append = '} '
+        completion_append = '}'
     elseif #tokens == first_useful_token_index then
         completions = command_list()
         completions[#completions + 1] = 'help'
-        completion_pos = first_useful_token.pos
-        completion_append = completion_append .. ' '
     elseif #tokens == first_useful_token_index + 1 then
         if first_useful_token.text == 'set' or
            first_useful_token.text == 'add' or
@@ -1472,71 +1535,58 @@ complete = function ()
            first_useful_token.text == 'cycle-values' or
            first_useful_token.text == 'multiply' then
             completions = property_list()
-            completion_pos = tokens[first_useful_token_index + 1].pos
-            completion_append = completion_append .. ' '
         elseif first_useful_token.text == 'help' then
             completions = command_list()
-            completion_pos = tokens[first_useful_token_index + 1].pos
         elseif first_useful_token.text == 'apply-profile' then
             completions = profile_list()
-            completion_pos = tokens[first_useful_token_index + 1].pos
         elseif first_useful_token.text == 'change-list' then
             completions = list_option_list()
-            completion_pos = tokens[first_useful_token_index + 1].pos
-            completion_append = completion_append .. ' '
+        elseif first_useful_token.text == 'run' then
+            completions = list_executables()
         elseif first_useful_token.text == 'vf' or
                first_useful_token.text == 'af' then
             completions = list_option_action_list(first_useful_token.text)
-            completion_pos = tokens[first_useful_token_index + 1].pos
-            completion_append = completion_append .. ' '
+        elseif first_useful_token.text == 'vf-command' or
+               first_useful_token.text == 'af-command' then
+            completions = list_filter_labels(first_useful_token.text:sub(1,2))
         elseif has_file_argument(first_useful_token.text) then
-            completions, before_cur =
-                handle_file_completion(before_cur, tokens[first_useful_token_index + 1].pos)
+            completions, before_cur = handle_file_completion(before_cur)
+        else
+            completions = command_flags_at_1st_argument_list(first_useful_token.text)
         end
     elseif first_useful_token.text == 'cycle-values' then
-        completion_pos = tokens[#tokens].pos
-        completion_append = completion_append .. ' '
         completions, before_cur =
             handle_choice_completion(tokens[first_useful_token_index + 1].text,
-                                     before_cur, tokens[#tokens].pos)
+                                     before_cur)
     elseif #tokens == first_useful_token_index + 2 then
         if first_useful_token.text == 'set' then
-            completion_pos = tokens[#tokens].pos
             completions, before_cur =
                 handle_choice_completion(tokens[first_useful_token_index + 1].text,
-                                         before_cur,
-                                         tokens[first_useful_token_index + 2].pos)
+                                         before_cur)
         elseif first_useful_token.text == 'change-list' then
             completions = list_option_action_list(tokens[first_useful_token_index + 1].text)
-            completion_pos = tokens[first_useful_token_index + 2].pos
-            completion_append = completion_append .. ' '
         elseif first_useful_token.text == 'vf' or
                first_useful_token.text == 'af' then
             if add_actions[tokens[first_useful_token_index + 1].text] then
-                completion_pos = tokens[#tokens].pos
                 completions, before_cur =
-                    handle_choice_completion(first_useful_token.text,
-                                             before_cur, tokens[#tokens].pos)
+                    handle_choice_completion(first_useful_token.text, before_cur)
             elseif tokens[first_useful_token_index + 1].text == 'remove' then
                 completions = list_option_value_list(first_useful_token.text)
-                completion_pos = tokens[#tokens].pos
             end
+        else
+            completions = command_flags_at_2nd_argument_list(first_useful_token.text)
         end
     elseif #tokens == first_useful_token_index + 3 then
         if first_useful_token.text == 'change-list' then
             if add_actions[tokens[first_useful_token_index + 2].text] then
-                completion_pos = tokens[#tokens].pos
                 completions, before_cur =
                     handle_choice_completion(tokens[first_useful_token_index + 1].text,
-                                             before_cur, tokens[#tokens].pos)
+                                             before_cur)
             elseif tokens[first_useful_token_index + 2].text == 'remove' then
-                completion_pos = tokens[#tokens].pos
                 completions = list_option_value_list(tokens[first_useful_token_index + 1].text)
             end
         elseif first_useful_token.text == 'dump-cache' then
-            completions, before_cur =
-                handle_file_completion(before_cur,
-                                       tokens[first_useful_token_index + 3].pos)
+            completions, before_cur = handle_file_completion(before_cur)
         end
     end
 
@@ -1882,5 +1932,7 @@ mp.register_event('log-message', function(e)
     log_add('[' .. e.prefix .. '] ' .. e.text:sub(1, -2), styles[e.level],
             terminal_styles[e.level])
 end)
+
+require 'mp.options'.read_options(opts, nil, update)
 
 collectgarbage()

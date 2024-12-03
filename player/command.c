@@ -32,6 +32,7 @@
 
 #include "mpv_talloc.h"
 #include "client.h"
+#include "clipboard/clipboard.h"
 #include "external_files.h"
 #include "common/av_common.h"
 #include "common/codecs.h"
@@ -45,6 +46,7 @@
 #include "common/common.h"
 #include "input/input.h"
 #include "input/keycodes.h"
+#include "sub/osd_state.h"
 #include "stream/stream.h"
 #include "demux/demux.h"
 #include "demux/stheader.h"
@@ -304,6 +306,32 @@ void mark_seek(struct MPContext *mpctx)
     if (now > cmd->last_seek_time + 2.0 || cmd->last_seek_pts == MP_NOPTS_VALUE)
         cmd->last_seek_pts = get_current_time(mpctx);
     cmd->last_seek_time = now;
+}
+
+static char *append_selected_style(struct MPContext *mpctx, char *str)
+{
+    if (!mpctx->video_out || !mpctx->opts->video_osd)
+        return talloc_strdup_append(str, TERM_ESC_REVERSE_COLORS);
+
+    return talloc_asprintf_append(str,
+               "%s{\\b1\\1c&H%02hhx%02hhx%02hhx&\\1a&H%02hhx&\\3c&H%02hhx%02hhx%02hhx&\\3a&H%02hhx&}%s",
+               OSD_ASS_0,
+               mpctx->video_out->osd->opts->osd_selected_color.b,
+               mpctx->video_out->osd->opts->osd_selected_color.g,
+               mpctx->video_out->osd->opts->osd_selected_color.r,
+               255 - mpctx->video_out->osd->opts->osd_selected_color.a,
+               mpctx->video_out->osd->opts->osd_selected_outline_color.b,
+               mpctx->video_out->osd->opts->osd_selected_outline_color.g,
+               mpctx->video_out->osd->opts->osd_selected_outline_color.r,
+               255 - mpctx->video_out->osd->opts->osd_selected_outline_color.a,
+               OSD_ASS_1);
+}
+
+static const char *get_style_reset(struct MPContext *mpctx)
+{
+    return mpctx->video_out && mpctx->opts->video_osd
+        ? OSD_ASS_0"{\\r}"OSD_ASS_1
+        : TERM_ESC_CLEAR_COLORS;
 }
 
 static char *skip_n_lines(char *text, int lines)
@@ -1063,13 +1091,14 @@ static int mp_property_list_chapters(void *ctx, struct m_property *prop,
         }
 
         for (n = 0; n < count; n++) {
+            if (n == cur)
+                res = append_selected_style(mpctx, res);
             char *name = chapter_name(mpctx, n);
             double t = chapter_start_time(mpctx, n);
             char* time = mp_format_time(t, false);
-            res = talloc_asprintf_append(res, "%s", time);
+            res = talloc_asprintf_append(res, "%s  %s%s\n", time, name,
+                                         n == cur ? get_style_reset(mpctx) : "");
             talloc_free(time);
-            const char *m = n == cur ? list_current : list_normal;
-            res = talloc_asprintf_append(res, "  %s%s\n", m, name);
         }
 
         *(char **)arg = count ? cut_osd_list(mpctx, "Chapters", res, cur) : res;
@@ -1174,13 +1203,14 @@ static int property_list_editions(void *ctx, struct m_property *prop,
         for (int n = 0; n < num_editions; n++) {
             struct demux_edition *ed = &editions[n];
 
-            res = talloc_strdup_append(res, n == current ? list_current
-                                                         : list_normal);
+            if (n == current)
+                res = append_selected_style(mpctx, res);
             res = talloc_asprintf_append(res, "%d: ", n);
             char *title = mp_tags_get_str(ed->metadata, "title");
             if (!title)
                 title = "unnamed";
-            res = talloc_asprintf_append(res, "'%s'\n", title);
+            res = talloc_asprintf_append(res, "'%s'%s\n", title,
+                                         n == current ? get_style_reset(mpctx) : "");
         }
 
         *(char **)arg = res;
@@ -3351,8 +3381,9 @@ static int mp_property_playlist(void *ctx, struct m_property *prop,
 
         for (int n = 0; n < pl->num_entries; n++) {
             struct playlist_entry *e = pl->entries[n];
-            res =  talloc_strdup_append(res, pl->current == e ? list_current
-                                                              : list_normal);
+            if (pl->current == e)
+                res = append_selected_style(mpctx, res);
+            const char *reset = pl->current == e ? get_style_reset(mpctx) : "";
             char *p = e->title;
             if (!p || mpctx->opts->playlist_entry_name > 0) {
                 p = e->filename;
@@ -3363,9 +3394,9 @@ static int mp_property_playlist(void *ctx, struct m_property *prop,
                 }
             }
             if (!e->title || p == e->title || mpctx->opts->playlist_entry_name == 1) {
-                res = talloc_asprintf_append(res, "%s\n", p);
+                res = talloc_asprintf_append(res, "%s%s\n", p, reset);
             } else {
-                res = talloc_asprintf_append(res, "%s (%s)\n", e->title, p);
+                res = talloc_asprintf_append(res, "%s (%s)%s\n", e->title, p, reset);
             }
         }
 
@@ -4057,6 +4088,105 @@ static int mp_property_udata(void *ctx, struct m_property *prop,
     return ret;
 }
 
+static int get_clipboard(struct MPContext *mpctx, void *arg,
+                         struct clipboard_access_params *params)
+{
+    struct clipboard_data data;
+    void *tmp = talloc_new(NULL);
+
+    if (mp_clipboard_get_data(mpctx->clipboard, params, &data, tmp) != CLIPBOARD_SUCCESS) {
+        talloc_free(tmp);
+        return M_PROPERTY_ERROR;
+    }
+
+    switch (data.type) {
+    case CLIPBOARD_DATA_TEXT:
+        *(char **)arg = talloc_steal(NULL, data.u.text);
+        talloc_free(tmp);
+        return M_PROPERTY_OK;
+    default:
+        talloc_free(tmp);
+        return M_PROPERTY_NOT_IMPLEMENTED;
+    }
+}
+
+static int set_clipboard(struct MPContext *mpctx, void *arg,
+                         struct clipboard_access_params *params)
+{
+    struct clipboard_data data = {0};
+
+    switch (params->type) {
+    case CLIPBOARD_DATA_TEXT:
+        data.type = CLIPBOARD_DATA_TEXT;
+        data.u.text = *(char **)arg;
+        break;
+    default:
+        return M_PROPERTY_NOT_IMPLEMENTED;
+    }
+
+    if (mp_clipboard_set_data(mpctx->clipboard, params, &data) == CLIPBOARD_SUCCESS)
+        return M_PROPERTY_OK;
+    return M_PROPERTY_ERROR;
+}
+
+static int mp_property_clipboard(void *ctx, struct m_property *prop,
+                                 int action, void *arg)
+{
+    struct MPContext *mpctx = ctx;
+    struct clipboard_access_params params = {
+        .type = CLIPBOARD_DATA_TEXT,
+        .target = CLIPBOARD_TARGET_CLIPBOARD,
+    };
+
+    switch (action) {
+    case M_PROPERTY_GET_TYPE:
+        *(struct m_option *)arg = (struct m_option){
+            .type = CONF_TYPE_NODE,
+        };
+        return M_PROPERTY_OK;
+    case M_PROPERTY_GET:
+    case M_PROPERTY_GET_NODE: {
+        struct mpv_node node;
+        node_init(&node, MPV_FORMAT_NODE_MAP, NULL);
+        char *data = NULL;
+        if (get_clipboard(mpctx, &data, &params) == M_PROPERTY_OK) {
+            node_map_add_string(&node, "text", data);
+            talloc_free(data);
+        }
+        *(struct mpv_node *)arg = node;
+        return M_PROPERTY_OK;
+    }
+    case M_PROPERTY_KEY_ACTION: {
+        struct m_property_action_arg *act = arg;
+        const char *key = act->key;
+
+        if (strcmp(key, "text"))
+            return M_PROPERTY_UNKNOWN;
+
+        switch (act->action) {
+        case M_PROPERTY_GET_TYPE:
+            switch (params.type) {
+            case CLIPBOARD_DATA_TEXT:
+                *(struct m_option *)act->arg = (struct m_option){
+                    .type = CONF_TYPE_STRING,
+                };
+                return M_PROPERTY_OK;
+            default:
+                return M_PROPERTY_UNKNOWN;
+            }
+        case M_PROPERTY_GET:
+            return get_clipboard(mpctx, act->arg, &params);
+        case M_PROPERTY_SET:
+            return set_clipboard(mpctx, act->arg, &params);
+        default:
+            return M_PROPERTY_NOT_IMPLEMENTED;
+        }
+    }
+    default:
+        return M_PROPERTY_NOT_IMPLEMENTED;
+    }
+}
+
 // Redirect a property name to another
 #define M_PROPERTY_ALIAS(name, real_property) \
     {(name), mp_property_alias, .priv = (real_property)}
@@ -4271,6 +4401,8 @@ static const struct m_property mp_properties_base[] = {
 
     {"user-data", mp_property_udata},
     {"term-size", mp_property_term_size},
+
+    {"clipboard", mp_property_clipboard},
 
     M_PROPERTY_ALIAS("video", "vid"),
     M_PROPERTY_ALIAS("audio", "aid"),
@@ -6437,17 +6569,31 @@ static void cmd_script_binding(void *p)
                           incmd->canceled ? 'c' : '-'};
     if (incmd->is_up_down)
         state[0] = incmd->repeated ? 'r' : (incmd->is_up ? 'u' : 'd');
-    event.num_args = 5;
-    event.args = (const char*[5]){"key-binding", name, state,
-                                  incmd->key_name ? incmd->key_name : "",
-                                  incmd->key_text ? incmd->key_text : ""};
-    if (mp_client_send_event_dup(mpctx, target,
-                                 MPV_EVENT_CLIENT_MESSAGE, &event) < 0)
-    {
-        MP_VERBOSE(mpctx, "Can't find script '%s' when handling input.\n",
-                    target ? target : "-");
-        cmd->success = false;
+
+    double scale = 1;
+    int scale_units = incmd->scale_units;
+    if (mp_input_is_scalable_cmd(incmd)) {
+        scale = incmd->scale;
+        scale_units = 1;
     }
+    char *scale_s = mp_format_double(NULL, scale, 6, false, false, false);
+
+    for (int i = 0; i < scale_units; i++) {
+        event.num_args = 7;
+        event.args = (const char*[7]){"key-binding", name, state,
+                                      incmd->key_name ? incmd->key_name : "",
+                                      incmd->key_text ? incmd->key_text : "",
+                                      scale_s, cmd->args[1].v.s};
+        if (mp_client_send_event_dup(mpctx, target,
+                                     MPV_EVENT_CLIENT_MESSAGE, &event) < 0)
+        {
+            MP_VERBOSE(mpctx, "Can't find script '%s' when handling input.\n",
+                        target ? target : "-");
+            cmd->success = false;
+            break;
+        }
+    }
+    talloc_free(scale_s);
 }
 
 static void cmd_script_message_to(void *p)
@@ -6761,6 +6907,14 @@ static void cmd_flush_status_line(void *p)
         return;
 
     mp_msg_flush_status_line(mpctx->log, cmd->args[0].v.b);
+}
+
+static void cmd_notify_property(void *p)
+{
+    struct mp_cmd_ctx *cmd = p;
+    struct MPContext *mpctx = cmd->mpctx;
+
+    mp_notify_property(mpctx, cmd->args[0].v.s);
 }
 
 /* This array defines all known commands.
@@ -7150,8 +7304,13 @@ const struct mp_cmd_def mp_cmds[] = {
 
     { "ao-reload", cmd_ao_reload },
 
-    { "script-binding", cmd_script_binding, { {"name", OPT_STRING(v.s)} },
-        .allow_auto_repeat = true, .on_updown = true},
+    { "script-binding", cmd_script_binding,
+        {
+            {"name", OPT_STRING(v.s)},
+            {"arg", OPT_STRING(v.s), OPTDEF_STR(""),
+                .flags = MP_CMD_OPT_ARG},
+        },
+        .allow_auto_repeat = true, .on_updown = true, .scalable = true },
 
     { "script-message", cmd_script_message, { {"args", OPT_STRING(v.s)} },
         .vararg = true },
@@ -7240,6 +7399,8 @@ const struct mp_cmd_def mp_cmds[] = {
     { "context-menu", cmd_context_menu },
 
     { "flush-status-line", cmd_flush_status_line, { {"clear", OPT_BOOL(v.b)} } },
+
+    { "notify-property", cmd_notify_property, { {"property", OPT_STRING(v.s)} } },
 
     {0}
 };
@@ -7497,6 +7658,9 @@ void mp_option_change_callback(void *ctx, struct m_config_option *co, int flags,
 
     if (flags & UPDATE_INPUT)
         mp_input_update_opts(mpctx->input);
+
+    if (flags & UPDATE_CLIPBOARD)
+        reinit_clipboard(mpctx);
 
     if (flags & UPDATE_SUB_EXTS)
         mp_update_subtitle_exts(mpctx->opts);

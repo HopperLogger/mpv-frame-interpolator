@@ -131,7 +131,10 @@ Comments on some symbolic names:
     ``MBTN*`` are aliases for ``MOUSE_BTN*``.
 
 ``WHEEL_*``
-    Mouse wheels (typically).
+    Mouse wheels and touch pads (typically).
+
+    These key are scalable when used with scalable commands if the underlying
+    device supports high-resolution scrolling (e.g. touch pads).
 
 ``AXIS_*``
     Deprecated aliases for ``WHEEL_*``.
@@ -293,6 +296,9 @@ Playback Control
     3rd parameter (essentially using a space instead of ``+``). The 3rd
     parameter is still parsed, but is considered deprecated.
 
+    This is a scalable command. See the documentation of ``nonscalable`` input
+    command prefix in `Input Command Prefixes`_ for details.
+
 ``revert-seek [<flags>]``
     Undoes the ``seek`` command, and some other commands that seek (but not
     necessarily all of them). Calling this command once will jump to the
@@ -372,6 +378,9 @@ Property Manipulation
     Add the given value to the property or option. On overflow or underflow,
     clamp the property to the maximum. If ``<value>`` is omitted, assume ``1``.
 
+    This is a scalable command. See the documentation of ``nonscalable`` input
+    command prefix in `Input Command Prefixes`_ for details.
+
 ``multiply <name> <value>``
     Similar to ``add``, but multiplies the property or option with the numeric
     value.
@@ -385,6 +394,9 @@ Property Manipulation
     Whether or not key-repeat is enabled by default depends on the property.
     Currently properties with continuous values are repeatable by default (like
     ``volume``), while discrete values are not (like ``osd-level``).
+
+    This is a scalable command. See the documentation of ``nonscalable`` input
+    command prefix in `Input Command Prefixes`_ for details.
 
 ``cycle-values [<"!reverse">] <property> <value1> [<value2> [...]]``
     Cycle through a list of values. Each invocation of the command will set the
@@ -1261,11 +1273,12 @@ Scripting Commands
     This command has a variable number of arguments, and cannot be used with
     named arguments.
 
-``script-binding <name>``
+``script-binding <name> [<arg>]``
     Invoke a script-provided key binding. This can be used to remap key
     bindings provided by external Lua scripts.
 
-    The argument is the name of the binding.
+    ``<name>`` is the name of the binding. ``<arg>`` is a user-provided
+    arbitrary string which can be used to provide extra information.
 
     It can optionally be prefixed with the name of the script, using ``/`` as
     separator, e.g. ``script-binding scriptname/bindingname``. Note that script
@@ -1274,13 +1287,17 @@ Scripting Commands
     For completeness, here is how this command works internally. The details
     could change any time. On any matching key event, ``script-message-to``
     or ``script-message`` is called (depending on whether the script name is
-    included), with the following arguments:
+    included), with the following arguments in string format:
 
     1. The string ``key-binding``.
     2. The name of the binding (as established above).
     3. The key state as string (see below).
     4. The key name (since mpv 0.15.0).
     5. The text the key would produce, or empty string if not applicable.
+    6. The scale of the key, such as the ones produced by ``WHEEL_*`` keys.
+       The scale is 1 if the key is nonscalable.
+    7. The user-provided string ``<arg>``, or empty string if the argument is
+       not used.
 
     The 5th argument is only set if no modifiers are present (using the shift
     key with a letter is normally not emitted as having a modifier, and results
@@ -1299,6 +1316,9 @@ Scripting Commands
 
     Future versions can add more arguments and more key state characters to
     support more input peculiarities.
+
+    This is a scalable command. See the documentation of ``nonscalable`` input
+    command prefix in `Input Command Prefixes`_ for details.
 
 ``load-script <filename>``
     Load a script, similar to the ``--script`` option. Whether this waits for
@@ -1558,8 +1578,9 @@ Miscellaneous Commands
     Begin window dragging if supported by the current VO. This command should
     only be called while a mouse button is being pressed, otherwise it will
     be ignored. The exact effect of this command depends on the VO implementation
-    of window dragging. For example, on Windows only the left mouse button can
-    begin window dragging, while X11 and Wayland allow other mouse buttons.
+    of window dragging. For example, on Windows and macOS only the left mouse
+    button can begin window dragging, while X11 and Wayland allow other mouse
+    buttons.
 
 ``context-menu``
     Show context menu on the video window. See `Context Menu`_ section for details.
@@ -3892,6 +3913,23 @@ Property list
         result in an entry with ``comment = "toggle bla", cmd = "cycle bla"``.)
 
     This property is read-only, and change notification is not supported.
+
+``clipboard``
+    The clipboard contents, only works when native clipboard
+    (``--clipboard-enable``) is supported on the platform.
+    Depending on the platform, some sub-properties, writing to properties,
+    or change notifications are not currently functional.
+
+    This has a number of sub-properties:
+
+    ``clipboard/text`` (RW)
+        The text content in the clipboard (Windows and Wayland only).
+        Writing to this property sets the text clipboard content (Windows only).
+
+    .. note::
+
+        On Wayland, the clipboard content is only updated when the compositor
+        sends a selection data offer (typically when VO window is focused).
 
 Inconsistencies between options and properties
 ----------------------------------------------

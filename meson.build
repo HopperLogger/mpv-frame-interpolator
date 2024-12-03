@@ -178,6 +178,10 @@ sources = files(
     'player/sub.c',
     'player/video.c',
 
+    ## clipboard
+    'player/clipboard/clipboard.c',
+    'player/clipboard/clipboard-vo.c',
+
     ## Streams
     'stream/cookies.c',
     'stream/stream.c',
@@ -264,7 +268,7 @@ sources = files(
     ## tree_allocator
     'ta/ta.c',
     'ta/ta_talloc.c',
-    'ta/ta_utils.c'
+    'ta/ta_utils.c',
 )
 
 
@@ -524,6 +528,7 @@ if features['win32-desktop']
     dependencies += win32_desktop_libs
     path_source = files('osdep/path-win.c')
     sources += files('input/ipc-win.c',
+                     'player/clipboard/clipboard-win.c',
                      'osdep/language-win.c',
                      'osdep/subprocess-win.c',
                      'osdep/terminal-win.c',

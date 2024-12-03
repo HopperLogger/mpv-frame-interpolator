@@ -58,6 +58,7 @@ typedef struct mp_vo_opts {
     double window_scale;
 
     bool auto_window_resize;
+    bool recenter;
     bool keepaspect;
     bool keepaspect_window;
     bool hidpi_window_scale;
@@ -137,6 +138,8 @@ struct mp_subtitle_shared_opts {
 struct mp_osd_render_opts {
     float osd_scale;
     bool osd_scale_by_window;
+    struct m_color osd_selected_color;
+    struct m_color osd_selected_outline_color;
     struct osd_style_opts *osd_style;
     struct osd_bar_style_opts *osd_bar_style;
     bool force_rgba_osd;
@@ -355,6 +358,8 @@ typedef struct MPOpts {
     struct ad_lavc_params *ad_lavc_params;
 
     struct input_opts *input_opts;
+
+    struct clipboard_opts *clipboard_opts;
 
     struct encode_opts *encode_opts;
 

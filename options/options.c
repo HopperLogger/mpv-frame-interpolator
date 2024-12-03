@@ -89,6 +89,7 @@ extern const struct m_obj_list vo_obj_list;
 extern const struct m_sub_options ao_conf;
 
 extern const struct m_sub_options dvd_conf;
+extern const struct m_sub_options clipboard_conf;
 
 extern const struct m_sub_options opengl_conf;
 extern const struct m_sub_options vulkan_conf;
@@ -164,6 +165,7 @@ static const m_option_t mp_vo_opt_list[] = {
     {"video-crop", OPT_RECT(video_crop), .flags = UPDATE_IMGPAR},
     {"video-unscaled", OPT_CHOICE(unscaled,
         {"no", 0}, {"yes", 1}, {"downscale-big", 2})},
+    {"video-recenter", OPT_BOOL(recenter)},
     {"wid", OPT_INT64(WinID)},
     {"screen", OPT_CHOICE(screen_id, {"default", -1}), M_RANGE(0, 32)},
     {"screen-name", OPT_STRING(screen_name)},
@@ -397,6 +399,8 @@ const struct m_sub_options mp_osd_render_sub_opts = {
         {"osd-bar", OPT_SUBSTRUCT(osd_bar_style, osd_bar_style_conf)},
         {"osd-scale", OPT_FLOAT(osd_scale), M_RANGE(0, 100)},
         {"osd-scale-by-window", OPT_BOOL(osd_scale_by_window)},
+        {"osd-selected-color", OPT_COLOR(osd_selected_color)},
+        {"osd-selected-outline-color", OPT_COLOR(osd_selected_outline_color)},
         {"force-rgba-osd-rendering", OPT_BOOL(force_rgba_osd)},
         {0}
     },
@@ -404,6 +408,8 @@ const struct m_sub_options mp_osd_render_sub_opts = {
     .defaults = &(OPT_BASE_STRUCT){
         .osd_scale = 1,
         .osd_scale_by_window = true,
+        .osd_selected_color = {250, 189, 47, 255},
+        .osd_selected_outline_color = {0, 0, 0, 255},
     },
     .change_flags = UPDATE_OSD,
 };
@@ -865,6 +871,8 @@ static const m_option_t mp_opts[] = {
     {"", OPT_SUBSTRUCT(resample_opts, resample_conf)},
 
     {"", OPT_SUBSTRUCT(input_opts, input_config)},
+
+    {"clipboard", OPT_SUBSTRUCT(clipboard_opts, clipboard_conf)},
 
     {"", OPT_SUBSTRUCT(vo, vo_sub_opts)},
     {"", OPT_SUBSTRUCT(demux_opts, demux_conf)},

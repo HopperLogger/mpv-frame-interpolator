@@ -60,10 +60,10 @@ local function reserve_binding()
     return "__keybinding" .. tostring(message_id)
 end
 
-local function dispatch_key_binding(name, state, key_name, key_text)
+local function dispatch_key_binding(name, state, key_name, key_text, scale, arg)
     local fn = dispatch_key_bindings[name]
     if fn then
-        fn(name, state, key_name, key_text)
+        fn(name, state, key_name, key_text, scale, arg)
     end
 end
 
@@ -170,7 +170,6 @@ function mp.flush_keybindings()
             cfg = cfg .. v.bind .. "\n"
         end
         mp.input_define_section(section, cfg, flags)
-        -- TODO: remove the section if the script is stopped
         mp.input_enable_section(section, "allow-hide-cursor+allow-vo-dragging")
     end
 end
@@ -186,6 +185,7 @@ local function add_binding(attrs, key, name, fn, rp)
         name = reserve_binding()
     end
     local repeatable = rp == "repeatable" or rp["repeatable"]
+    local scalable = rp == "scalable" or rp["scalable"]
     if rp["forced"] then
         attrs.forced = true
     end
@@ -200,7 +200,7 @@ local function add_binding(attrs, key, name, fn, rp)
             ["r"] = "repeat",
             ["p"] = "press",
         }
-        key_cb = function(_, state, key_name, key_text)
+        key_cb = function(_, state, key_name, key_text, scale, arg)
             if key_text == "" then
                 key_text = nil
             end
@@ -210,6 +210,8 @@ local function add_binding(attrs, key, name, fn, rp)
                 canceled = state:sub(3, 3) == "c",
                 key_name = key_name,
                 key_text = key_text,
+                scale = tonumber(scale),
+                arg = arg,
             })
         end
         msg_cb = function()
@@ -235,8 +237,9 @@ local function add_binding(attrs, key, name, fn, rp)
         end
         msg_cb = fn
     end
+    local prefix = scalable and "" or " nonscalable"
     if key and #key > 0 then
-        attrs.bind = key .. " script-binding " .. mp.script_name .. "/" .. name
+        attrs.bind = key .. prefix .. " script-binding " .. mp.script_name .. "/" .. name
     end
     attrs.name = name
     -- new bindings override old ones (but do not overwrite them)
