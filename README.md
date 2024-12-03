@@ -5,7 +5,7 @@
 # HopperRender
 A fork of mpv-player/mpv, enhanced with real-time frame interpolation using OpenCL. This integration allows for smoother video playback by generating intermediate frames between existing ones, leveraging the GPU for efficient, high-performance processing.
 The goal is to achieve pretty decent frame interpolation with a variety of user customizable settings.
-The filter can be easially used with [SMPlayer](https://github.com/smplayer-dev/smplayer).
+The filter can be easily used with [SMPlayer](https://github.com/smplayer-dev/smplayer).
 > Please keep in mind that this project is still in ongoing development and there are very likely some bugs depending on the environment you're running and the setting you use. The interpolation quality is also not perfect yet, but pretty decent most of the time, especially for 24 fps -> 60 fps conversion.
 
 ## Contribution
@@ -47,7 +47,7 @@ That's it! You can now play a video with SMPlayer and HopperRender will interpol
 
 ## Troubleshooting
 - Make sure not to move, rename, or delete the mpv-build folder and clone it to your home folder, as the filter depends on the AppIndicator Python script and OpenCL kernels to be at a constant path.
-- The following are a few libraries recommended for propper mpv and ffmpeg compilation:
+- The following are a few libraries recommended for proper mpv and ffmpeg compilation:
 ```
 [PACKAGE-INSTALLER]  build-essential pkg-config \
                      yasm nasm libx264-dev libx265-dev \
@@ -87,7 +87,7 @@ sudo make install
 ```
 
 ## Settings
-You can access the filter status and settings when playing back a video with HopperRender by right clicking on the HopperRender icon in the pannel _(tested on the Cinnamon Desktop Enviornment)_.
+You can access the filter status and settings when playing back a video with HopperRender by right clicking on the HopperRender icon in the panel _(tested on the Cinnamon Desktop Enviornment)_.
 
 - You can activate and deactivate the interpolation
 - You can select which type of frame output you want to see:
@@ -104,7 +104,7 @@ You can access the filter status and settings when playing back a video with Hop
     - _Blurred Frames: Outputs the blurred source frames_
     - _Side-by-side 1: Shows the difference between no interpolation on the left, and interpolation on the right (split in the middle)_
     - _Side-by-side 2: Shows the difference between no interpolation on the left, and interpolation on the right (scaled down side by side)_
-    - _Tearing Test_: Runs a white bar accross the screen. Allows you to check for stuttering or tearing.
+    - _Tearing Test_: Runs a white bar across the screen. Allows you to check for stuttering or tearing.
 - You can select a shader that changes the dynamic range of the video
 - You can select the calculation resolution used to calculate the optical flow _(this does not affect the output resolution!)_
 - In the status section, you can see the current state of HopperRender, the number of calculation steps that are currently performed, the source framerate, the frame and calculation resolutions, as well as much more technical details
