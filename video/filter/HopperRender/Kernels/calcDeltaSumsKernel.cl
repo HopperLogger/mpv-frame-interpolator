@@ -50,20 +50,20 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray,
 	const int threadIndex2D = cy * lowDimX + cx; // Standard thread index without Z-Dim
 
 	// Calculate the image delta
-	char offsetX = -offsetArray[layerOffset + threadIndex2D];
-	char offsetY = -offsetArray[directionIdxOffset + layerOffset + threadIndex2D];
+	char offsetX = offsetArray[layerOffset + threadIndex2D];
+	char offsetY = offsetArray[directionIdxOffset + layerOffset + threadIndex2D];
 	int newCx = scaledCx + offsetX;
 	int newCy = scaledCy + offsetY;
 
 	// Window size of 1x1 (SHOULD BE REMOVED!)
 	if (windowDim == 1) {
-		summedUpDeltaArray[cz * lowDimY * lowDimX + cy * lowDimX + cx] = (newCy < 0 || newCx < 0 || newCy >= dimY || newCx >= dimX) ? 0 : 
-			abs((int)frame1[newCy * dimX + newCx] - (int)frame2[scaledCy * dimX + scaledCx]) + abs(offsetX * 4) + abs(offsetY * 4);
+		summedUpDeltaArray[cz * lowDimY * lowDimX + cy * lowDimX + cx] = (scaledCy < 0 || scaledCy >= dimY || scaledCx < 0 || scaledCx >= dimX || newCy < 0 || newCx < 0 || newCy >= dimY || newCx >= dimX) ? 0 : 
+			abs((int)frame1[scaledCy * dimX + scaledCx] - (int)frame2[newCy * dimX + newCx]) + abs(offsetX) + abs(offsetY);
 		return;
 	// All other window sizes
 	} else {
-		partial_sums[tIdx] = (newCy < 0 || newCx < 0 || newCy >= dimY || newCx >= dimX) ? 0 : 
-			abs((int)frame1[newCy * dimX + newCx] - (int)frame2[scaledCy * dimX + scaledCx]) + abs(offsetX * 4) + abs(offsetY * 4);
+		partial_sums[tIdx] = (scaledCy < 0 || scaledCy >= dimY || scaledCx < 0 || scaledCx >= dimX || newCy < 0 || newCx < 0 || newCy >= dimY || newCx >= dimX) ? 0 : 
+			abs((int)frame1[scaledCy * dimX + scaledCx] - (int)frame2[newCy * dimX + newCx]) + abs(offsetX) + abs(offsetY);
 	}
 	
 	work_group_barrier(CLK_LOCAL_MEM_FENCE);

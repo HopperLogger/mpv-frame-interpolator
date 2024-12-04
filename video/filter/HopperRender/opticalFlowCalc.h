@@ -18,7 +18,7 @@ typedef struct OpticalFlowCalc {
 	int m_cResolutionScalar; // Determines which resolution scalar will be used for the optical flow calculation
 	int m_iLowDimX; // Width of the frame used by the optical flow calculation
 	int m_iLowDimY; // Height of the frame used by the optical flow calculation
-	int m_iNumLayers; // Number of layers used by the optical flow calculation
+	int m_iSearchRadius; // Search radius used for the optical flow calculation
 	int m_iDirectionIdxOffset; // m_iNumLayers * m_iLowDimY * m_iLowDimX
 	int m_iLayerIdxOffset; // m_iLowDimY * m_iLowDimX
 	int m_iChannelIdxOffset; // m_iDimY * m_iDimX
@@ -53,7 +53,6 @@ typedef struct OpticalFlowCalc {
 	cl_mem m_blurredOffsetArray12[2]; // Array containing x,y offsets for each pixel of frame1
 	cl_mem m_blurredOffsetArray21[2]; // Array containing x,y offsets for each pixel of frame2
 	cl_mem m_summedUpDeltaArray; // Array containing the summed up delta values of each window
-	cl_mem m_normalizedDeltaArray; // Array containing the normalized delta values of each window
 	cl_mem m_lowestLayerArray; // Array containing the comparison results of the two normalized delta arrays (true if the new value decreased)
 	cl_mem m_outputFrame; // Array containing the output frame
 	cl_mem m_hitCount12; // Array containing the number of times a pixel was hit
@@ -69,7 +68,6 @@ typedef struct OpticalFlowCalc {
 	cl_kernel m_blurFrameKernel;
 	cl_kernel m_setInitialOffsetKernel;
 	cl_kernel m_calcDeltaSumsKernel;
-	cl_kernel m_normalizeDeltaSumsKernel;
 	cl_kernel m_determineLowestLayerKernel;
 	cl_kernel m_adjustOffsetArrayKernel;
 	cl_kernel m_flipFlowKernel;
