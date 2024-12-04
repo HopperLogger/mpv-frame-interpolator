@@ -1,5 +1,5 @@
 // Kernel that determines the offset layer with the lowest delta
-__kernel void determineLowestLayerKernel(__global double* normalizedDeltaArray,
+__kernel void determineLowestLayerKernel(__global unsigned int* summedUpDeltaArray,
 										 __global unsigned short* globalLowestLayerArray,
 										 const int windowDim,
 										 const int numLayers,
@@ -16,8 +16,8 @@ __kernel void determineLowestLayerKernel(__global double* normalizedDeltaArray,
 		unsigned short lowestLayer = 0;
 
 		for (int z = 1; z < numLayers; ++z) {
-			if (normalizedDeltaArray[z * lowDimY * lowDimX + threadIndex2D] < 
-				normalizedDeltaArray[lowestLayer * lowDimY * lowDimX + threadIndex2D]) {
+			if (summedUpDeltaArray[z * lowDimY * lowDimX + threadIndex2D] < 
+				summedUpDeltaArray[lowestLayer * lowDimY * lowDimX + threadIndex2D]) {
 				lowestLayer = z;
 			}
 		}

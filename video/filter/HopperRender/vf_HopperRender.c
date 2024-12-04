@@ -19,17 +19,7 @@
 #include "options/m_option.h"
 #include "filters/f_autoconvert.h"
 #include "opticalFlowCalc.h"
-
-#define INITIAL_RESOLUTION_SCALAR 2 // The initial resolution scalar (0: Full resolution, 1: Half resolution, 2: Quarter resolution, 3: Eighth resolution, 4: Sixteenth resolution, ...)
-#define INITIAL_SEARCH_RADIUS 32 // The initial radius in which the optical flow calculation will search for the best match
-#define NUM_ITERATIONS 11 // Number of iterations to use in the optical flow calculation (0: As many as possible)
-#define AUTO_FRAME_SCALE 1 // Whether to automatically reduce/increase the calculation resolution depending on performance (0: Disabled, 1: Enabled)
-#define AUTO_SEARCH_RADIUS_ADJUST 1 // Whether to automatically reduce/increase the number of calculation steps depending on performance (0: Disabled, 1: Enabled)
-#define MIN_SEARCH_RADIUS 32 // The minimum number of calculation steps (if below this, resolution will be decreased or calculation disabled)
-#define MAX_SEARCH_RADIUS 128 // The maximum number of calculation steps (if reached, resolution will be increased or steps will be kept at this number)
-#define LOG_PERFORMANCE 0 // Whether or not to print debug messages regarding calculation performance (0: Disabled, 1: Enabled)
-#define MAX_NUM_BUFFERED_IMG 50 // The maximum number of buffered images allowed to be in the image pool
-#define DUMP_IMAGES 0 // Whether or not to dump the images to disk (0: Disabled, 1: Enabled)
+#include "config.h"
 
 typedef struct {
     pid_t pid;
@@ -299,7 +289,7 @@ static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv, double
 static void vf_HopperRender_reinit_ofc(struct mp_filter *f)
 {
 	struct priv *priv = f->priv;
-	priv->ofc->m_iNumLayers = priv->m_iSearchRadius;
+	priv->ofc->m_iSearchRadius = priv->m_iSearchRadius;
 	// Here we just adjust all the variables that are affected by the new resolution scalar
 	if (priv->m_isInterpolationState == TooSlow) priv->m_isInterpolationState = Active;
 	priv->ofc->m_cResolutionScalar = priv->m_cResolutionScalar;
@@ -351,7 +341,8 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 
 		// Decrease the number of steps to reduce calculation time
 		if (AUTO_SEARCH_RADIUS_ADJUST && priv->m_iSearchRadius > MIN_SEARCH_RADIUS) {
-			priv->m_iSearchRadius -= 8;
+			priv->m_iSearchRadius = max(priv->m_iSearchRadius - 1, MIN_SEARCH_RADIUS);
+			priv->ofc->m_iSearchRadius = priv->m_iSearchRadius;
 			return;
 
 		// We can't reduce the number of steps any further, so we reduce the resolution divider instead
@@ -382,8 +373,8 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 			priv->m_iSearchRadius = MIN_SEARCH_RADIUS;
 			vf_HopperRender_reinit_ofc(f);
 		} else if (AUTO_SEARCH_RADIUS_ADJUST && priv->m_iSearchRadius < MAX_SEARCH_RADIUS) {
-			priv->m_iSearchRadius = min(priv->m_iSearchRadius + 8, MAX_SEARCH_RADIUS);
-			adjustSearchRadius(priv->ofc, priv->m_iSearchRadius);
+			priv->m_iSearchRadius = min(priv->m_iSearchRadius + 1, MAX_SEARCH_RADIUS);
+			priv->ofc->m_iSearchRadius = priv->m_iSearchRadius;
 		}
 
 	/*
