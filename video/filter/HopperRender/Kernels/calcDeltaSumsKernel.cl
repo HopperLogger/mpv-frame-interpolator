@@ -58,12 +58,12 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray,
 	// Window size of 1x1 (SHOULD BE REMOVED!)
 	if (windowDim == 1) {
 		summedUpDeltaArray[cz * lowDimY * lowDimX + cy * lowDimX + cx] = (newCy < 0 || newCx < 0 || newCy >= dimY || newCx >= dimX) ? 0 : 
-			abs(frame1[newCy * dimX + newCx] - frame2[scaledCy * dimX + scaledCx]);
+			abs((int)frame1[newCy * dimX + newCx] - (int)frame2[scaledCy * dimX + scaledCx]) + abs(offsetX * 4) + abs(offsetY * 4);
 		return;
 	// All other window sizes
 	} else {
 		partial_sums[tIdx] = (newCy < 0 || newCx < 0 || newCy >= dimY || newCx >= dimX) ? 0 : 
-			abs(frame1[newCy * dimX + newCx] - frame2[scaledCy * dimX + scaledCx]);
+			abs((int)frame1[newCy * dimX + newCx] - (int)frame2[scaledCy * dimX + scaledCx]) + abs(offsetX * 4) + abs(offsetY * 4);
 	}
 	
 	work_group_barrier(CLK_LOCAL_MEM_FENCE);
