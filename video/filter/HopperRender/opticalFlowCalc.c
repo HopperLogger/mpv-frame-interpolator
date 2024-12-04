@@ -714,6 +714,7 @@ bool adjustSearchRadius(struct OpticalFlowCalc *ofc, int newSearchRadius) {
     int searchWindowSize = sqrt((double)ofc->m_iNumLayers);
     cl_int err = clSetKernelArg(ofc->m_setInitialOffsetKernel, 1, sizeof(int), &searchWindowSize);
     err |= clSetKernelArg(ofc->m_determineLowestLayerKernel, 3, sizeof(int), &ofc->m_iNumLayers);
+    err |= clSetKernelArg(ofc->m_adjustOffsetArrayKernel, 5, sizeof(int), &searchWindowSize);
     err |= clSetKernelArg(ofc->m_adjustOffsetArrayKernel, 6, sizeof(int), &ofc->m_iNumLayers);
     if (err != CL_SUCCESS) {
         fprintf(stderr, "Error: Unable to set kernel arguments\n");
