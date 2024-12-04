@@ -1,7 +1,7 @@
 #define CL_TARGET_OPENCL_VERSION 300
 #define FRAME_BLUR_KERNEL_SIZE 16
 #define FLOW_BLUR_KERNEL_SIZE 8
-#define MAX_SEARCH_RADIUS 512
+#define MAX_SEARCH_RADIUS 128
 
 #include <stdio.h>
 #include <stdlib.h>

@@ -1,6 +1,7 @@
 #ifndef OPTICALFLOWCALC_H
 #define OPTICALFLOWCALC_H
 
+#define CL_TARGET_OPENCL_VERSION 300
 #include <stdbool.h>
 #include <CL/cl.h>
 
