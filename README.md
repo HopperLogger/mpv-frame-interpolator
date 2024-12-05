@@ -35,7 +35,7 @@ The compilation is the same as for the [mpv](https://github.com/mpv-player/mpv) 
 7. Clone the HopperRender repository `git clone https://github.com/HopperLogger/mpv-frame-interpolator.git`
 8. Delete the original mpv directory ``rm -r -f mpv``
 9. Rename the new mpv directory `mv mpv-frame-interpolator mpv`
-10. Run the build again, but this time compiling mpv with HopperRender `./build -j 8`
+10. Run the build again, but this time compiling mpv with HopperRender `ninja -C ./mpv/build -j 8`
 11. Install the final build `sudo ./install`
 
 ### Testing and SMPlayer integration
