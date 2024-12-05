@@ -1,5 +1,5 @@
 // Helper kernel for the calcDeltaSums kernel
-void warpReduce8x8(volatile unsigned int* partial_sums, int tIdx) {
+void warpReduce8x8(volatile __local unsigned int* partial_sums, int tIdx) {
 	partial_sums[tIdx] += partial_sums[tIdx + 32];
 	partial_sums[tIdx] += partial_sums[tIdx + 16];
 	partial_sums[tIdx] += partial_sums[tIdx + 8];
@@ -9,7 +9,7 @@ void warpReduce8x8(volatile unsigned int* partial_sums, int tIdx) {
 }
 
 // Helper kernel for the calcDeltaSums kernel
-void warpReduce4x4(volatile unsigned int* partial_sums, int tIdx) {
+void warpReduce4x4(volatile __local unsigned int* partial_sums, int tIdx) {
 	partial_sums[tIdx] += partial_sums[tIdx + 16];
 	partial_sums[tIdx] += partial_sums[tIdx + 8];
 	partial_sums[tIdx] += partial_sums[tIdx + 2];
@@ -17,7 +17,7 @@ void warpReduce4x4(volatile unsigned int* partial_sums, int tIdx) {
 }
 
 // Helper kernel for the calcDeltaSums kernel
-void warpReduce2x2(volatile unsigned int* partial_sums, int tIdx) {
+void warpReduce2x2(volatile __local unsigned int* partial_sums, int tIdx) {
 	partial_sums[tIdx] += partial_sums[tIdx + 8];
 	partial_sums[tIdx] += partial_sums[tIdx + 1];
 }
@@ -66,14 +66,14 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray,
 			abs((int)frame1[scaledCy * dimX + scaledCx] - (int)frame2[newCy * dimX + newCx]) + abs(offsetX) + abs(offsetY);
 	}
 	
-	work_group_barrier(CLK_LOCAL_MEM_FENCE);
+	barrier(CLK_LOCAL_MEM_FENCE);
 
 	// Sum up the remaining pixels for the current window
 	for (int s = (get_local_size(1) * get_local_size(0)) >> 1; s > 32; s >>= 1) {
 		if (tIdx < s) {
 			partial_sums[tIdx] += partial_sums[tIdx + s];
 		}
-		work_group_barrier(CLK_LOCAL_MEM_FENCE);
+		barrier(CLK_LOCAL_MEM_FENCE);
 	}
 
 	// Loop over the remaining values
@@ -99,7 +99,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray,
 	}
 	
 	// Sync all threads
-	work_group_barrier(CLK_LOCAL_MEM_FENCE);
+	barrier(CLK_LOCAL_MEM_FENCE);
 
 	// Sum up the results of all blocks
 	if ((windowDim >= 8 && tIdx == 0) || 

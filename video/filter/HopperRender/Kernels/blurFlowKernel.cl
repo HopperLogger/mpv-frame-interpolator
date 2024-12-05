@@ -65,7 +65,7 @@ __kernel void blurFlowKernel(__global const char* input,
 	}
 
     // Wait for all threads to finish loading shared memory
-    work_group_barrier(CLK_LOCAL_MEM_FENCE);
+    barrier(CLK_LOCAL_MEM_FENCE);
 
     // Perform the blur operation
     if (gx < width && gy < height) {
