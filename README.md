@@ -33,9 +33,10 @@ The compilation is the same as for the [mpv](https://github.com/mpv-player/mpv) 
 5. Change to the build directory `cd mpv-build`
 6. Run the automated build script to do a proper compilation of ffmpeg and mpv `./rebuild -j 8`
 7. Clone the HopperRender repository `git clone https://github.com/HopperLogger/mpv-frame-interpolator.git`
-8. Replace the original mpv directory with the HopperRender repository `mv mpv-frame-interpolator mpv`
-9. Run the build again, but this time compiling mpv with HopperRender `./build -j 8`
-10. Install the final build `sudo ./install`
+8. Delete the original mpv directory ``rm -r -f mpv``
+9. Rename the new mpv directory `mv mpv-frame-interpolator mpv`
+10. Run the build again, but this time compiling mpv with HopperRender `./build -j 8`
+11. Install the final build `sudo ./install`
 
 ### Testing and SMPlayer integration
 - To use it in your terminal, run: `/usr/local/bin/mpv /path/to/video --vf=HopperRender`
