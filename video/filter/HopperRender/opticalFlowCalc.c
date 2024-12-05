@@ -932,8 +932,9 @@ static bool detectDevices(struct OpticalFlowCalc *ofc) {
     const int numLayers = ofc->m_iSearchRadius * ofc->m_iSearchRadius;
     const cl_ulong requiredVRAM = (32 * ofc->m_iDimY * ofc->m_iDimX) +
                                   ((numLayers + 5) * 2 * ofc->m_iLowDimY * ofc->m_iLowDimX) +
-                                  (numLayers * ofc->m_iLowDimY * ofc->m_iLowDimX * 12) +
+                                  (numLayers * ofc->m_iLowDimY * ofc->m_iLowDimX * 4) +
                                   (ofc->m_iLowDimY * ofc->m_iLowDimX * 2);
+    printf("[HopperRender] Required VRAM: %lu MB\n", requiredVRAM / 1024 / 1024);
     size_t maxWorkGroupSizes[3];
     const size_t requiredWorkGroupSizes[3] = {16, 16, 1};
     cl_ulong maxSharedMemSize;
