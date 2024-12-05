@@ -33,52 +33,9 @@ a wide variety of media file formats, audio and video codecs, and subtitle types
 
 There is a [FAQ][FAQ].
 
-<<<<<<< HEAD
 Releases can be found on the [release list][releases].
 
 ## System requirements
-=======
-## Troubleshooting
-- Make sure not to move, rename, or delete the mpv-build folder and clone it to your home folder, as the filter depends on the AppIndicator Python script and OpenCL kernels to be at a constant path.
-- The following are a few libraries recommended for proper mpv and ffmpeg compilation:
-```
-[PACKAGE-INSTALLER]  build-essential pkg-config \
-                     yasm nasm libx264-dev libx265-dev \
-                     libfdk-aac-dev libvpx-dev libopus-dev \
-                     libnuma-dev libass-dev libfreetype6-dev \
-                     libasound2-dev libavcodec-dev libavfilter-dev \
-                     libavformat-dev libavutil-dev libdrm-dev \
-                     libegl1-mesa-dev libjack-jackd2-dev libjpeg-dev \
-                     liblcms2-dev liblua5.2-dev libpulse-dev \
-                     librubberband-dev libsdl2-dev libswresample-dev \
-                     libswscale-dev libuchardet-dev libva-dev \
-                     libvdpau-dev libwayland-dev libx11-dev \
-                     libxext-dev libxinerama-dev libxkbcommon-dev \
-                     libxrandr-dev libxv-dev zlib1g-dev \
-                     libbluray-dev libdvdnav-dev libdvdread-dev \
-                     libgbm-dev libjpeg-dev libmp3lame-dev \
-                     libopus-dev libplacebo-dev libshaderc-dev \
-                     libsmbclient-dev libvulkan-dev libx264-dev \
-                     libx265-dev libxcb-shm0-dev libxcb-xfixes0-dev \
-                     libxvidcore-dev libzimg-dev spirv-cross
-```
-- If you're having trouble with getting nvdec hardware decoding to run, try the following:
-
-### Ubuntu/Debian:
-```
-sudo apt install libffnvcodec-dev
-git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git
-cd nv-codec-headers
-sudo make install
-``` 
-### Arch Linux:
-```
-sudo pacman -S ffnvcodec-headers
-git clone https://git.videolan.org/git/ffmpeg/nv-codec-headers.git
-cd nv-codec-headers
-sudo make install
-```
->>>>>>> c551218157 (Update README.md)
 
 <<<<<<< HEAD
 - A not too ancient Linux (usually, only the latest releases of distributions
