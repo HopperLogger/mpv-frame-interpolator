@@ -37,7 +37,6 @@ Releases can be found on the [release list][releases].
 
 ## System requirements
 
-<<<<<<< HEAD
 - A not too ancient Linux (usually, only the latest releases of distributions
   are actively supported), Windows 10 1607 or later, or macOS 10.15 or later.
 - A somewhat capable CPU. Hardware decoding might help if the CPU is too slow to
@@ -52,10 +51,6 @@ Releases can be found on the [release list][releases].
   sure the graphics drivers are current. In some cases, ancient fallback video
   output methods can help (such as `--vo=xv` on Linux), but this use is not
   recommended or supported.
-=======
-## Settings
-You can access the filter status and settings when playing back a video with HopperRender by right clicking on the HopperRender icon in the panel _(tested on the Cinnamon Desktop Enviornment)_.
->>>>>>> 7320a9392f (Update README.md)
 
 mpv does not go out of its way to break on older hardware or old, unsupported
 operating systems, but development is not done with them in mind. Keeping
