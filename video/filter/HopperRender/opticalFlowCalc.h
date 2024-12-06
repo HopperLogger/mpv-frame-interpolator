@@ -30,22 +30,21 @@ typedef struct OpticalFlowCalc {
     cl_kernel m_clKernel;
 
 	// Grids
-	size_t m_lowGrid16x16x5[3];
+	size_t m_lowGrid16x16xL[3];
 	size_t m_lowGrid16x16x2[3];
 	size_t m_lowGrid16x16x1[3];
-	size_t m_lowGrid8x8x5[3];
+	size_t m_lowGrid8x8xL[3];
 	size_t m_grid16x16x2[3];
 	size_t m_grid16x16x1[3];
 	size_t m_halfGrid16x16x2[3];
-	size_t m_grid8x8x2[3];
 	
 	// Threads
 	size_t m_threads16x16x1[3];
 	size_t m_threads8x8x1[3];
 
 	// Queues
-	cl_command_queue m_OFCQueue1, m_OFCQueue2; // Queue used for the optical flow calculation
-	cl_command_queue m_WarpQueue1, m_WarpQueue2; // Queue used for the warping
+	cl_command_queue m_OFCQueue; // Queue used for the optical flow calculation
+	cl_command_queue m_WarpQueue1, m_WarpQueue2; // Queues used for the warping
 
 	// GPU Arrays
 	cl_mem m_offsetArray12; // Array containing x,y offsets for each pixel of frame1
@@ -71,8 +70,7 @@ typedef struct OpticalFlowCalc {
 	cl_kernel m_determineLowestLayerKernel;
 	cl_kernel m_adjustOffsetArrayKernel;
 	cl_kernel m_flipFlowKernel;
-	cl_kernel m_blurFlowKernel1;
-	cl_kernel m_blurFlowKernel2;
+	cl_kernel m_blurFlowKernel;
 	cl_kernel m_cleanFlowKernel;
 	cl_kernel m_warpFrameKernel;
 	cl_kernel m_artifactRemovalKernel;
