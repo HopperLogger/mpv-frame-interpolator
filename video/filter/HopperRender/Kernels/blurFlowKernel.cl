@@ -2,8 +2,10 @@
 #define KERNEL_RADIUS 4
 
 // Kernel that blurs a flow array
-__kernel void blurFlowKernel(__global const char* input,
-                             __global char* output,
+__kernel void blurFlowKernel(__global const char* offsetArray12,
+                             __global const char* offsetArray21,
+                             __global char* blurredOffsetArray12,
+                             __global char* blurredOffsetArray21,
                              const int height,
                              const int width
 ) {
@@ -16,6 +18,10 @@ __kernel void blurFlowKernel(__global const char* input,
     int gx = get_global_id(0); // Global x index
     int gy = get_global_id(1); // Global y index
     int gz = get_global_id(2); // Global z index (layer index)
+    const bool is12 = gz < 2;
+    if (!is12) gz -= 2;
+    __global const char* input = is12 ? offsetArray12 : offsetArray21;
+    __global char* output = is12 ? blurredOffsetArray12 : blurredOffsetArray21;
 
     // Width of the shared memory
     int localSizeX = get_local_size(0);
