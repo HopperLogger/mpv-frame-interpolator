@@ -1,13 +1,9 @@
 #define CL_TARGET_OPENCL_VERSION 300
 
 #include <stdio.h>
-#include <stdlib.h>
 #include <math.h>
 #include <CL/cl.h>
-#include <string.h>
 #include <sys/stat.h>
-#include <unistd.h>
-#include <dirent.h>
 #include "opticalFlowCalc.h"
 #include "config.h"
 

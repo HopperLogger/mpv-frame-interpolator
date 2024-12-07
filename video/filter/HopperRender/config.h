@@ -7,6 +7,8 @@
 #define AUTO_SEARCH_RADIUS_ADJUST 1 // Whether to automatically reduce/increase the number of calculation steps depending on performance (0: Disabled, 1: Enabled)
 #define MIN_SEARCH_RADIUS 5 // The minimum number of calculation steps (if below this, resolution will be decreased or calculation disabled)
 #define MAX_SEARCH_RADIUS 11 // The maximum number of calculation steps (if reached, resolution will be increased or steps will be kept at this number)
-#define LOG_PERFORMANCE 0 // Whether or not to print debug messages regarding calculation performance (0: Disabled, 1: Enabled)
-#define MAX_NUM_BUFFERED_IMG 50 // The maximum number of buffered images allowed to be in the image pool
+
+// Debugging
 #define DUMP_IMAGES 0 // Whether or not to dump the images to disk (0: Disabled, 1: Enabled)
+#define INC_APP_IND 1 // Whether or not to include the AppIndicator (0: Disabled, 1: Enabled)
+#define SAVE_STATS 0 // Whether or not to save the OFC Calc Times to a log file (0: Disabled, 1: Enabled)

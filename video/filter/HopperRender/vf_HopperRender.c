@@ -1,30 +1,21 @@
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
-#include <sched.h>
 #include <pthread.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <signal.h>
 #include <sys/wait.h>
-#include <sys/types.h>
 #include <fcntl.h>
 #include <sys/time.h>
 #include <sys/stat.h>
-
-#include "common/msg.h"
 #include "filters/filter_internal.h"
 #include "filters/user_filters.h"
 #include "video/mp_image_pool.h"
-#include "options/m_option.h"
 #include "filters/f_autoconvert.h"
 #include "opticalFlowCalc.h"
 #include "config.h"
 
+#if INC_APP_IND
 typedef struct {
     pid_t pid;
     int pipe_fd[2];
 } ThreadData;
+#endif
 
 typedef enum FrameOutput {
     WarpedFrame12,
@@ -57,8 +48,10 @@ struct priv {
 	struct mp_autoconvert *conv;
 
     // Thread data
+	#if INC_APP_IND
     ThreadData m_tdAppIndicatorThreadData; // Data for the AppIndicator thread used to communicate with the status widget
 	int m_iAppIndicatorFileDesc; // The file descriptor for the AppIndicator status widget
+	#endif
 	pthread_t m_ptOFCThreadID; // The thread ID of the optical flow calculation thread
 
     // Settings
@@ -110,6 +103,8 @@ struct priv {
 
 // Prototypes
 void *vf_HopperRender_optical_flow_calc_thread(void *arg);
+
+#if INC_APP_IND
 void *vf_HopperRender_launch_AppIndicator_script(void *arg);
 
 /*
@@ -129,27 +124,6 @@ static void vf_HopperRender_terminate_AppIndicator_script(ThreadData *data)
         }
         close(data->pipe_fd[0]); // Close read end
     }
-}
-
-/*
-* Frees the video filter.
-*
-* @param f: The video filter instance
-*/
-static void vf_HopperRender_uninit(struct mp_filter *f)
-{
-    struct priv *priv = f->priv;
-	mp_image_unrefp(&priv->m_miRefImage);
-	mp_image_pool_clear(priv->m_miSWPool);
-	close(priv->m_iAppIndicatorFileDesc);
-	if (priv->m_bInitialized) {
-		priv->ofc->m_bOFCTerminate = true;
-		pthread_kill(priv->m_ptOFCThreadID, SIGTERM);
-    	pthread_join(priv->m_ptOFCThreadID, NULL);
-		freeOFC(priv->ofc);
-	}
-	free(priv->ofc);
-	vf_HopperRender_terminate_AppIndicator_script(&priv->m_tdAppIndicatorThreadData);
 }
 
 /*
@@ -267,18 +241,92 @@ static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv, double
 		close(priv->m_iAppIndicatorFileDesc);
 		exit(EXIT_FAILURE);
 	}
+}
 
-	// Save the stats to a file
-/* 	FILE *file = fopen("/home/julian/ofclog.txt", "a");
-	if (file == NULL) {
-		perror("Error opening file");
-		return;
+/*
+* Start the AppIndicator widget
+*
+* @param arg: The thread data
+*/
+void *vf_HopperRender_launch_AppIndicator_script(void *arg)
+{
+	ThreadData *data = (ThreadData *)arg;
+    if (pipe(data->pipe_fd) == -1) {
+        perror("pipe");
+        pthread_exit(NULL);
+    }
+
+    data->pid = fork();
+    if (data->pid == 0) {
+        // Child process
+        close(data->pipe_fd[0]); // Close read end
+        dup2(data->pipe_fd[1], STDOUT_FILENO); // Redirect stdout to pipe
+        dup2(data->pipe_fd[1], STDERR_FILENO); // Redirect stderr to pipe
+        close(data->pipe_fd[1]); // Close original write end
+
+        // Get the home directory from the environment
+		const char* home = getenv("HOME");
+		if (home == NULL) {
+			// Handle error if HOME is not set
+			fprintf(stderr, "HOME environment variable is not set.\n");
+			return NULL;
+		}
+
+		// Create a buffer to store the full path
+		char full_path[512];
+		snprintf(full_path, sizeof(full_path), "%s/mpv-build/mpv/video/filter/HopperRender/HopperRenderSettingsApplet.py", home);
+
+		// Use the constructed path in execlp
+		execlp("python3", "python3", full_path, (char*)NULL);
+
+		// If execlp returns, there was an error
+		perror("execlp");
+        exit(EXIT_FAILURE);
+    } else if (data->pid < 0) {
+        // Fork failed
+        perror("fork");
+        pthread_exit(NULL);
+    } else {
+        // Parent process
+        close(data->pipe_fd[1]); // Close write end
+
+        // Set the read end of the pipe to non-blocking mode
+        int flags = fcntl(data->pipe_fd[0], F_GETFL, 0);
+        if (flags == -1) {
+            perror("fcntl(F_GETFL)");
+            pthread_exit(NULL);
+        }
+        if (fcntl(data->pipe_fd[0], F_SETFL, flags | O_NONBLOCK) == -1) {
+            perror("fcntl(F_SETFL)");
+            pthread_exit(NULL);
+        }
+    }
+	return NULL;
+}
+#endif
+
+/*
+* Frees the video filter.
+*
+* @param f: The video filter instance
+*/
+static void vf_HopperRender_uninit(struct mp_filter *f)
+{
+    struct priv *priv = f->priv;
+	mp_image_unrefp(&priv->m_miRefImage);
+	mp_image_pool_clear(priv->m_miSWPool);
+	if (priv->m_bInitialized) {
+		priv->ofc->m_bOFCTerminate = true;
+		pthread_kill(priv->m_ptOFCThreadID, SIGTERM);
+    	pthread_join(priv->m_ptOFCThreadID, NULL);
+		freeOFC(priv->ofc);
 	}
-	char buffer[512];
-	memset(buffer, 0, sizeof(buffer));
-	sprintf(buffer, "%f\n", priv->m_dOFCCalcDuration);
-	fprintf(file, "%s", buffer);
-	fclose(file); */
+	free(priv->ofc);
+	talloc_free(priv->opts);
+	#if INC_APP_IND
+	close(priv->m_iAppIndicatorFileDesc);
+	vf_HopperRender_terminate_AppIndicator_script(&priv->m_tdAppIndicatorThreadData);
+	#endif
 }
 
 /*
@@ -320,7 +368,23 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 	double currTotalCalcDuration = max(priv->m_dOFCCalcDuration, currTotalWarpDuration);
 	
 	// Send the stats to the AppIndicator status widget
+	#if INC_APP_IND
 	vf_HopperRender_update_AppIndicator_widget(priv, warpCalcDurations, currTotalWarpDuration);
+	#endif
+
+	// Save the stats to a file
+	#if SAVE_STATS
+ 	FILE *file = fopen("ofclog.txt", "a");
+	if (file == NULL) {
+		perror("Error opening file");
+		return;
+	}
+	char buffer[512];
+	memset(buffer, 0, sizeof(buffer));
+	sprintf(buffer, "%f\n", priv->m_dOFCCalcDuration);
+	fprintf(file, "%s", buffer);
+	fclose(file);
+	#endif
 
 	/*
 	* Calculation took too long (OFC had to be interupted)
@@ -337,8 +401,6 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 	* Calculation took longer than the threshold
 	*/
 	} else if ((currTotalCalcDuration + currTotalCalcDuration * 0.2) > priv->m_dSourceFrameTime) {
-		if (LOG_PERFORMANCE) MP_TRACE(f, "Calculation took too long %.3f sec AVG SFT: %.3f RES SCALAR: %d\n", currTotalCalcDuration, priv->m_dSourceFrameTime, priv->m_cResolutionScalar);
-
 		// Decrease the number of steps to reduce calculation time
 		if (AUTO_SEARCH_RADIUS_ADJUST && priv->m_iSearchRadius > MIN_SEARCH_RADIUS) {
 			priv->m_iSearchRadius = max(priv->m_iSearchRadius - 1, MIN_SEARCH_RADIUS);
@@ -364,8 +426,6 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 	* We have left over capacity
 	*/
 	} else if ((currTotalCalcDuration + currTotalCalcDuration * 0.4) < priv->m_dSourceFrameTime) {
-		if (LOG_PERFORMANCE) MP_TRACE(f, "Calculation has capacity %.3f sec AVG SFT: %.3f RES SCALAR: %d\n", currTotalCalcDuration, priv->m_dSourceFrameTime, priv->m_cResolutionScalar);
-
 		// Increase the frame scalar if we have enough leftover capacity
 		if (AUTO_FRAME_SCALE && priv->m_cResolutionScalar > 2 && priv->m_iSearchRadius >= MAX_SEARCH_RADIUS) {
 			priv->m_cNumTimesTooSlow = 0;
@@ -376,12 +436,6 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 			priv->m_iSearchRadius = min(priv->m_iSearchRadius + 1, MAX_SEARCH_RADIUS);
 			priv->ofc->m_iSearchRadius = priv->m_iSearchRadius;
 		}
-
-	/*
-	* Calculation took as long as it should
-	*/
-	} else {
-		if (LOG_PERFORMANCE) MP_TRACE(f, "Calculation took %.3f sec AVG SFT: %.3f RES SCALAR: %d\n", currTotalCalcDuration, priv->m_dSourceFrameTime, priv->m_cResolutionScalar);
 	}
 }
 
@@ -669,70 +723,11 @@ static void vf_HopperRender_process(struct mp_filter *f)
 
     // Process a new source frame
     if (priv->m_iIntFrameNum == 0 && mp_pin_can_transfer_data(f->ppins[1], priv->conv->f->pins[1])) {
+		#if INC_APP_IND
 		vf_HopperRender_process_AppIndicator_command(priv);
+		#endif
         vf_HopperRender_process_new_source_frame(f);
 	}
-}
-
-/*
-* Start the AppIndicator widget
-*
-* @param arg: The thread data
-*/
-void *vf_HopperRender_launch_AppIndicator_script(void *arg)
-{
-	ThreadData *data = (ThreadData *)arg;
-    if (pipe(data->pipe_fd) == -1) {
-        perror("pipe");
-        pthread_exit(NULL);
-    }
-
-    data->pid = fork();
-    if (data->pid == 0) {
-        // Child process
-        close(data->pipe_fd[0]); // Close read end
-        dup2(data->pipe_fd[1], STDOUT_FILENO); // Redirect stdout to pipe
-        dup2(data->pipe_fd[1], STDERR_FILENO); // Redirect stderr to pipe
-        close(data->pipe_fd[1]); // Close original write end
-
-        // Get the home directory from the environment
-		const char* home = getenv("HOME");
-		if (home == NULL) {
-			// Handle error if HOME is not set
-			fprintf(stderr, "HOME environment variable is not set.\n");
-			return NULL;
-		}
-
-		// Create a buffer to store the full path
-		char full_path[512];
-		snprintf(full_path, sizeof(full_path), "%s/mpv-build/mpv/video/filter/HopperRender/HopperRenderSettingsApplet.py", home);
-
-		// Use the constructed path in execlp
-		execlp("python3", "python3", full_path, (char*)NULL);
-
-		// If execlp returns, there was an error
-		perror("execlp");
-        exit(EXIT_FAILURE);
-    } else if (data->pid < 0) {
-        // Fork failed
-        perror("fork");
-        pthread_exit(NULL);
-    } else {
-        // Parent process
-        close(data->pipe_fd[1]); // Close write end
-
-        // Set the read end of the pipe to non-blocking mode
-        int flags = fcntl(data->pipe_fd[0], F_GETFL, 0);
-        if (flags == -1) {
-            perror("fcntl(F_GETFL)");
-            pthread_exit(NULL);
-        }
-        if (fcntl(data->pipe_fd[0], F_SETFL, flags | O_NONBLOCK) == -1) {
-            perror("fcntl(F_SETFL)");
-            pthread_exit(NULL);
-        }
-    }
-	return NULL;
 }
 
 /*
@@ -805,6 +800,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 	struct priv *priv = f->priv;
 	priv->opts = talloc_steal(priv, options);
 
+	#if INC_APP_IND
 	// Create the fifo for the AppIndicator widget if it doesn't exist
 	char* fifo = "/tmp/hopperrender";
 	if (access(fifo, F_OK) == -1) {
@@ -827,6 +823,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
         talloc_free(options);
         return NULL;
     }
+	#endif
 
 	// Connect the input and output pins
     mp_filter_add_pin(f, MP_PIN_IN, "in");
