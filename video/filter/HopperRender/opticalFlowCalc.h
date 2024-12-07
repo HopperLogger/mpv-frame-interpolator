@@ -15,7 +15,7 @@ typedef struct OpticalFlowCalc {
 	int m_iMiddleValue; // The middle value of the video format (128 for YUV420P and NV12, 512 for YUV420P10, 32768 for P010)
 
 	// Optical flow calculation
-	int m_cResolutionScalar; // Determines which resolution scalar will be used for the optical flow calculation
+	int m_iResolutionScalar; // Determines which resolution scalar will be used for the optical flow calculation
 	int m_iLowDimX; // Width of the frame used by the optical flow calculation
 	int m_iLowDimY; // Height of the frame used by the optical flow calculation
 	int m_iSearchRadius; // Search radius used for the optical flow calculation
@@ -23,6 +23,8 @@ typedef struct OpticalFlowCalc {
 	int m_iLayerIdxOffset; // m_iLowDimY * m_iLowDimX
 	int m_iChannelIdxOffset; // m_iDimY * m_iDimX
 	volatile bool m_bOFCTerminate; // Whether or not the optical flow calculator should terminate
+	bool m_bNoFrameBlur; // Whether or not the frame should be blurred
+	bool m_bNoFlowBlur; // Whether or not the flow should be blurred
 
 	// OpenCL variables
 	cl_device_id m_clDevice_id;
@@ -82,7 +84,7 @@ typedef struct OpticalFlowCalc {
 	cl_kernel m_tearingTestKernel;
 } OpticalFlowCalc;
 
-bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, const int resolutionScalar, const int searchRadius);
+bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, const int resolutionScalar, const int searchRadius, const bool noFrameBlur, const bool noFlowBlur);
 void freeOFC(struct OpticalFlowCalc *ofc);
 bool adjustSearchRadius(struct OpticalFlowCalc *ofc, int newSearchRadius);
 bool setKernelParameters(struct OpticalFlowCalc *ofc);
