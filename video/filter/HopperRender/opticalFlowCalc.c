@@ -176,7 +176,7 @@ static bool cl_create_kernel(cl_kernel* kernel, cl_context context, cl_device_id
 */
 bool blurFrameArray(struct OpticalFlowCalc *ofc, const cl_mem frame, cl_mem blurredFrame, const bool directOutput) {
 	// Early exit if kernel size is too small to blur
-	if (FRAME_BLUR_KERNEL_SIZE < 4) {
+	if (ofc->m_bNoFrameBlur) {
         ERR_CHECK(cl_copy_buffer(ofc->m_OFCQueue, frame, 0, blurredFrame, 0, ofc->m_iDimY * ofc->m_iDimX * sizeof(unsigned short), "blurFrameArray"));
 		return 0;
 	}
@@ -632,28 +632,30 @@ bool flipFlow(struct OpticalFlowCalc *ofc) {
 bool blurFlowArrays(struct OpticalFlowCalc *ofc) {
 	if (ofc->m_bOFCTerminate) return 0;
 
-	// Calculate the number of blocks needed
-	const size_t globalGrid[3] = {ceil(ofc->m_iLowDimX / 16.0) * 16.0, ceil(ofc->m_iLowDimY / 16.0) * 16.0, 4};
-	const size_t localGrid[3] = {16, 16, 1};
-
-	// No need to blur the flow if the kernel size is less than 4
-	if (FLOW_BLUR_KERNEL_SIZE < 4) {
+    // No need to blur the flow
+	if (ofc->m_bNoFlowBlur) {
 		// Offset12 X-Dir
         ERR_CHECK(cl_copy_buffer(ofc->m_OFCQueue, ofc->m_offsetArray12, 0, ofc->m_blurredOffsetArray12[1], 0, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX, "blurFlowArrays"));
 		// Offset21 X&Y-Dir
         ERR_CHECK(cl_copy_buffer(ofc->m_OFCQueue, ofc->m_offsetArray21, 0, ofc->m_blurredOffsetArray21[1], 0, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX, "blurFlowArrays"));
-	} else {
-		// Launch kernels
-        cl_int err = clSetKernelArg(ofc->m_blurFlowKernel, 2, sizeof(cl_mem), &ofc->m_blurredOffsetArray12[1]);
-        err |= clSetKernelArg(ofc->m_blurFlowKernel, 3, sizeof(cl_mem), &ofc->m_blurredOffsetArray21[1]);
-        if (err != CL_SUCCESS) {
-            fprintf(stderr, "Error: Unable to set kernel arguments\n");
-            return 1;
-        }
-        ERR_CHECK(cl_enqueue_kernel(ofc->m_OFCQueue, ofc->m_blurFlowKernel, 3, globalGrid, localGrid, "blurFlowArrays"));
-        
-        ERR_CHECK(cl_finish_queue(ofc->m_OFCQueue, "blurFlowArrays"));
-	}
+        return 0;
+    }
+
+	// Calculate the number of blocks needed
+	const size_t globalGrid[3] = {ceil(ofc->m_iLowDimX / 16.0) * 16.0, ceil(ofc->m_iLowDimY / 16.0) * 16.0, 4};
+	const size_t localGrid[3] = {16, 16, 1};
+
+    // Launch kernels
+    cl_int err = clSetKernelArg(ofc->m_blurFlowKernel, 2, sizeof(cl_mem), &ofc->m_blurredOffsetArray12[1]);
+    err |= clSetKernelArg(ofc->m_blurFlowKernel, 3, sizeof(cl_mem), &ofc->m_blurredOffsetArray21[1]);
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "Error: Unable to set kernel arguments\n");
+        return 1;
+    }
+    ERR_CHECK(cl_enqueue_kernel(ofc->m_OFCQueue, ofc->m_blurFlowKernel, 3, globalGrid, localGrid, "blurFlowArrays"));
+    
+    ERR_CHECK(cl_finish_queue(ofc->m_OFCQueue, "blurFlowArrays"));
+
     return 0;
 }
 
@@ -774,7 +776,7 @@ bool setKernelParameters(struct OpticalFlowCalc *ofc) {
     err |= clSetKernelArg(ofc->m_calcDeltaSumsKernel, 6, sizeof(int), &ofc->m_iDimX);
     err |= clSetKernelArg(ofc->m_calcDeltaSumsKernel, 7, sizeof(int), &ofc->m_iLowDimY);
     err |= clSetKernelArg(ofc->m_calcDeltaSumsKernel, 8, sizeof(int), &ofc->m_iLowDimX);
-    err |= clSetKernelArg(ofc->m_calcDeltaSumsKernel, 10, sizeof(int), &ofc->m_cResolutionScalar);
+    err |= clSetKernelArg(ofc->m_calcDeltaSumsKernel, 10, sizeof(int), &ofc->m_iResolutionScalar);
     err |= clSetKernelArg(ofc->m_determineLowestLayerKernel, 0, sizeof(cl_mem), &ofc->m_summedUpDeltaArray);
     err |= clSetKernelArg(ofc->m_determineLowestLayerKernel, 1, sizeof(cl_mem), &ofc->m_lowestLayerArray);
     err |= clSetKernelArg(ofc->m_determineLowestLayerKernel, 3, sizeof(int), &numLayers);
@@ -792,7 +794,7 @@ bool setKernelParameters(struct OpticalFlowCalc *ofc) {
     err |= clSetKernelArg(ofc->m_warpFrameKernel, 6, sizeof(int), &ofc->m_iLowDimX);
     err |= clSetKernelArg(ofc->m_warpFrameKernel, 7, sizeof(int), &ofc->m_iDimY);
     err |= clSetKernelArg(ofc->m_warpFrameKernel, 8, sizeof(int), &ofc->m_iDimX);
-    err |= clSetKernelArg(ofc->m_warpFrameKernel, 9, sizeof(int), &ofc->m_cResolutionScalar);
+    err |= clSetKernelArg(ofc->m_warpFrameKernel, 9, sizeof(int), &ofc->m_iResolutionScalar);
     err |= clSetKernelArg(ofc->m_warpFrameKernel, 10, sizeof(int), &ofc->m_iDirectionIdxOffset);
     err |= clSetKernelArg(ofc->m_warpFrameKernel, 11, sizeof(int), &ofc->m_iChannelIdxOffset);
     err |= clSetKernelArg(ofc->m_artifactRemovalKernel, 3, sizeof(int), &ofc->m_iDimY);
@@ -821,7 +823,7 @@ bool setKernelParameters(struct OpticalFlowCalc *ofc) {
     err |= clSetKernelArg(ofc->m_convertFlowToHSVKernel, 5, sizeof(int), &ofc->m_iLowDimX);
     err |= clSetKernelArg(ofc->m_convertFlowToHSVKernel, 6, sizeof(int), &ofc->m_iDimY);
     err |= clSetKernelArg(ofc->m_convertFlowToHSVKernel, 7, sizeof(int), &ofc->m_iDimX);
-    err |= clSetKernelArg(ofc->m_convertFlowToHSVKernel, 8, sizeof(int), &ofc->m_cResolutionScalar);
+    err |= clSetKernelArg(ofc->m_convertFlowToHSVKernel, 8, sizeof(int), &ofc->m_iResolutionScalar);
     err |= clSetKernelArg(ofc->m_convertFlowToHSVKernel, 9, sizeof(int), &ofc->m_iDirectionIdxOffset);
     err |= clSetKernelArg(ofc->m_convertFlowToHSVKernel, 10, sizeof(int), &ofc->m_iChannelIdxOffset);
     err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 1, sizeof(cl_mem), &ofc->m_outputFrame);
@@ -829,14 +831,14 @@ bool setKernelParameters(struct OpticalFlowCalc *ofc) {
     err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 4, sizeof(int), &ofc->m_iLowDimX);
     err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 5, sizeof(int), &ofc->m_iDimY);
     err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 6, sizeof(int), &ofc->m_iDimX);
-    err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 7, sizeof(int), &ofc->m_cResolutionScalar);
+    err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 7, sizeof(int), &ofc->m_iResolutionScalar);
     err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 8, sizeof(int), &ofc->m_iDirectionIdxOffset);
     err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 9, sizeof(int), &ofc->m_iChannelIdxOffset);
     err |= clSetKernelArg(ofc->m_flipFlowKernel, 0, sizeof(cl_mem), &ofc->m_offsetArray12);
     err |= clSetKernelArg(ofc->m_flipFlowKernel, 1, sizeof(cl_mem), &ofc->m_offsetArray21);
     err |= clSetKernelArg(ofc->m_flipFlowKernel, 2, sizeof(int), &ofc->m_iLowDimY);
     err |= clSetKernelArg(ofc->m_flipFlowKernel, 3, sizeof(int), &ofc->m_iLowDimX);
-    err |= clSetKernelArg(ofc->m_flipFlowKernel, 4, sizeof(int), &ofc->m_cResolutionScalar);
+    err |= clSetKernelArg(ofc->m_flipFlowKernel, 4, sizeof(int), &ofc->m_iResolutionScalar);
     err |= clSetKernelArg(ofc->m_flipFlowKernel, 5, sizeof(int), &ofc->m_iDirectionIdxOffset);
     err |= clSetKernelArg(ofc->m_blurFlowKernel, 0, sizeof(cl_mem), &ofc->m_offsetArray12);
     err |= clSetKernelArg(ofc->m_blurFlowKernel, 1, sizeof(cl_mem), &ofc->m_offsetArray21);
@@ -992,8 +994,10 @@ static bool detectDevices(struct OpticalFlowCalc *ofc) {
 * @param dimX: The width of the frame
 * @param resolutionScalar: The resolution scalar used for the optical flow calculation
 * @param searchRadius: The search radius used for the optical flow calculation
+* @param noFrameBlur: Flag to disable frame blur
+* @param noFlowBlur: Flag to disable flow blur
 */
-bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, const int resolutionScalar, const int searchRadius)
+bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, const int resolutionScalar, const int searchRadius, const bool noFrameBlur, const bool noFlowBlur)
 {
 	// Video properties
 	ofc->m_iDimX = dimX;
@@ -1004,14 +1008,16 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ofc->m_fWhiteLevel = ofc->m_fMaxVal;
 
 	// Optical flow calculation
-	ofc->m_cResolutionScalar = resolutionScalar;
-	ofc->m_iLowDimX = dimX >> ofc->m_cResolutionScalar;
-	ofc->m_iLowDimY = dimY >> ofc->m_cResolutionScalar;
+	ofc->m_iResolutionScalar = resolutionScalar;
+	ofc->m_iLowDimX = dimX >> ofc->m_iResolutionScalar;
+	ofc->m_iLowDimY = dimY >> ofc->m_iResolutionScalar;
 	ofc->m_iSearchRadius = searchRadius;
 	ofc->m_iDirectionIdxOffset = ofc->m_iLowDimY * ofc->m_iLowDimX;
 	ofc->m_iLayerIdxOffset = 2 * ofc->m_iLowDimY * ofc->m_iLowDimX;
 	ofc->m_iChannelIdxOffset = ofc->m_iDimY * ofc->m_iDimX;
 	ofc->m_bOFCTerminate = false;
+    ofc->m_bNoFrameBlur = noFrameBlur;
+    ofc->m_bNoFlowBlur = noFlowBlur;
 
     // Check if the Kernels are accessible
     const char* home = getenv("HOME");
