@@ -79,6 +79,9 @@ struct priv {
 	double m_dScalar; // The scalar used to determine the position between frame1 and frame2
 	volatile bool m_bOFCBusy; // Whether or not the optical flow calculation is currently running
 	bool m_bOFCFailed; // Whether or not the optical flow calculation has failed
+	double m_dPerfBufferUpper; // The upper performance buffer limit (determines when to decrease the quality)
+	double m_dPerfBufferLower; // The lower performance buffer limit (determines when to increase the quality)
+	int m_iPerfAdjustDelay; // The number of frames to not adjust the performance after a change
 
 	// Frame output
 	struct mp_image_pool *m_miSWPool; // The software image pool used to store the source frames
@@ -392,19 +395,29 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 	if (!OFCisDone) {
 		// OFC interruption is critical, so we reduce the resolution
 		if (AUTO_FRAME_SCALE && priv->m_cResolutionScalar < 5) {
+			priv->m_dPerfBufferLower += 0.2; // Increase the performance scalar so we need more head room to increase the quality again
 			priv->m_cResolutionScalar += 1;
 			vf_HopperRender_reinit_ofc(f);
+			priv->m_iPerfAdjustDelay = 3;
 		}
 		return;
+	}
+
+	// Adjust the performance buffer delay
+	if (priv->m_iPerfAdjustDelay > 0) {
+		priv->m_iPerfAdjustDelay -= 1;
+		return;
+	}
 
 	/*
 	* Calculation took longer than the threshold
 	*/
-	} else if ((currTotalCalcDuration + currTotalCalcDuration * 0.2) > priv->m_dSourceFrameTime) {
+	if ((currTotalCalcDuration * priv->m_dPerfBufferUpper) > priv->m_dSourceFrameTime) {
 		// Decrease the number of steps to reduce calculation time
 		if (AUTO_SEARCH_RADIUS_ADJUST && priv->m_iSearchRadius > MIN_SEARCH_RADIUS) {
 			priv->m_iSearchRadius = max(priv->m_iSearchRadius - 1, MIN_SEARCH_RADIUS);
 			priv->ofc->m_iSearchRadius = priv->m_iSearchRadius;
+			adjustSearchRadius(priv->ofc, priv->m_iSearchRadius);
 			return;
 
 		// We can't reduce the number of steps any further, so we reduce the resolution divider instead
@@ -419,13 +432,15 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 			return;
 		}
 
+		priv->m_iPerfAdjustDelay = 3;
+
 		// Disable Interpolation if we are too slow
-		if ((AUTO_FRAME_SCALE || AUTO_SEARCH_RADIUS_ADJUST) && ((currTotalCalcDuration + currTotalCalcDuration * 0.05) > priv->m_dSourceFrameTime)) priv->m_isInterpolationState = TooSlow;
+		if ((AUTO_FRAME_SCALE || AUTO_SEARCH_RADIUS_ADJUST) && ((currTotalCalcDuration * 1.05) > priv->m_dSourceFrameTime)) priv->m_isInterpolationState = TooSlow;
 
 	/*
 	* We have left over capacity
 	*/
-	} else if ((currTotalCalcDuration + currTotalCalcDuration * 0.4) < priv->m_dSourceFrameTime) {
+	} else if ((currTotalCalcDuration * priv->m_dPerfBufferLower) < priv->m_dSourceFrameTime) {
 		// Increase the frame scalar if we have enough leftover capacity
 		if (AUTO_FRAME_SCALE && priv->m_cResolutionScalar > 2 && priv->m_iSearchRadius >= MAX_SEARCH_RADIUS) {
 			priv->m_cNumTimesTooSlow = 0;
@@ -435,7 +450,9 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 		} else if (AUTO_SEARCH_RADIUS_ADJUST && priv->m_iSearchRadius < MAX_SEARCH_RADIUS) {
 			priv->m_iSearchRadius = min(priv->m_iSearchRadius + 1, MAX_SEARCH_RADIUS);
 			priv->ofc->m_iSearchRadius = priv->m_iSearchRadius;
+			adjustSearchRadius(priv->ofc, priv->m_iSearchRadius);
 		}
+		priv->m_iPerfAdjustDelay = 3;
 	}
 }
 
@@ -460,6 +477,7 @@ void *vf_HopperRender_optical_flow_calc_thread(void *arg)
     while (1) {
         sigwait(&set, &sig);
         if (sig == SIGUSR1) {
+			gettimeofday(&priv->m_teOFCCalcStart, NULL);
 			priv->m_bOFCBusy = true;
 
 			// Calculate the optical flow (frame 1 to frame 2)
@@ -665,11 +683,16 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 
 	// Check if the OFC is still busy
 	bool OFCisDone = true;
+	double currCalcTime = 0.0;
 	while (priv->m_bOFCBusy) {
 		if (OFCisDone) {
-			OFCisDone = false;
-			MP_WARN(f, "OFC was too slow!\n");
-			priv->ofc->m_bOFCTerminate = true; // Interrupts the OFC calculator
+			gettimeofday(&priv->m_teOFCCalcEnd, NULL);
+			currCalcTime = (priv->m_teOFCCalcEnd.tv_sec - priv->m_teOFCCalcStart.tv_sec) + ((priv->m_teOFCCalcEnd.tv_usec - priv->m_teOFCCalcStart.tv_usec) / 1000000.0);
+			if (currCalcTime > priv->m_dSourceFrameTime * 0.95) {
+				OFCisDone = false;
+				MP_WARN(f, "OFC was too slow!\n");
+				priv->ofc->m_bOFCTerminate = true; // Interrupts the OFC calculator
+			}
 		}
 	}
 
@@ -680,7 +703,6 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 	vf_HopperRender_auto_adjust_settings(f, OFCisDone);
 
     // Upload the source frame to the GPU buffers and blur it for OFC calculation
-    gettimeofday(&priv->m_teOFCCalcStart, NULL);
     ERR_CHECK(updateFrame(priv->ofc, img->planes, priv->m_foFrameOutput == BlurredFrames), "updateFrame", f);
 
 	// Calculate the optical flow
@@ -870,6 +892,9 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 	priv->m_dScalar = 0.0;
 	priv->m_bOFCBusy = false;
 	priv->m_bOFCFailed = false;
+	priv->m_dPerfBufferUpper = 1.2;
+	priv->m_dPerfBufferLower = 1.4;
+	priv->m_iPerfAdjustDelay = 0;
 
 	// Frame output
 	priv->m_miSWPool = mp_image_pool_new(NULL);
