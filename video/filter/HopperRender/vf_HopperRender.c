@@ -3,6 +3,8 @@
 #include <fcntl.h>
 #include <sys/time.h>
 #include <sys/stat.h>
+#include <signal.h>
+#include <unistd.h>
 #include "filters/filter_internal.h"
 #include "filters/user_filters.h"
 #include "video/mp_image_pool.h"
@@ -575,10 +577,10 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 	
 	// Draw the flow as an HSV image
 	if (priv->m_foFrameOutput == HSVFlow) {
-		ERR_CHECK(drawFlowAsHSV(priv->ofc, 0.5f), "drawFlowAsHSV", f);
+		ERR_CHECK(drawFlowAsHSV(priv->ofc, 0.5f, 0), "drawFlowAsHSV", f);
 	// Draw the flow as a grayscale image
 	} else if (priv->m_foFrameOutput == GreyFlow) {
-		ERR_CHECK(drawFlowAsGrayscale(priv->ofc), "drawFlowAsGrayscale", f);
+		ERR_CHECK(drawFlowAsHSV(priv->ofc, 0.5f, 1), "drawFlowAsHSVGrey", f);
 	// Show side by side comparison
 	} else if (priv->m_foFrameOutput == SideBySide1) {
 		ERR_CHECK(insertFrame(priv->ofc), "insertFrame", f);
