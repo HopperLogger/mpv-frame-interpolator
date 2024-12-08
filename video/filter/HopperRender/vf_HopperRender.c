@@ -19,6 +19,10 @@ typedef struct {
 } ThreadData;
 #endif
 
+#if DUMP_IMAGES
+static int dump_iter = 0;
+#endif
+
 typedef enum FrameOutput {
     WarpedFrame12,
     WarpedFrame21,
@@ -556,7 +560,6 @@ static void vf_HopperRender_init(struct mp_filter *f, int dimY, int dimX)
 * @param f: The video filter instance
 * @param planes: The planes of the output frame
 */
-static int dump_iter = 0;
 static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char** planes)
 {
 	struct priv *priv = f->priv;
@@ -591,19 +594,19 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 	}
 
 	// Save the result to a file
-	if (DUMP_IMAGES) {
-		// Get the home directory from the environment
-		const char* home = getenv("HOME");
-		if (home == NULL) {
-			MP_ERR(f, "HOME environment variable is not set.\n");
-			mp_filter_internal_mark_failed(f);
-			return;
-		}
-		char path[32];
-		snprintf(path, sizeof(path), "%s/dump/%d.bin", home, dump_iter);
-		dump_iter++;
-		ERR_CHECK(saveImage(priv->ofc, path), "saveImage", f);
+	#if DUMP_IMAGES
+	// Get the home directory from the environment
+	const char* home = getenv("HOME");
+	if (home == NULL) {
+		MP_ERR(f, "HOME environment variable is not set.\n");
+		mp_filter_internal_mark_failed(f);
+		return;
 	}
+	char path[32];
+	snprintf(path, sizeof(path), "%s/dump/%d.bin", home, dump_iter);
+	dump_iter++;
+	ERR_CHECK(saveImage(priv->ofc, path), "saveImage", f);
+	#endif
 	
 	// Download the result to the output buffer
 	ERR_CHECK(downloadFrame(priv->ofc, priv->ofc->m_outputFrame, planes), "downloadFrame", f);
@@ -877,12 +880,14 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 	priv->m_iNumIterations = NUM_ITERATIONS;
 	priv->m_iSearchRadius = INITIAL_SEARCH_RADIUS;
 	priv->m_bInitialized = false;
+	double display_fps = 60.0;
+	#if !DUMP_IMAGES
 	struct mp_stream_info *info = mp_filter_find_stream_info(f);
-    double display_fps = 60.0;
     if (info) {
         if (info->get_display_fps)
             display_fps = info->get_display_fps(info); // Set the target FPS to the display FPS
     }
+	#endif
 	priv->m_dTargetPTS = 1.0 / display_fps;
 
 	// Video info

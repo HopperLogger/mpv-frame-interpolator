@@ -21,8 +21,8 @@ __kernel void warpFrameKernel(__global const unsigned short* frame1,
 		// Get the current offsets to use
 		const int scaledCx = cx >> resolutionScalar; // The X-Index of the current thread in the offset array
 		const int scaledCy = cy >> resolutionScalar; // The Y-Index of the current thread in the offset array
-		const int offsetX = (int)((float)(offsetArray[scaledCy * lowDimX + scaledCx]) * frameScalar) ;
-		const int offsetY = (int)((float)(offsetArray[directionIdxOffset + scaledCy * lowDimX + scaledCx]) * frameScalar) ;
+		const int offsetX = (int)round((float)(offsetArray[scaledCy * lowDimX + scaledCx]) * frameScalar) ;
+		const int offsetY = (int)round((float)(offsetArray[directionIdxOffset + scaledCy * lowDimX + scaledCx]) * frameScalar) ;
 		const int newCx = cx + offsetX;
 		const int newCy = cy + offsetY;
 
@@ -36,8 +36,8 @@ __kernel void warpFrameKernel(__global const unsigned short* frame1,
 	} else if (cz == 1 && cy < (dimY >> 1) && cx < dimX) {
 		const int scaledCx = (cx >> resolutionScalar) & ~1; // The X-Index of the current thread in the offset array
 		const int scaledCy = (cy >> resolutionScalar) << 1; // The Y-Index of the current thread in the offset array
-		const int offsetX = (int)((float)(offsetArray[scaledCy * lowDimX + scaledCx]) * frameScalar);
-		const int offsetY = (int)((float)(offsetArray[directionIdxOffset + scaledCy * lowDimX + scaledCx]) * frameScalar) >> 1;
+		const int offsetX = (int)round((float)(offsetArray[scaledCy * lowDimX + scaledCx]) * frameScalar);
+		const int offsetY = (int)round((float)(offsetArray[directionIdxOffset + scaledCy * lowDimX + scaledCx]) * frameScalar * 0.5);
 		
 		const int newCx = cx + offsetX;
 		const int newCy = cy + offsetY;
