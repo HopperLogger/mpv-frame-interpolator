@@ -224,15 +224,24 @@ bool updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const b
 	ERR_CHECK(blurFrameArray(ofc, ofc->m_frame[0], ofc->m_blurredFrame[0], directOutput));
 	
 	// Swap the frame buffers
-	cl_mem temp1 = ofc->m_frame[0];
+	cl_mem temp0 = ofc->m_frame[0];
 	ofc->m_frame[0] = ofc->m_frame[1];
 	ofc->m_frame[1] = ofc->m_frame[2];
-	ofc->m_frame[2] = temp1;
+	ofc->m_frame[2] = temp0;
 
-	temp1 = ofc->m_blurredFrame[0];
+	temp0 = ofc->m_blurredFrame[0];
 	ofc->m_blurredFrame[0] = ofc->m_blurredFrame[1];
 	ofc->m_blurredFrame[1] = ofc->m_blurredFrame[2];
-	ofc->m_blurredFrame[2] = temp1;
+	ofc->m_blurredFrame[2] = temp0;
+
+    // Swap the blurred offset arrays
+    temp0 = ofc->m_blurredOffsetArray12[0];
+    ofc->m_blurredOffsetArray12[0] = ofc->m_blurredOffsetArray12[1];
+    ofc->m_blurredOffsetArray12[1] = temp0;
+
+    temp0 = ofc->m_blurredOffsetArray21[0];
+    ofc->m_blurredOffsetArray21[0] = ofc->m_blurredOffsetArray21[1];
+    ofc->m_blurredOffsetArray21[1] = temp0;
     return 0;
 }
 
@@ -317,15 +326,6 @@ bool adjustSearchRadius(struct OpticalFlowCalc *ofc, int newSearchRadius) {
 * @param iNumIterations: Number of iterations to calculate the optical flow
 */
 bool calculateOpticalFlow(struct OpticalFlowCalc *ofc, int iNumIterations) {
-    // Swap the blurred offset arrays
-    cl_mem temp0 = ofc->m_blurredOffsetArray12[0];
-    ofc->m_blurredOffsetArray12[0] = ofc->m_blurredOffsetArray12[1];
-    ofc->m_blurredOffsetArray12[1] = temp0;
-
-    temp0 = ofc->m_blurredOffsetArray21[0];
-    ofc->m_blurredOffsetArray21[0] = ofc->m_blurredOffsetArray21[1];
-    ofc->m_blurredOffsetArray21[1] = temp0;
-
 	// We set the initial window size to the next larger power of 2
 	int windowDim = 1;
 	int maxDim = max(ofc->m_iLowDimX, ofc->m_iLowDimY);
@@ -452,7 +452,7 @@ bool warpFrames(struct OpticalFlowCalc *ofc, const float fScalar, const int outp
 	// ###### ARTIFACT REMOVAL ######
 	// ##############################
 	// Frame 1 to Frame 2
-	if (outputMode != 1) {
+	/* if (outputMode != 1) {
         cl_int err = clSetKernelArg(ofc->m_artifactRemovalKernel, 0, sizeof(cl_mem), &ofc->m_frame[0]);
         err |= clSetKernelArg(ofc->m_artifactRemovalKernel, 1, sizeof(cl_mem), &ofc->m_hitCount12);
         err |= clSetKernelArg(ofc->m_artifactRemovalKernel, 2, sizeof(cl_mem), (outputMode < 2) ? &ofc->m_outputFrame : &ofc->m_warpedFrame12);
@@ -474,7 +474,7 @@ bool warpFrames(struct OpticalFlowCalc *ofc, const float fScalar, const int outp
         ERR_CHECK(cl_enqueue_kernel(ofc->m_WarpQueue2, ofc->m_artifactRemovalKernel, 3, ofc->m_grid16x16x2, ofc->m_threads8x8x1, "warpFrames"));
 	}
 	if (outputMode != 1) ERR_CHECK(cl_finish_queue(ofc->m_WarpQueue1, "warpFrames"));
-	if (outputMode != 0) ERR_CHECK(cl_finish_queue(ofc->m_WarpQueue2, "warpFrames"));
+	if (outputMode != 0) ERR_CHECK(cl_finish_queue(ofc->m_WarpQueue2, "warpFrames")); */
     return 0;
 }
 
