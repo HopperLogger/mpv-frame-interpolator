@@ -4,6 +4,7 @@
 #define CL_TARGET_OPENCL_VERSION 300
 #include <stdbool.h>
 #include <CL/cl.h>
+#include "config.h"
 
 typedef struct OpticalFlowCalc {
 	// Video properties
@@ -56,16 +57,15 @@ typedef struct OpticalFlowCalc {
 	cl_mem m_summedUpDeltaArray; // Array containing the summed up delta values of each window
 	cl_mem m_lowestLayerArray; // Array containing the comparison results of the two normalized delta arrays (true if the new value decreased)
 	cl_mem m_outputFrame; // Array containing the output frame
-	cl_mem m_hitCount12; // Array containing the number of times a pixel was hit
-	cl_mem m_hitCount21; // Array containing the number of times a pixel was hit
 	cl_mem m_frame[3]; // Array containing the last three frames
 	cl_mem m_blurredFrame[3]; // Array containing the last three frames after blurring
 	cl_mem m_warpedFrame12; // Array containing the warped frame (frame 1 to frame 2)
 	cl_mem m_warpedFrame21; // Array containing the warped frame (frame 2 to frame 1)
+	#if DUMP_IMAGES
 	unsigned short* m_imageArrayCPU; // Array containing the image data
+	#endif
 
 	// Kernels
-	cl_kernel m_processFrameKernel;
 	cl_kernel m_blurFrameKernel;
 	cl_kernel m_setInitialOffsetKernel;
 	cl_kernel m_calcDeltaSumsKernel;
@@ -73,9 +73,7 @@ typedef struct OpticalFlowCalc {
 	cl_kernel m_adjustOffsetArrayKernel;
 	cl_kernel m_flipFlowKernel;
 	cl_kernel m_blurFlowKernel;
-	cl_kernel m_cleanFlowKernel;
 	cl_kernel m_warpFrameKernel;
-	cl_kernel m_artifactRemovalKernel;
 	cl_kernel m_blendFrameKernel;
 	cl_kernel m_insertFrameKernel;
 	cl_kernel m_sideBySideFrameKernel;
@@ -89,8 +87,6 @@ bool adjustSearchRadius(struct OpticalFlowCalc *ofc, int newSearchRadius);
 bool setKernelParameters(struct OpticalFlowCalc *ofc);
 bool updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const bool directOutput);
 bool downloadFrame(struct OpticalFlowCalc *ofc, const cl_mem pInBuffer, unsigned char** pOutBuffer);
-bool processFrame(struct OpticalFlowCalc *ofc, unsigned char** pOutBuffer, const int frameCounter);
-bool blurFrameArray(struct OpticalFlowCalc *ofc, const cl_mem frame, cl_mem blurredFrame, const bool directOutput);
 bool calculateOpticalFlow(struct OpticalFlowCalc *ofc, int iNumIterations);
 bool flipFlow(struct OpticalFlowCalc *ofc);
 bool blurFlowArrays(struct OpticalFlowCalc *ofc);
@@ -99,7 +95,9 @@ bool blendFrames(struct OpticalFlowCalc *ofc, const float fScalar);
 bool insertFrame(struct OpticalFlowCalc *ofc);
 bool sideBySideFrame(struct OpticalFlowCalc *ofc, const float fScalar, const int frameCounter);
 bool drawFlowAsHSV(struct OpticalFlowCalc *ofc, const float blendScalar, const int bwOutput);
-bool saveImage(struct OpticalFlowCalc *ofc, const char* filePath);
 bool tearingTest(struct OpticalFlowCalc *ofc);
+#if DUMP_IMAGES
+bool saveImage(struct OpticalFlowCalc *ofc, const char* filePath);
+#endif
 
 #endif // OPTICALFLOWCALC_H

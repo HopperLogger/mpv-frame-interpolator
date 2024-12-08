@@ -1,7 +1,6 @@
 // Kernel that warps a frame according to the offset array
 __kernel void warpFrameKernel(__global const unsigned short* frame1,
 							  __global const char* offsetArray,
-							  __global int* hitCount,
 							  __global unsigned short* warpedFrame,
 							  const float frameScalar,
 							  const int lowDimY,
@@ -29,7 +28,6 @@ __kernel void warpFrameKernel(__global const unsigned short* frame1,
 		// Check if the current pixel is inside the frame
 		if (newCy >= 0 && newCy < dimY && newCx >= 0 && newCx < dimX) {
 			warpedFrame[newCy * dimX + newCx] = frame1[cy * dimX + cx];
-			atomic_add(&hitCount[newCy * dimX + newCx], 1);
 		}
 
 	// U/V-Channel

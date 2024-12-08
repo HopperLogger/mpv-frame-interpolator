@@ -543,8 +543,8 @@ static void vf_HopperRender_init(struct mp_filter *f, int dimY, int dimX)
 	const bool noFrameBlur = dimY > 1080;
 	const bool noFlowBlur = false;
 	if (noFrameBlur) {
-		priv->m_iMinResolutionScalar ++;
-		priv->m_iResolutionScalar ++;
+		priv->m_iMinResolutionScalar++;
+		priv->m_iResolutionScalar++;
 	}
 
 	// Initialize the optical flow calculator
@@ -728,8 +728,10 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f)
 		vf_HopperRender_interpolate_frame(f, img->planes);
         priv->m_iIntFrameNum = 1;
         mp_filter_internal_mark_progress(f);
-    } else {
-        ERR_CHECK(processFrame(priv->ofc, img->planes, priv->m_iFrameCounter), "processFrame", f);
+    } else if (priv->m_iFrameCounter >= 2) {
+		// First frame is directly output, therefore we don't change the output buffer
+		// After the first frame, we always output the previous frame
+		ERR_CHECK(downloadFrame(priv->ofc, priv->ofc->m_frame[1], img->planes), "processFrame", f);
     }
 
     // Deliver the source frame
@@ -826,6 +828,28 @@ static const struct mp_filter_info vf_HopperRender_filter = {
 */
 static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *options)
 {
+	// Validate the defines
+	if (INITIAL_RESOLUTION_SCALAR < 0 || INITIAL_RESOLUTION_SCALAR > 5) {
+		MP_ERR(parent, "INITIAL_RESOLUTION_SCALAR must be between 0 and 5.\n");
+		return NULL;
+	}
+	if (INITIAL_SEARCH_RADIUS < 2) {
+		MP_ERR(parent, "INITIAL_SEARCH_RADIUS must be at least 2.\n");
+		return NULL;
+	}
+	if (NUM_ITERATIONS < 0) {
+		MP_ERR(parent, "NUM_ITERATIONS must be a positive number. Set it to 0 to automatically use the maximum number of iterations.\n");
+		return NULL;
+	}
+	if (MIN_SEARCH_RADIUS < 2) {
+		MP_ERR(parent, "MIN_SEARCH_RADIUS must be at least 2.\n");
+		return NULL;
+	}
+	if (MAX_SEARCH_RADIUS < 2) {
+		MP_ERR(parent, "MAX_SEARCH_RADIUS must be at least 2.\n");
+		return NULL;
+	}
+
 	// Create the video filter
     struct mp_filter *f = mp_filter_create(parent, &vf_HopperRender_filter);
     if (!f) {
