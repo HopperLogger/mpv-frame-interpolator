@@ -80,7 +80,6 @@ typedef struct OpticalFlowCalc {
 	cl_kernel m_insertFrameKernel;
 	cl_kernel m_sideBySideFrameKernel;
 	cl_kernel m_convertFlowToHSVKernel;
-	cl_kernel m_convertFlowToGrayscaleKernel;
 	cl_kernel m_tearingTestKernel;
 } OpticalFlowCalc;
 
@@ -99,8 +98,7 @@ bool warpFrames(struct OpticalFlowCalc *ofc, const float fScalar, const int outp
 bool blendFrames(struct OpticalFlowCalc *ofc, const float fScalar);
 bool insertFrame(struct OpticalFlowCalc *ofc);
 bool sideBySideFrame(struct OpticalFlowCalc *ofc, const float fScalar, const int frameCounter);
-bool drawFlowAsHSV(struct OpticalFlowCalc *ofc, const float blendScalar);
-bool drawFlowAsGrayscale(struct OpticalFlowCalc *ofc);
+bool drawFlowAsHSV(struct OpticalFlowCalc *ofc, const float blendScalar, const int bwOutput);
 bool saveImage(struct OpticalFlowCalc *ofc, const char* filePath);
 bool tearingTest(struct OpticalFlowCalc *ofc);
 

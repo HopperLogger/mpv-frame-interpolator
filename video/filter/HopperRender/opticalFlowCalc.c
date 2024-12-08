@@ -573,36 +573,19 @@ bool sideBySideFrame(struct OpticalFlowCalc *ofc, const float fScalar, const int
 *
 * @param ofc: Pointer to the optical flow calculator
 * @param blendScalar: The scalar that determines how much of the source frame is blended with the flow
+* @param bwOutput: Whether to output the flow as a black and white image
 */
-bool drawFlowAsHSV(struct OpticalFlowCalc *ofc, const float blendScalar) {
+bool drawFlowAsHSV(struct OpticalFlowCalc *ofc, const float blendScalar, const int bwOutput) {
     cl_int err = clSetKernelArg(ofc->m_convertFlowToHSVKernel, 0, sizeof(cl_mem), &ofc->m_blurredOffsetArray12[0]);
     err |= clSetKernelArg(ofc->m_convertFlowToHSVKernel, 2, sizeof(cl_mem), &ofc->m_frame[1]);
     err |= clSetKernelArg(ofc->m_convertFlowToHSVKernel, 3, sizeof(float), &blendScalar);
+    err |= clSetKernelArg(ofc->m_convertFlowToHSVKernel, 11, sizeof(int), &bwOutput);
     if (err != CL_SUCCESS) {
         fprintf(stderr, "Error: Unable to set kernel arguments\n");
         return 1;
     }
     ERR_CHECK(cl_enqueue_kernel(ofc->m_WarpQueue1, ofc->m_convertFlowToHSVKernel, 3, ofc->m_grid16x16x2, ofc->m_threads16x16x1, "drawFlowAsHSV"));
     ERR_CHECK(cl_finish_queue(ofc->m_WarpQueue1, "drawFlowAsHSV"));
-    return 0;
-}
-
-/*
-* Draws the flow as an grayscale image
-*
-* @param ofc: Pointer to the optical flow calculator
-*/
-bool drawFlowAsGrayscale(struct OpticalFlowCalc *ofc) {
-    cl_int err = clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 0, sizeof(cl_mem), &ofc->m_blurredOffsetArray12[0]);
-    err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 2, sizeof(cl_mem), &ofc->m_frame[1]);
-    err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 10, sizeof(float), &ofc->m_fMaxVal);
-    err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 11, sizeof(int), &ofc->m_iMiddleValue);
-    if (err != CL_SUCCESS) {
-        fprintf(stderr, "Error: Unable to set kernel arguments\n");
-        return 1;
-    }
-    ERR_CHECK(cl_enqueue_kernel(ofc->m_WarpQueue1, ofc->m_convertFlowToGrayscaleKernel, 3, ofc->m_grid16x16x2, ofc->m_threads16x16x1, "drawFlowAsGrayscale"));
-    ERR_CHECK(cl_finish_queue(ofc->m_WarpQueue1, "drawFlowAsGrayscale"));
     return 0;
 }
 
@@ -826,14 +809,6 @@ bool setKernelParameters(struct OpticalFlowCalc *ofc) {
     err |= clSetKernelArg(ofc->m_convertFlowToHSVKernel, 8, sizeof(int), &ofc->m_iResolutionScalar);
     err |= clSetKernelArg(ofc->m_convertFlowToHSVKernel, 9, sizeof(int), &ofc->m_iDirectionIdxOffset);
     err |= clSetKernelArg(ofc->m_convertFlowToHSVKernel, 10, sizeof(int), &ofc->m_iChannelIdxOffset);
-    err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 1, sizeof(cl_mem), &ofc->m_outputFrame);
-    err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 3, sizeof(int), &ofc->m_iLowDimY);
-    err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 4, sizeof(int), &ofc->m_iLowDimX);
-    err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 5, sizeof(int), &ofc->m_iDimY);
-    err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 6, sizeof(int), &ofc->m_iDimX);
-    err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 7, sizeof(int), &ofc->m_iResolutionScalar);
-    err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 8, sizeof(int), &ofc->m_iDirectionIdxOffset);
-    err |= clSetKernelArg(ofc->m_convertFlowToGrayscaleKernel, 9, sizeof(int), &ofc->m_iChannelIdxOffset);
     err |= clSetKernelArg(ofc->m_flipFlowKernel, 0, sizeof(cl_mem), &ofc->m_offsetArray12);
     err |= clSetKernelArg(ofc->m_flipFlowKernel, 1, sizeof(cl_mem), &ofc->m_offsetArray21);
     err |= clSetKernelArg(ofc->m_flipFlowKernel, 2, sizeof(int), &ofc->m_iLowDimY);
@@ -900,7 +875,6 @@ void freeOFC(struct OpticalFlowCalc *ofc) {
     clReleaseKernel(ofc->m_insertFrameKernel);
     clReleaseKernel(ofc->m_sideBySideFrameKernel);
     clReleaseKernel(ofc->m_convertFlowToHSVKernel);
-    clReleaseKernel(ofc->m_convertFlowToGrayscaleKernel);
 
     // Release the command queues
     clReleaseCommandQueue(ofc->m_OFCQueue);
@@ -918,11 +892,9 @@ void freeOFC(struct OpticalFlowCalc *ofc) {
 static bool detectDevices(struct OpticalFlowCalc *ofc) {
     // Capabilities we are going to check for
     cl_ulong availableVRAM;
-    const int numLayers = ofc->m_iSearchRadius * ofc->m_iSearchRadius;
-    const cl_ulong requiredVRAM = (32 * ofc->m_iDimY * ofc->m_iDimX) +
-                                  ((numLayers + 5) * 2 * ofc->m_iLowDimY * ofc->m_iLowDimX) +
-                                  (numLayers * ofc->m_iLowDimY * ofc->m_iLowDimX * 4) +
-                                  (ofc->m_iLowDimY * ofc->m_iLowDimX * 2);
+    const cl_ulong requiredVRAM = 32 * ofc->m_iDimY * ofc->m_iDimX +
+                                  MAX_SEARCH_RADIUS * MAX_SEARCH_RADIUS * 3 * ofc->m_iLowDimY * ofc->m_iLowDimX +
+                                  12 * ofc->m_iLowDimY * ofc->m_iLowDimX;
     printf("[HopperRender] Required VRAM: %lu MB\n", requiredVRAM / 1024 / 1024);
     size_t maxWorkGroupSizes[3];
     const size_t requiredWorkGroupSizes[3] = {16, 16, 1};
@@ -1081,11 +1053,13 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ERR_CHECK(cl_create_buffer(&ofc->m_lowestLayerArray, ofc->m_clContext, CL_MEM_READ_WRITE, ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(unsigned short), "lowestLayerArray"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_hitCount12, ofc->m_clContext, CL_MEM_READ_WRITE, dimY * dimX * sizeof(int), "hitCount12"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_hitCount21, ofc->m_clContext, CL_MEM_READ_WRITE, dimY * dimX * sizeof(int), "hitCount21"));
+    #if DUMP_IMAGES
     ofc->m_imageArrayCPU = (unsigned short*)malloc(3 * dimY * dimX);
     if (!ofc->m_imageArrayCPU) {
         fprintf(stderr, "Error allocating CPU memory for m_imageArrayCPU\n");
         return 1;
     }
+    #endif
 
     // Compile the kernels
     ERR_CHECK(cl_create_kernel(&ofc->m_processFrameKernel, ofc->m_clContext, ofc->m_clDevice_id, "processFrameKernel"));
@@ -1103,7 +1077,6 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ERR_CHECK(cl_create_kernel(&ofc->m_insertFrameKernel, ofc->m_clContext, ofc->m_clDevice_id, "insertFrameKernel"));
 	ERR_CHECK(cl_create_kernel(&ofc->m_sideBySideFrameKernel, ofc->m_clContext, ofc->m_clDevice_id, "sideBySideFrameKernel"));
 	ERR_CHECK(cl_create_kernel(&ofc->m_convertFlowToHSVKernel, ofc->m_clContext, ofc->m_clDevice_id, "convertFlowToHSVKernel"));
-	ERR_CHECK(cl_create_kernel(&ofc->m_convertFlowToGrayscaleKernel, ofc->m_clContext, ofc->m_clDevice_id, "convertFlowToGrayscaleKernel"));
     ERR_CHECK(cl_create_kernel(&ofc->m_tearingTestKernel, ofc->m_clContext, ofc->m_clDevice_id, "tearingTestKernel"));
 
     // Set kernel arguments
