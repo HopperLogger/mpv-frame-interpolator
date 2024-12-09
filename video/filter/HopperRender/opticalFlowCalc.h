@@ -61,10 +61,6 @@ typedef struct OpticalFlowCalc {
 	cl_mem m_blurredFrame[3]; // Array containing the last three frames after blurring
 	cl_mem m_warpedFrame12; // Array containing the warped frame (frame 1 to frame 2)
 	cl_mem m_warpedFrame21; // Array containing the warped frame (frame 2 to frame 1)
-	cl_mem m_warpedFrame12int; // Array containing the warped frame (frame 1 to frame 2)
-	cl_mem m_warpedFrame21int; // Array containing the warped frame (frame 2 to frame 1)
-	cl_mem m_hitCount12;
-	cl_mem m_hitCount21;
 	#if DUMP_IMAGES
 	unsigned short* m_imageArrayCPU; // Array containing the image data
 	#endif
@@ -78,7 +74,6 @@ typedef struct OpticalFlowCalc {
 	cl_kernel m_flipFlowKernel;
 	cl_kernel m_blurFlowKernel;
 	cl_kernel m_warpFrameKernel;
-	cl_kernel m_artifactRemovalKernel;
 	cl_kernel m_blendFrameKernel;
 	cl_kernel m_insertFrameKernel;
 	cl_kernel m_sideBySideFrameKernel;
