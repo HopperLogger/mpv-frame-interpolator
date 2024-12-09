@@ -569,7 +569,7 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 	// Warp frames
 	if (priv->m_foFrameOutput != HSVFlow && 
 		priv->m_foFrameOutput != BlurredFrames) {
-		ERR_CHECK(warpFrames(priv->ofc, priv->m_dScalar, priv->m_foFrameOutput), "warpFrames", f);
+		ERR_CHECK(warpFrames(priv->ofc, priv->m_dScalar, priv->m_foFrameOutput, (int)(priv->m_iIntFrameNum == 0)), "warpFrames", f);
 	}
 	
 	// Blend the frames together
@@ -839,6 +839,10 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 	}
 	if (NUM_ITERATIONS < 0) {
 		MP_ERR(parent, "NUM_ITERATIONS must be a positive number. Set it to 0 to automatically use the maximum number of iterations.\n");
+		return NULL;
+	}
+	if (NUM_STEPS < 1) {
+		MP_ERR(parent, "NUM_STEPS must be at least 1.\n");
 		return NULL;
 	}
 	if (MIN_SEARCH_RADIUS < 2) {

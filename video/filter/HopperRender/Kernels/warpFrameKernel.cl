@@ -2,7 +2,7 @@
 __kernel void warpFrameKernel(__global const unsigned short* frame1,
 							  __global const char* offsetArray,
 							  __global int* hitCount,
-							  __global unsigned short* warpedFrame,
+							  __global int* warpedFrame,
 							  const float frameScalar,
 							  const int lowDimY,
 							  const int lowDimX,
@@ -28,7 +28,7 @@ __kernel void warpFrameKernel(__global const unsigned short* frame1,
 
 		// Check if the current pixel is inside the frame
 		if (newCy >= 0 && newCy < dimY && newCx >= 0 && newCx < dimX) {
-			warpedFrame[newCy * dimX + newCx] = frame1[cy * dimX + cx];
+			atomic_add(&warpedFrame[newCy * dimX + newCx], (int)frame1[cy * dimX + cx]);
 			atomic_add(&hitCount[newCy * dimX + newCx], 1);
 		}
 
@@ -46,11 +46,13 @@ __kernel void warpFrameKernel(__global const unsigned short* frame1,
 		if (newCy >= 0 && newCy < (dimY >> 1) && newCx >= 0 && newCx < dimX) {
 			// U-Channel
 			if ((cx & 1) == 0) {
-				warpedFrame[channelIdxOffset + newCy * dimX + (newCx & ~1)] = frame1[channelIdxOffset + cy * dimX + cx];
+				atomic_add(&warpedFrame[channelIdxOffset + newCy * dimX + (newCx & ~1)], (int)frame1[channelIdxOffset + cy * dimX + cx]);
+				atomic_add(&hitCount[channelIdxOffset + newCy * dimX + (newCx & ~1)], 1);
 
 			// V-Channel
 			} else {
-				warpedFrame[channelIdxOffset + newCy * dimX + (newCx & ~1) + 1] = frame1[channelIdxOffset + cy * dimX + cx];
+				atomic_add(&warpedFrame[channelIdxOffset + newCy * dimX + (newCx & ~1) + 1], (int)frame1[channelIdxOffset + cy * dimX + cx]);
+				atomic_add(&hitCount[channelIdxOffset + newCy * dimX + (newCx & ~1) + 1], 1);
 			}
 		}
 	}
