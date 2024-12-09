@@ -1,3 +1,14 @@
+// Ensures the addition of a and b does not overflow
+char safe_add(char a, char b) {
+    if (a > 0 && b > 0 && a > CHAR_MAX - b) {
+        return CHAR_MAX;
+    }
+    if (a < 0 && b < 0 && a < CHAR_MIN - b) {
+        return CHAR_MIN;
+    }
+    return a + b;
+}
+
 // Kernel that adjusts the offset array based on the comparison results
 __kernel void adjustOffsetArrayKernel(__global char* offsetArray,
 									  __global const unsigned short* globalLowestLayerArray,
@@ -39,8 +50,8 @@ __kernel void adjustOffsetArrayKernel(__global char* offsetArray,
 				continue;
 			}
 			if (cz != lowestLayer) {
-				offsetArray[cz * layerIdxOffset + threadIndex2D] = idealX + offsetX;
-				offsetArray[directionIdxOffset + cz * layerIdxOffset + threadIndex2D] = idealY + offsetY;
+				offsetArray[cz * layerIdxOffset + threadIndex2D] = safe_add(idealX, offsetX);
+				offsetArray[directionIdxOffset + cz * layerIdxOffset + threadIndex2D] = safe_add(idealY, offsetY);
 				i++;
 			}
 		}

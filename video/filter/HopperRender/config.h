@@ -1,13 +1,21 @@
-#define INITIAL_RESOLUTION_SCALAR 2 // The initial resolution scalar (0: Full resolution, 1: Half resolution, 2: Quarter resolution, 3: Eighth resolution, 4: Sixteenth resolution, ...)
-#define INITIAL_SEARCH_RADIUS 7 // The initial radius in which the optical flow calculation will search for the best match
-#define NUM_ITERATIONS 11 // Number of iterations to use in the optical flow calculation (0: As many as possible)
-#define NUM_STEPS 2 // How many repetitions of each iteration will be executed to find the best offset for each window
+// Quality Adjustments
+#define MAX_RES_SCALAR 2 // The maximum resolution scalar used to calculate the optical flow (0: Full resolution, 1: Half resolution, 2: Quarter resolution, 3: Eighth resolution, 4: Sixteenth resolution, ...)
+
+#define NUM_ITERATIONS 0 // How many times the window size used in the ofc calculation will be halved. This controls how precise the optical flow gets. (0: As often as possible)
+
+#define MIN_SEARCH_RADIUS 5 // The minimum window size used in the ofc calculation
+#define MAX_SEARCH_RADIUS 11 // The maximum window size used in the ofc calculation
+
+#define MAX_NUM_STEPS 12 // The maximum number of times to repeat each iteration to find the best offset for each window (allows farther movement to be detected)
+
+// Performance Adjustments
 #define AUTO_FRAME_SCALE 1 // Whether to automatically reduce/increase the calculation resolution depending on performance (0: Disabled, 1: Enabled)
-#define AUTO_SEARCH_RADIUS_ADJUST 1 // Whether to automatically reduce/increase the number of calculation steps depending on performance (0: Disabled, 1: Enabled)
-#define MIN_SEARCH_RADIUS 5 // The minimum number of calculation steps (if below this, resolution will be decreased or calculation disabled)
-#define MAX_SEARCH_RADIUS 11 // The maximum number of calculation steps (if reached, resolution will be increased or steps will be kept at this number)
+#define AUTO_SEARCH_RADIUS_ADJUST 1 // Whether to automatically reduce/increase the number of calculation steps and window size depending on performance (0: Disabled, 1: Enabled)
+
+#define UPPER_PERF_BUFFER 1.2 // The upper performance buffer, i.e. calc_time * upper_buffer > frame_time triggers quality reduction
+#define LOWER_PERF_BUFFER 1.4 // The lower performance buffer, i.e. calc_time * lower_buffer < frame_time triggers quality improvement
 
 // Debugging
-#define DUMP_IMAGES 0 // Whether or not to dump the images to disk (0: Disabled, 1: Enabled)
+#define DUMP_IMAGES 0 // Whether or not to dump the warped frames to the 'dump' folder (0: Disabled, 1: Enabled)
 #define INC_APP_IND 1 // Whether or not to include the AppIndicator (0: Disabled, 1: Enabled)
-#define SAVE_STATS 0 // Whether or not to save the OFC Calc Times to a log file (0: Disabled, 1: Enabled)
+#define SAVE_STATS 0 // Whether or not to save the ofc Calc Times to a log file (0: Disabled, 1: Enabled)

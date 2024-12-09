@@ -87,7 +87,7 @@ bool adjustSearchRadius(struct OpticalFlowCalc *ofc, int newSearchRadius);
 bool setKernelParameters(struct OpticalFlowCalc *ofc);
 bool updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const bool directOutput);
 bool downloadFrame(struct OpticalFlowCalc *ofc, const cl_mem pInBuffer, unsigned char** pOutBuffer);
-bool calculateOpticalFlow(struct OpticalFlowCalc *ofc, int iNumIterations);
+bool calculateOpticalFlow(struct OpticalFlowCalc *ofc, int iNumIterations, int iNumSteps);
 bool flipFlow(struct OpticalFlowCalc *ofc);
 bool blurFlowArrays(struct OpticalFlowCalc *ofc);
 bool warpFrames(struct OpticalFlowCalc *ofc, const float fScalar, const int outputMode, const int newFrame);
