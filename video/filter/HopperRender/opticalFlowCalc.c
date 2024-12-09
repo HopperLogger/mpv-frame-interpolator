@@ -354,65 +354,35 @@ bool warpFrames(struct OpticalFlowCalc *ofc, const float fScalar, const int outp
 	// Calculate the blend scalar
 	const float frameScalar12 = fScalar;
 	const float frameScalar21 = 1.0f - fScalar;
+    
+    // Flush the warped frame buffers to avoid artifacts from previous frames
+    if (newFrame) {
+        ERR_CHECK(cl_copy_buffer(ofc->m_WarpQueue1, ofc->m_frame[0], 0, ofc->m_warpedFrame12, 0, 3 * ofc->m_iDimY * ofc->m_iDimX, "warpFrames"));
+        ERR_CHECK(cl_copy_buffer(ofc->m_WarpQueue2, ofc->m_frame[1], 0, ofc->m_warpedFrame21, 0, 3 * ofc->m_iDimY * ofc->m_iDimX, "warpFrames"));
+    }
 
-	// Reset the hit count array
-    ERR_CHECK(cl_zero_buffer(ofc->m_OFCQueue, ofc->m_hitCount12, 1.5 * ofc->m_iDimY * ofc->m_iDimX * sizeof(int), sizeof(int), "warpFrames"));
-    ERR_CHECK(cl_zero_buffer(ofc->m_OFCQueue, ofc->m_hitCount21, 1.5 * ofc->m_iDimY * ofc->m_iDimX * sizeof(int), sizeof(int), "warpFrames"));
-    ERR_CHECK(cl_zero_buffer(ofc->m_OFCQueue, ofc->m_warpedFrame12int, 1.5 * ofc->m_iDimY * ofc->m_iDimX * sizeof(int), sizeof(int), "warpFrames"));
-    ERR_CHECK(cl_zero_buffer(ofc->m_OFCQueue, ofc->m_warpedFrame21int, 1.5 * ofc->m_iDimY * ofc->m_iDimX * sizeof(int), sizeof(int), "warpFrames"));
-
-	// #####################
-	// ###### WARPING ######
-	// #####################
-	// Frame 1 to Frame 2
+	// Warp Frame 1 to Frame 2
     if (outputMode != 1) {
         cl_int err = clSetKernelArg(ofc->m_warpFrameKernel, 0, sizeof(cl_mem), &ofc->m_frame[0]);
         err |= clSetKernelArg(ofc->m_warpFrameKernel, 1, sizeof(cl_mem), &ofc->m_blurredOffsetArray12[0]);
-        err |= clSetKernelArg(ofc->m_warpFrameKernel, 2, sizeof(cl_mem), &ofc->m_hitCount12);
-        err |= clSetKernelArg(ofc->m_warpFrameKernel, 3, sizeof(cl_mem), &ofc->m_warpedFrame12int);
-        err |= clSetKernelArg(ofc->m_warpFrameKernel, 4, sizeof(float), &frameScalar12);
+        err |= clSetKernelArg(ofc->m_warpFrameKernel, 2, sizeof(cl_mem), &ofc->m_warpedFrame12);
+        err |= clSetKernelArg(ofc->m_warpFrameKernel, 3, sizeof(float), &frameScalar12);
         ERR_MSG_CHECK(err, "warpFrames");
         ERR_CHECK(cl_enqueue_kernel(ofc->m_WarpQueue1, ofc->m_warpFrameKernel, 3, ofc->m_grid16x16x2, ofc->m_threads16x16x1, "warpFrames"));
     }
 
-	// Frame 2 to Frame 1
+	// Warp Frame 2 to Frame 1
 	if (outputMode != 0) {
         cl_int err = clSetKernelArg(ofc->m_warpFrameKernel, 0, sizeof(cl_mem), &ofc->m_frame[1]);
         err |= clSetKernelArg(ofc->m_warpFrameKernel, 1, sizeof(cl_mem), &ofc->m_blurredOffsetArray21[0]);
-        err |= clSetKernelArg(ofc->m_warpFrameKernel, 2, sizeof(cl_mem), &ofc->m_hitCount21);
-        err |= clSetKernelArg(ofc->m_warpFrameKernel, 3, sizeof(cl_mem), &ofc->m_warpedFrame21int);
-        err |= clSetKernelArg(ofc->m_warpFrameKernel, 4, sizeof(float), &frameScalar21);
+        err |= clSetKernelArg(ofc->m_warpFrameKernel, 2, sizeof(cl_mem), &ofc->m_warpedFrame21);
+        err |= clSetKernelArg(ofc->m_warpFrameKernel, 3, sizeof(float), &frameScalar21);
         ERR_MSG_CHECK(err, "warpFrames");
         ERR_CHECK(cl_enqueue_kernel(ofc->m_WarpQueue2, ofc->m_warpFrameKernel, 3, ofc->m_grid16x16x2, ofc->m_threads16x16x1, "warpFrames"));
 	}
 	if (outputMode != 1) ERR_CHECK(cl_finish_queue(ofc->m_WarpQueue1, "warpFrames"));
 	if (outputMode != 0) ERR_CHECK(cl_finish_queue(ofc->m_WarpQueue2, "warpFrames"));
 	
-	// ##############################
-	// ###### ARTIFACT REMOVAL ######
-	// ##############################
-	// Frame 1 to Frame 2
-	if (outputMode != 1) {
-        cl_int err = clSetKernelArg(ofc->m_artifactRemovalKernel, 0, sizeof(cl_mem), &ofc->m_warpedFrame12int);
-        err |= clSetKernelArg(ofc->m_artifactRemovalKernel, 1, sizeof(cl_mem), &ofc->m_hitCount12);
-        err |= clSetKernelArg(ofc->m_artifactRemovalKernel, 2, sizeof(cl_mem), &ofc->m_frame[0]);
-        err |= clSetKernelArg(ofc->m_artifactRemovalKernel, 3, sizeof(cl_mem), (outputMode < 2) ? &ofc->m_outputFrame : &ofc->m_warpedFrame12);
-        err |= clSetKernelArg(ofc->m_artifactRemovalKernel, 4, sizeof(int), &newFrame);
-        ERR_MSG_CHECK(err, "warpFrames");
-        ERR_CHECK(cl_enqueue_kernel(ofc->m_WarpQueue1, ofc->m_artifactRemovalKernel, 3, ofc->m_grid16x16x2, ofc->m_threads16x16x1, "warpFrames"));
-	}
-	// Frame 2 to Frame 1
-	if (outputMode != 0) {
-        cl_int err = clSetKernelArg(ofc->m_artifactRemovalKernel, 0, sizeof(cl_mem), &ofc->m_warpedFrame21int);
-        err |= clSetKernelArg(ofc->m_artifactRemovalKernel, 1, sizeof(cl_mem), &ofc->m_hitCount21);
-        err |= clSetKernelArg(ofc->m_artifactRemovalKernel, 2, sizeof(cl_mem), &ofc->m_frame[1]);
-        err |= clSetKernelArg(ofc->m_artifactRemovalKernel, 3, sizeof(cl_mem), (outputMode < 2) ? &ofc->m_outputFrame : &ofc->m_warpedFrame21);
-        err |= clSetKernelArg(ofc->m_artifactRemovalKernel, 4, sizeof(int), &newFrame);
-        ERR_MSG_CHECK(err, "warpFrames");
-        ERR_CHECK(cl_enqueue_kernel(ofc->m_WarpQueue2, ofc->m_artifactRemovalKernel, 3, ofc->m_grid16x16x2, ofc->m_threads16x16x1, "warpFrames"));
-	}
-	if (outputMode != 1) ERR_CHECK(cl_finish_queue(ofc->m_WarpQueue1, "warpFrames"));
-	if (outputMode != 0) ERR_CHECK(cl_finish_queue(ofc->m_WarpQueue2, "warpFrames"));
     return 0;
 }
 
@@ -691,16 +661,12 @@ bool setKernelParameters(struct OpticalFlowCalc *ofc) {
     err |= clSetKernelArg(ofc->m_adjustOffsetArrayKernel, 6, sizeof(int), &numLayers);
     err |= clSetKernelArg(ofc->m_adjustOffsetArrayKernel, 7, sizeof(int), &ofc->m_iLowDimY);
     err |= clSetKernelArg(ofc->m_adjustOffsetArrayKernel, 8, sizeof(int), &ofc->m_iLowDimX);
-    err |= clSetKernelArg(ofc->m_warpFrameKernel, 5, sizeof(int), &ofc->m_iLowDimY);
-    err |= clSetKernelArg(ofc->m_warpFrameKernel, 6, sizeof(int), &ofc->m_iLowDimX);
-    err |= clSetKernelArg(ofc->m_warpFrameKernel, 7, sizeof(int), &ofc->m_iDimY);
-    err |= clSetKernelArg(ofc->m_warpFrameKernel, 8, sizeof(int), &ofc->m_iDimX);
-    err |= clSetKernelArg(ofc->m_warpFrameKernel, 9, sizeof(int), &ofc->m_iResolutionScalar);
-    err |= clSetKernelArg(ofc->m_warpFrameKernel, 10, sizeof(int), &ofc->m_iDirectionIdxOffset);
-    err |= clSetKernelArg(ofc->m_warpFrameKernel, 11, sizeof(int), &ofc->m_iChannelIdxOffset);
-    err |= clSetKernelArg(ofc->m_artifactRemovalKernel, 5, sizeof(int), &ofc->m_iDimY);
-    err |= clSetKernelArg(ofc->m_artifactRemovalKernel, 6, sizeof(int), &ofc->m_iDimX);
-    err |= clSetKernelArg(ofc->m_artifactRemovalKernel, 7, sizeof(int), &ofc->m_iChannelIdxOffset);
+    err |= clSetKernelArg(ofc->m_warpFrameKernel, 4, sizeof(int), &ofc->m_iLowDimX);
+    err |= clSetKernelArg(ofc->m_warpFrameKernel, 5, sizeof(int), &ofc->m_iDimY);
+    err |= clSetKernelArg(ofc->m_warpFrameKernel, 6, sizeof(int), &ofc->m_iDimX);
+    err |= clSetKernelArg(ofc->m_warpFrameKernel, 7, sizeof(int), &ofc->m_iResolutionScalar);
+    err |= clSetKernelArg(ofc->m_warpFrameKernel, 8, sizeof(int), &ofc->m_iDirectionIdxOffset);
+    err |= clSetKernelArg(ofc->m_warpFrameKernel, 9, sizeof(int), &ofc->m_iChannelIdxOffset);
     err |= clSetKernelArg(ofc->m_blendFrameKernel, 0, sizeof(cl_mem), &ofc->m_warpedFrame12);
     err |= clSetKernelArg(ofc->m_blendFrameKernel, 1, sizeof(cl_mem), &ofc->m_warpedFrame21);
     err |= clSetKernelArg(ofc->m_blendFrameKernel, 2, sizeof(cl_mem), &ofc->m_outputFrame);
@@ -768,8 +734,6 @@ void freeOFC(struct OpticalFlowCalc *ofc) {
     clReleaseMemObject(ofc->m_blurredOffsetArray21[1]);
     clReleaseMemObject(ofc->m_summedUpDeltaArray);
     clReleaseMemObject(ofc->m_lowestLayerArray);
-    clReleaseMemObject(ofc->m_hitCount12);
-    clReleaseMemObject(ofc->m_hitCount21);
     #if DUMP_IMAGES
     free(ofc->m_imageArrayCPU);
     #endif
@@ -783,7 +747,6 @@ void freeOFC(struct OpticalFlowCalc *ofc) {
     clReleaseKernel(ofc->m_flipFlowKernel);
     clReleaseKernel(ofc->m_blurFlowKernel);
     clReleaseKernel(ofc->m_warpFrameKernel);
-    clReleaseKernel(ofc->m_artifactRemovalKernel);
     clReleaseKernel(ofc->m_blendFrameKernel);
     clReleaseKernel(ofc->m_insertFrameKernel);
     clReleaseKernel(ofc->m_sideBySideFrameKernel);
@@ -805,7 +768,7 @@ void freeOFC(struct OpticalFlowCalc *ofc) {
 static bool detectDevices(struct OpticalFlowCalc *ofc) {
     // Capabilities we are going to check for
     cl_ulong availableVRAM;
-    const cl_ulong requiredVRAM = 48 * ofc->m_iDimY * ofc->m_iDimX +
+    const cl_ulong requiredVRAM = 24 * ofc->m_iDimY * ofc->m_iDimX +
                                   MAX_SEARCH_RADIUS * MAX_SEARCH_RADIUS * 3 * ofc->m_iLowDimY * ofc->m_iLowDimX +
                                   12 * ofc->m_iLowDimY * ofc->m_iLowDimX;
     size_t maxWorkGroupSizes[3];
@@ -954,8 +917,6 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ERR_CHECK(cl_create_buffer(&ofc->m_blurredFrame[2], ofc->m_clContext, CL_MEM_READ_WRITE, dimY * dimX * sizeof(unsigned short), "blurredFrame[2]"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_warpedFrame12, ofc->m_clContext, CL_MEM_READ_WRITE, 3 * dimY * dimX, "warpedFrame12"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_warpedFrame21, ofc->m_clContext, CL_MEM_READ_WRITE, 3 * dimY * dimX, "warpedFrame21"));
-    ERR_CHECK(cl_create_buffer(&ofc->m_warpedFrame12int, ofc->m_clContext, CL_MEM_READ_WRITE, 1.5 * dimY * dimX * sizeof(int), "warpedFrame12"));
-	ERR_CHECK(cl_create_buffer(&ofc->m_warpedFrame21int, ofc->m_clContext, CL_MEM_READ_WRITE, 1.5 * dimY * dimX * sizeof(int), "warpedFrame21"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_outputFrame, ofc->m_clContext, CL_MEM_WRITE_ONLY, 3 * dimY * dimX, "outputFrame"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_offsetArray12, ofc->m_clContext, CL_MEM_READ_WRITE, MAX_SEARCH_RADIUS * MAX_SEARCH_RADIUS * 2 * ofc->m_iLowDimY * ofc->m_iLowDimX, "offsetArray12"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_offsetArray21, ofc->m_clContext, CL_MEM_READ_WRITE, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX, "offsetArray21"));
@@ -965,8 +926,6 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ERR_CHECK(cl_create_buffer(&ofc->m_blurredOffsetArray21[1], ofc->m_clContext, CL_MEM_READ_WRITE, 2 * ofc->m_iLowDimY * ofc->m_iLowDimX, "blurredOffsetArray21[1]"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_summedUpDeltaArray, ofc->m_clContext, CL_MEM_READ_WRITE, MAX_SEARCH_RADIUS * MAX_SEARCH_RADIUS * ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(unsigned int), "summedUpDeltaArray"));
 	ERR_CHECK(cl_create_buffer(&ofc->m_lowestLayerArray, ofc->m_clContext, CL_MEM_READ_WRITE, ofc->m_iLowDimY * ofc->m_iLowDimX * sizeof(unsigned short), "lowestLayerArray"));
-    ERR_CHECK(cl_create_buffer(&ofc->m_hitCount12, ofc->m_clContext, CL_MEM_READ_WRITE, 1.5 * dimY * dimX * sizeof(int), "hitCount12"));
-	ERR_CHECK(cl_create_buffer(&ofc->m_hitCount21, ofc->m_clContext, CL_MEM_READ_WRITE, 1.5 * dimY * dimX * sizeof(int), "hitCount21"));
     #if DUMP_IMAGES
     ofc->m_imageArrayCPU = (unsigned short*)malloc(3 * dimY * dimX);
     if (!ofc->m_imageArrayCPU) {
@@ -984,7 +943,6 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int 
 	ERR_CHECK(cl_create_kernel(&ofc->m_flipFlowKernel, ofc->m_clContext, ofc->m_clDevice_id, "flipFlowKernel"));
 	ERR_CHECK(cl_create_kernel(&ofc->m_blurFlowKernel, ofc->m_clContext, ofc->m_clDevice_id, "blurFlowKernel"));
 	ERR_CHECK(cl_create_kernel(&ofc->m_warpFrameKernel, ofc->m_clContext, ofc->m_clDevice_id, "warpFrameKernel"));
-    ERR_CHECK(cl_create_kernel(&ofc->m_artifactRemovalKernel, ofc->m_clContext, ofc->m_clDevice_id, "artifactRemovalKernel"));
 	ERR_CHECK(cl_create_kernel(&ofc->m_blendFrameKernel, ofc->m_clContext, ofc->m_clDevice_id, "blendFrameKernel"));
 	ERR_CHECK(cl_create_kernel(&ofc->m_insertFrameKernel, ofc->m_clContext, ofc->m_clDevice_id, "insertFrameKernel"));
 	ERR_CHECK(cl_create_kernel(&ofc->m_sideBySideFrameKernel, ofc->m_clContext, ofc->m_clDevice_id, "sideBySideFrameKernel"));
