@@ -273,8 +273,9 @@ bool adjustSearchRadius(struct OpticalFlowCalc *ofc, int newSearchRadius) {
 *
 * @param ofc: Pointer to the optical flow calculator
 * @param iNumIterations: Number of iterations to calculate the optical flow
+* @param iNumSteps: Number of steps to calculate the optical flow
 */
-bool calculateOpticalFlow(struct OpticalFlowCalc *ofc, int iNumIterations) {
+bool calculateOpticalFlow(struct OpticalFlowCalc *ofc, int iNumIterations, int iNumSteps) {
 	// We set the initial window size to the next larger power of 2
 	int windowDim = 1;
 	int maxDim = max(ofc->m_iLowDimX, ofc->m_iLowDimY);
@@ -287,8 +288,8 @@ bool calculateOpticalFlow(struct OpticalFlowCalc *ofc, int iNumIterations) {
 		windowDim = maxDim << 1;
 	}
 
-	if (iNumIterations == 0 || (double)(iNumIterations) > ceil(log2(windowDim))) {
-		iNumIterations = (int)(ceil(log2(windowDim))) + 1;
+	if (iNumIterations == 0 || iNumIterations > log2(windowDim) + 1) {
+		iNumIterations = log2(windowDim) + 1;
 	}
 
     // Reset the number of offset layers
@@ -302,8 +303,8 @@ bool calculateOpticalFlow(struct OpticalFlowCalc *ofc, int iNumIterations) {
 
 	// We calculate the ideal offset array for each window size (entire frame, ..., individual pixels)
 	for (int iter = 0; iter < iNumIterations; iter++) {
-        for (int step = 0; step < NUM_STEPS; step++) {
-            lastRun = (int)(iter == iNumIterations - 1 && step == NUM_STEPS - 1);
+        for (int step = 0; step < iNumSteps; step++) {
+            lastRun = (int)(iter == iNumIterations - 1 && step == iNumSteps - 1);
             if (ofc->m_bOFCTerminate) return 0;
             
             // Reset the summed up delta array
