@@ -1,5 +1,5 @@
 #define BLOCK_SIZE 16
-#define KERNEL_RADIUS 4
+#define KERNEL_RADIUS 8
 
 // Kernel that blurs a flow array
 __kernel void blurFlowKernel(__global const char* offsetArray12,

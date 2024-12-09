@@ -1,6 +1,7 @@
 #define INITIAL_RESOLUTION_SCALAR 2 // The initial resolution scalar (0: Full resolution, 1: Half resolution, 2: Quarter resolution, 3: Eighth resolution, 4: Sixteenth resolution, ...)
 #define INITIAL_SEARCH_RADIUS 7 // The initial radius in which the optical flow calculation will search for the best match
 #define NUM_ITERATIONS 11 // Number of iterations to use in the optical flow calculation (0: As many as possible)
+#define NUM_STEPS 2 // How many repetitions of each iteration will be executed to find the best offset for each window
 #define AUTO_FRAME_SCALE 1 // Whether to automatically reduce/increase the calculation resolution depending on performance (0: Disabled, 1: Enabled)
 #define AUTO_SEARCH_RADIUS_ADJUST 1 // Whether to automatically reduce/increase the number of calculation steps depending on performance (0: Disabled, 1: Enabled)
 #define MIN_SEARCH_RADIUS 5 // The minimum number of calculation steps (if below this, resolution will be decreased or calculation disabled)
