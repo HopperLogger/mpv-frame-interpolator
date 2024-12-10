@@ -15,16 +15,20 @@ __kernel void flipFlowKernel(__global const char* flowArray12,
 		// Get the current flow values
 		const char x = flowArray12[cy * lowDimX + cx];
 		const char y = flowArray12[directionIdxOffset + cy * lowDimX + cx];
-		const char scaledX = x >> resolutionScalar;
-		const char scaledY = y >> resolutionScalar;
+		//const char scaledX = round((float)x / pow(2.0f, resolutionScalar));
+		//const char scaledY = round((float)y / pow(2.0f, resolutionScalar));
+		//const int newCx = cx + scaledX;
+		//const int newCy = cy + scaledY;
+		const int newCx = cx;
+		const int newCy = cy;
 
 		// Project the flow values onto the flow array from frame 2 to frame 1
 		// X-Layer
-		if (cz == 0 && (cy + scaledY) < lowDimY && (cy + scaledY) >= 0 && (cx + scaledX) < lowDimX && (cx + scaledX) >= 0) {
-			flowArray21[(cy + scaledY) * lowDimX + cx + scaledX] = -x;
+		if (cz == 0 && newCy < lowDimY && newCy >= 0 && newCx < lowDimX && newCx >= 0) {
+			flowArray21[newCy * lowDimX + newCx] = -x;
 		// Y-Layer
-		} else if (cz == 1 && (cy + scaledY) < lowDimY && (cy + scaledY) >= 0 && (cx + scaledX) < lowDimX && (cx + scaledX) >= 0) {
-			flowArray21[directionIdxOffset + (cy + scaledY) * lowDimX + cx + scaledX] = -y;
+		} else if (cz == 1 && newCy < lowDimY && newCy >= 0 && newCx < lowDimX && newCx >= 0) {
+			flowArray21[directionIdxOffset + newCy * lowDimX + newCx] = -y;
 		}
 	}
 }
