@@ -366,7 +366,7 @@ bool warpFrames(struct OpticalFlowCalc *ofc, const float fScalar, const int outp
     if (outputMode != 1) {
         cl_int err = clSetKernelArg(ofc->m_warpFrameKernel, 0, sizeof(cl_mem), &ofc->m_frame[0]);
         err |= clSetKernelArg(ofc->m_warpFrameKernel, 1, sizeof(cl_mem), &ofc->m_blurredOffsetArray12[0]);
-        err |= clSetKernelArg(ofc->m_warpFrameKernel, 2, sizeof(cl_mem), &ofc->m_warpedFrame12);
+        err |= clSetKernelArg(ofc->m_warpFrameKernel, 2, sizeof(cl_mem), (outputMode < 2) ? &ofc->m_outputFrame : &ofc->m_warpedFrame12);
         err |= clSetKernelArg(ofc->m_warpFrameKernel, 3, sizeof(float), &frameScalar12);
         ERR_MSG_CHECK(err, "warpFrames");
         ERR_CHECK(cl_enqueue_kernel(ofc->m_WarpQueue1, ofc->m_warpFrameKernel, 3, ofc->m_grid16x16x2, ofc->m_threads16x16x1, "warpFrames"));
@@ -376,7 +376,7 @@ bool warpFrames(struct OpticalFlowCalc *ofc, const float fScalar, const int outp
 	if (outputMode != 0) {
         cl_int err = clSetKernelArg(ofc->m_warpFrameKernel, 0, sizeof(cl_mem), &ofc->m_frame[1]);
         err |= clSetKernelArg(ofc->m_warpFrameKernel, 1, sizeof(cl_mem), &ofc->m_blurredOffsetArray21[0]);
-        err |= clSetKernelArg(ofc->m_warpFrameKernel, 2, sizeof(cl_mem), &ofc->m_warpedFrame21);
+        err |= clSetKernelArg(ofc->m_warpFrameKernel, 2, sizeof(cl_mem), (outputMode < 2) ? &ofc->m_outputFrame : &ofc->m_warpedFrame21);
         err |= clSetKernelArg(ofc->m_warpFrameKernel, 3, sizeof(float), &frameScalar21);
         ERR_MSG_CHECK(err, "warpFrames");
         ERR_CHECK(cl_enqueue_kernel(ofc->m_WarpQueue2, ofc->m_warpFrameKernel, 3, ofc->m_grid16x16x2, ofc->m_threads16x16x1, "warpFrames"));

@@ -854,6 +854,26 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 		MP_ERR(parent, "MAX_SEARCH_RADIUS must be at least 2.\n");
 		return NULL;
 	}
+	if (MAX_SEARCH_RADIUS < MIN_SEARCH_RADIUS) {
+		MP_ERR(parent, "MAX_SEARCH_RADIUS must be greater than or equal to MIN_SEARCH_RADIUS.\n");
+		return NULL;
+	}
+	if (MAX_NUM_STEPS < 1) {
+		MP_ERR(parent, "MAX_NUM_STEPS must be at least 1.\n");
+		return NULL;
+	}
+	if (UPPER_PERF_BUFFER < 1.0) {
+		MP_ERR(parent, "UPPER_PERF_BUFFER must be at least 1.0.\n");
+		return NULL;
+	}
+	if (LOWER_PERF_BUFFER < 1.0) {
+		MP_ERR(parent, "LOWER_PERF_BUFFER must be at least 1.0.\n");
+		return NULL;
+	}
+	if (LOWER_PERF_BUFFER < UPPER_PERF_BUFFER) {
+		MP_ERR(parent, "UPPER_PERF_BUFFER must be less than or equal to LOWER_PERF_BUFFER.\n");
+		return NULL;
+	}
 
 	// Create the video filter
     struct mp_filter *f = mp_filter_create(parent, &vf_HopperRender_filter);
