@@ -15,12 +15,17 @@ __kernel void flipFlowKernel(__global const char* flowArray12,
 		// Get the current flow values
 		const char x = flowArray12[cy * lowDimX + cx];
 		const char y = flowArray12[directionIdxOffset + cy * lowDimX + cx];
-		//const char scaledX = round((float)x / pow(2.0f, resolutionScalar));
-		//const char scaledY = round((float)y / pow(2.0f, resolutionScalar));
-		//const int newCx = cx + scaledX;
-		//const int newCy = cy + scaledY;
-		const int newCx = cx;
-		const int newCy = cy;
+		int newCx;
+		int newCy;
+		if (resolutionScalar) {
+			newCx = cx + (int)round((float)x / pow(2.0f, resolutionScalar));
+			newCy = cy + (int)round((float)y / pow(2.0f, resolutionScalar));
+		} else {
+			newCx = cx + x;
+			newCy = cy + y;
+		}
+		//const int newCx = cx;
+		//const int newCy = cy;
 
 		// Project the flow values onto the flow array from frame 2 to frame 1
 		// X-Layer

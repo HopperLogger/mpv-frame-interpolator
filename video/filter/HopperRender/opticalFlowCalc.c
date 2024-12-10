@@ -430,7 +430,7 @@ bool insertFrame(struct OpticalFlowCalc *ofc) {
 * Places frame 1 scaled down on the left side and the blendedFrame on the right side of the outputFrame
 *
 * @param ofc: Pointer to the optical flow calculator
-* @param dScalar: The scalar to blend the frames with
+* @param fScalar: The scalar to blend the frames with
 * @param frameCounter: The current frame counter
 */
 bool sideBySideFrame(struct OpticalFlowCalc *ofc, const float fScalar, const int frameCounter) {
@@ -493,10 +493,6 @@ bool drawFlowAsHSV(struct OpticalFlowCalc *ofc, const float blendScalar, const i
 */
 bool flipFlow(struct OpticalFlowCalc *ofc) {
 	if (ofc->m_bOFCTerminate) return 0;
-
-	// Reset the offset array
-    ERR_CHECK(cl_zero_buffer(ofc->m_OFCQueue, ofc->m_offsetArray21, ofc->m_iLowDimY * ofc->m_iLowDimX * 2, sizeof(char), "flipFlow"));
-    ERR_CHECK(cl_finish_queue(ofc->m_OFCQueue, "flipFlow"));
 
 	// Launch kernel
     ERR_CHECK(cl_enqueue_kernel(ofc->m_OFCQueue, ofc->m_flipFlowKernel, 3, ofc->m_lowGrid16x16x2, ofc->m_threads16x16x1, "flipFlow"));
