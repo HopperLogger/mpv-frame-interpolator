@@ -324,9 +324,9 @@ void *vf_HopperRender_launch_AppIndicator_script(void *arg) {
  */
 static void vf_HopperRender_uninit(struct mp_filter *f) {
     struct priv *priv = f->priv;
-    mp_image_unrefp(&priv->referenceImage);
     mp_image_pool_clear(priv->imagePool);
     if (priv->isFilterInitialized) {
+        mp_image_unrefp(&priv->referenceImage);
         priv->ofc->opticalFlowCalcShouldTerminate = true;
         pthread_kill(priv->m_ptOFCThreadID, SIGTERM);
         pthread_join(priv->m_ptOFCThreadID, NULL);
@@ -648,6 +648,15 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     struct mp_frame frame = mp_pin_out_read(priv->conv->f->pins[1]);
     struct mp_image *img = frame.data;
 
+    // If the source is already at or above 60 FPS, we don't need interpolation
+    priv->sourceFPS = img->nominal_fps;
+    priv->sourceFrameTime = 1.0 / (priv->sourceFPS * priv->playbackSpeed);
+    if (priv->sourceFrameTime <= priv->targetFrameTime) {
+        priv->interpolationState = NotNeeded;
+        mp_pin_in_write(f->ppins[1], frame);
+        return;
+    }
+
     // Detect if the frame is an end of frame
     if (mp_frame_is_signaling(frame)) {
         mp_pin_in_write(f->ppins[1], frame);
@@ -656,7 +665,6 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
 
     // Initialize the filter if needed
     if (!priv->isFilterInitialized) {
-        priv->sourceFPS = img->nominal_fps;
         priv->referenceImage = mp_image_new_ref(img);
         vf_HopperRender_init(f, img->h, img->w);
         priv->isFilterInitialized = true;
@@ -673,7 +681,6 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
             priv->targetFrameTime * priv->playbackSpeed;  // The rest of the frames we increase in 60fps steps
     }
     img->pts = priv->currentOutputPTS;
-    priv->sourceFrameTime = 1.0 / (priv->sourceFPS * priv->playbackSpeed);
     if (priv->interpolationState == Active) {
         priv->numIntFrames =
             (int)floor((1.0 - priv->blendingScalar) / (priv->targetFrameTime / priv->sourceFrameTime)) + 1;
@@ -768,10 +775,6 @@ static bool vf_HopperRender_command(struct mp_filter *f, struct mp_filter_comman
     // Speed change event
     if (cmd->type == MP_FILTER_COMMAND_TEXT && priv->playbackSpeed != cmd->speed) {
         priv->playbackSpeed = cmd->speed;
-        priv->sourceFrameTime = 1.0 / (priv->sourceFPS * priv->playbackSpeed);
-        priv->interpolatedFrameNum = 0;
-        priv->blendingScalar = 0.0;
-        priv->sourceFrameNum = 0;
     }
 
     // If the source is already at or above 60 FPS, we don't need interpolation
