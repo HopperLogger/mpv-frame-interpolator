@@ -8,93 +8,94 @@
 
 typedef struct OpticalFlowCalc {
 	// Video properties
-	int m_iDimX; // Width of the frame
-	int m_iDimY; // Height of the frame
-	float m_fBlackLevel; // The black level used for the output frame
-	float m_fWhiteLevel; // The white level used for the output frame
-	float m_fMaxVal; // The maximum value of the video format (255.0f for YUV420P and NV12, 1023.0f for YUV420P10, 65535.0f for P010)
-	int m_iMiddleValue; // The middle value of the video format (128 for YUV420P and NV12, 512 for YUV420P10, 32768 for P010)
+	int frameWidth; // Width of the frame
+	int frameHeight; // Height of the frame
+	float outputBlackLevel; // The black level used for the output frame
+	float outputWhiteLevel; // The white level used for the output frame
 
 	// Optical flow calculation
-	int m_iResolutionScalar; // Determines which resolution scalar will be used for the optical flow calculation
-	int m_iLowDimX; // Width of the frame used by the optical flow calculation
-	int m_iLowDimY; // Height of the frame used by the optical flow calculation
-	int m_iSearchRadius; // Search radius used for the optical flow calculation
-	int m_iDirectionIdxOffset; // m_iNumLayers * m_iLowDimY * m_iLowDimX
-	int m_iLayerIdxOffset; // m_iLowDimY * m_iLowDimX
-	int m_iChannelIdxOffset; // m_iDimY * m_iDimX
-	volatile bool m_bOFCTerminate; // Whether or not the optical flow calculator should terminate
-	bool m_bNoFrameBlur; // Whether or not the frame should be blurred
-	bool m_bNoFlowBlur; // Whether or not the flow should be blurred
+	int opticalFlowIterations; // Number of iterations to use in the optical flow calculation (0: As many as possible)
+	int opticalFlowSteps; // How many repetitions of each iteration will be executed to find the best offset for each window
+	int opticalFlowResScalar; // Determines which resolution scalar will be used for the optical flow calculation
+	int opticalFlowMinResScalar; // The minimum resolution scalar
+	int opticalFlowFrameWidth; // Width of the frame used by the optical flow calculation
+	int opticalFlowFrameHeight; // Height of the frame used by the optical flow calculation
+	int opticalFlowSearchRadius; // Search radius used for the optical flow calculation
+	int directionIndexOffset; // m_iNumLayers * opticalFlowFrameHeight * opticalFlowFrameWidth
+	int layerIndexOffset; // opticalFlowFrameHeight * opticalFlowFrameWidth
+	int channelIndexOffset; // frameHeight * frameWidth
+	volatile bool opticalFlowCalcShouldTerminate; // Whether or not the optical flow calculator should terminate
+	bool frameBlurEnabled; // Whether or not the frame should be blurred
+	bool flowBlurEnabled; // Whether or not the flow should be blurred
 
 	// OpenCL variables
-	cl_device_id m_clDevice_id;
-	cl_context m_clContext;
-    cl_kernel m_clKernel;
+	cl_device_id clDeviceId;
+	cl_context clContext;
 
 	// Grids
-	size_t m_lowGrid16x16xL[3];
-	size_t m_lowGrid16x16x2[3];
-	size_t m_lowGrid16x16x1[3];
-	size_t m_lowGrid8x8xL[3];
-	size_t m_grid16x16x2[3];
-	size_t m_grid16x16x1[3];
-	size_t m_halfGrid16x16x2[3];
+	size_t lowGrid16x16xL[3];
+	size_t lowGrid16x16x4[3];
+	size_t lowGrid16x16x2[3];
+	size_t lowGrid16x16x1[3];
+	size_t lowGrid8x8xL[3];
+	size_t grid16x16x2[3];
+	size_t grid16x16x1[3];
+	size_t halfGrid16x16x2[3];
 	
 	// Threads
-	size_t m_threads16x16x1[3];
-	size_t m_threads8x8x1[3];
+	size_t threads16x16x1[3];
+	size_t threads8x8x1[3];
 
 	// Queues
-	cl_command_queue m_OFCQueue; // Queue used for the optical flow calculation
-	cl_command_queue m_WarpQueue1, m_WarpQueue2; // Queues used for the warping
+	cl_command_queue queueOFC; // Queue used for the optical flow calculation
+	cl_command_queue queueWarping1, queueWarping2; // Queues used for the warping
 
 	// GPU Arrays
-	cl_mem m_offsetArray12; // Array containing x,y offsets for each pixel of frame1
-	cl_mem m_offsetArray21; // Array containing x,y offsets for each pixel of frame2
-	cl_mem m_blurredOffsetArray12[2]; // Array containing x,y offsets for each pixel of frame1
-	cl_mem m_blurredOffsetArray21[2]; // Array containing x,y offsets for each pixel of frame2
-	cl_mem m_summedUpDeltaArray; // Array containing the summed up delta values of each window
-	cl_mem m_lowestLayerArray; // Array containing the comparison results of the two normalized delta arrays (true if the new value decreased)
-	cl_mem m_outputFrame; // Array containing the output frame
-	cl_mem m_frame[3]; // Array containing the last three frames
-	cl_mem m_blurredFrame[3]; // Array containing the last three frames after blurring
-	cl_mem m_warpedFrame12; // Array containing the warped frame (frame 1 to frame 2)
-	cl_mem m_warpedFrame21; // Array containing the warped frame (frame 2 to frame 1)
+	cl_mem offsetArray12; // Array containing x,y offsets for each pixel of frame1
+	cl_mem offsetArray21; // Array containing x,y offsets for each pixel of frame2
+	cl_mem blurredOffsetArray12[2]; // Array containing x,y offsets for each pixel of frame1
+	cl_mem blurredOffsetArray21[2]; // Array containing x,y offsets for each pixel of frame2
+	cl_mem summedDeltaValuesArray; // Array containing the summed up delta values of each window
+	cl_mem lowestLayerArray; // Array containing the comparison results of the two normalized delta arrays (true if the new value decreased)
+	cl_mem outputFrameArray; // Array containing the output frame
+	cl_mem inputFrameArray[3]; // Array containing the last three frames
+	cl_mem blurredFrameArray[3]; // Array containing the last three frames after blurring
+	cl_mem warpedFrameArray12; // Array containing the warped frame (frame 1 to frame 2)
+	cl_mem warpedFrameArray21; // Array containing the warped frame (frame 2 to frame 1)
 	#if DUMP_IMAGES
-	unsigned short* m_imageArrayCPU; // Array containing the image data
+	unsigned short* imageDumpArray; // Array containing the image data
 	#endif
 
 	// Kernels
-	cl_kernel m_blurFrameKernel;
-	cl_kernel m_setInitialOffsetKernel;
-	cl_kernel m_calcDeltaSumsKernel;
-	cl_kernel m_determineLowestLayerKernel;
-	cl_kernel m_adjustOffsetArrayKernel;
-	cl_kernel m_flipFlowKernel;
-	cl_kernel m_blurFlowKernel;
-	cl_kernel m_warpFrameKernel;
-	cl_kernel m_blendFrameKernel;
-	cl_kernel m_insertFrameKernel;
-	cl_kernel m_sideBySideFrameKernel;
-	cl_kernel m_convertFlowToHSVKernel;
-	cl_kernel m_tearingTestKernel;
+	cl_kernel blurFrameKernel;
+	cl_kernel setInitialOffsetKernel;
+	cl_kernel calcDeltaSumsKernel;
+	cl_kernel determineLowestLayerKernel;
+	cl_kernel adjustOffsetArrayKernel;
+	cl_kernel flipFlowKernel;
+	cl_kernel blurFlowKernel;
+	cl_kernel warpFrameKernel;
+	cl_kernel blendFrameKernel;
+	cl_kernel sideBySide1Kernel;
+	cl_kernel sideBySide2Kernel;
+	cl_kernel visualizeFlowKernel;
+	cl_kernel tearingTestKernel;
 } OpticalFlowCalc;
 
-bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int dimY, const int dimX, const int resolutionScalar, const int searchRadius, const bool noFrameBlur, const bool noFlowBlur);
+bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int frameHeight, const int frameWidth);
 void freeOFC(struct OpticalFlowCalc *ofc);
 bool adjustSearchRadius(struct OpticalFlowCalc *ofc, int newSearchRadius);
 bool setKernelParameters(struct OpticalFlowCalc *ofc);
-bool updateFrame(struct OpticalFlowCalc *ofc, unsigned char** pInBuffer, const bool directOutput);
-bool downloadFrame(struct OpticalFlowCalc *ofc, const cl_mem pInBuffer, unsigned char** pOutBuffer);
-bool calculateOpticalFlow(struct OpticalFlowCalc *ofc, int iNumIterations, int iNumSteps);
+bool updateFrame(struct OpticalFlowCalc *ofc, unsigned char** inputPlanes, const bool outputBlurDirectly);
+bool downloadFrame(struct OpticalFlowCalc *ofc, const cl_mem sourceBuffer, unsigned char** outputPlanes);
+bool calculateOpticalFlow(struct OpticalFlowCalc *ofc);
 bool flipFlow(struct OpticalFlowCalc *ofc);
 bool blurFlowArrays(struct OpticalFlowCalc *ofc);
-bool warpFrames(struct OpticalFlowCalc *ofc, const float fScalar, const int outputMode, const int newFrame);
-bool blendFrames(struct OpticalFlowCalc *ofc, const float fScalar);
-bool insertFrame(struct OpticalFlowCalc *ofc);
-bool sideBySideFrame(struct OpticalFlowCalc *ofc, const float fScalar, const int frameCounter);
-bool drawFlowAsHSV(struct OpticalFlowCalc *ofc, const float blendScalar, const int bwOutput);
+bool warpFrames(struct OpticalFlowCalc *ofc, const float blendingScalar, const int frameOutputMode, const int isNewFrame);
+bool blendFrames(struct OpticalFlowCalc *ofc, const float blendingScalar);
+bool sideBySide1(struct OpticalFlowCalc *ofc);
+bool sideBySide2(struct OpticalFlowCalc *ofc, const float blendingScalar, const int sourceFrameNum);
+bool visualizeFlow(struct OpticalFlowCalc *ofc, const int doBWOutput);
 bool tearingTest(struct OpticalFlowCalc *ofc);
 #if DUMP_IMAGES
 bool saveImage(struct OpticalFlowCalc *ofc, const char* filePath);

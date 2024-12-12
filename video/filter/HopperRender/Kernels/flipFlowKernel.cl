@@ -1,10 +1,10 @@
 // Kernel that translates a flow array from frame 1 to frame 2 into a flow array from frame 2 to frame 1
-__kernel void flipFlowKernel(__global const char* flowArray12,
-							 __global char* flowArray21,
+__kernel void flipFlowKernel(__global const char* offsetArray12,
+							 __global char* offsetArray21,
 							 const int lowDimY,
 							 const int lowDimX,
 							 const int resolutionScalar,
-							 const int directionIdxOffset) {
+							 const int directionIndexOffset) {
 	// Current entry to be computed by the thread
 	const int cx = get_global_id(0);
 	const int cy = get_global_id(1);
@@ -13,8 +13,8 @@ __kernel void flipFlowKernel(__global const char* flowArray12,
 	// Check if we are inside the flow array
 	if (cy < lowDimY && cx < lowDimX) {
 		// Get the current flow values
-		const char x = flowArray12[cy * lowDimX + cx];
-		const char y = flowArray12[directionIdxOffset + cy * lowDimX + cx];
+		const char x = offsetArray12[cy * lowDimX + cx];
+		const char y = offsetArray12[directionIndexOffset + cy * lowDimX + cx];
 		int newCx;
 		int newCy;
 		if (resolutionScalar) {
@@ -30,10 +30,10 @@ __kernel void flipFlowKernel(__global const char* flowArray12,
 		// Project the flow values onto the flow array from frame 2 to frame 1
 		// X-Layer
 		if (cz == 0 && newCy < lowDimY && newCy >= 0 && newCx < lowDimX && newCx >= 0) {
-			flowArray21[newCy * lowDimX + newCx] = -x;
+			offsetArray21[newCy * lowDimX + newCx] = -x;
 		// Y-Layer
 		} else if (cz == 1 && newCy < lowDimY && newCy >= 0 && newCx < lowDimX && newCx >= 0) {
-			flowArray21[directionIdxOffset + newCy * lowDimX + newCx] = -y;
+			offsetArray21[directionIndexOffset + newCy * lowDimX + newCx] = -y;
 		}
 	}
 }

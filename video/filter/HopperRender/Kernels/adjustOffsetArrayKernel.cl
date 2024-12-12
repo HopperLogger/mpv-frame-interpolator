@@ -11,15 +11,15 @@ char safe_add(char a, char b) {
 
 // Kernel that adjusts the offset array based on the comparison results
 __kernel void adjustOffsetArrayKernel(__global char* offsetArray,
-									  __global const unsigned short* globalLowestLayerArray,
-									  const int windowDim,
-									  const int directionIdxOffset,
-									  const int layerIdxOffset, 
+									  __global const unsigned char* lowestLayerArray,
+									  const int windowSize,
+									  const int directionIndexOffset,
+									  const int layerIndexOffset, 
 									  const int searchWindowSize,
 									  const int numLayers,
 									  const int lowDimY,
 									  const int lowDimX,
-									  const int lastRun) {
+									  const int isLastRun) {
 
 	// Current entry to be computed by the thread
 	const int cx = get_global_id(0);
@@ -28,17 +28,17 @@ __kernel void adjustOffsetArrayKernel(__global char* offsetArray,
 
 	if (cy < lowDimY && cx < lowDimX) {
 		// We only need the lowestLayer if we are still searching
-		const int wx = (cx / windowDim) * windowDim;
-		const int wy = (cy / windowDim) * windowDim;
-		unsigned short lowestLayer = globalLowestLayerArray[wy * lowDimX + wx];
+		const int wx = (cx / windowSize) * windowSize;
+		const int wy = (cy / windowSize) * windowSize;
+		unsigned char lowestLayer = lowestLayerArray[wy * lowDimX + wx];
 
-		char idealX = offsetArray[lowestLayer * layerIdxOffset + threadIndex2D];
-		char idealY = offsetArray[directionIdxOffset + lowestLayer * layerIdxOffset + threadIndex2D];
+		char idealX = offsetArray[lowestLayer * layerIndexOffset + threadIndex2D];
+		char idealY = offsetArray[directionIndexOffset + lowestLayer * layerIndexOffset + threadIndex2D];
 
 		// If this is the last run, we need to adjust the offset array for the next iteration
-		if (lastRun) {
+		if (isLastRun) {
 			offsetArray[threadIndex2D] = idealX;
-			offsetArray[directionIdxOffset + threadIndex2D] = idealY;
+			offsetArray[directionIndexOffset + threadIndex2D] = idealY;
 			return;
 		}
 		int i = 0;
@@ -50,8 +50,8 @@ __kernel void adjustOffsetArrayKernel(__global char* offsetArray,
 				continue;
 			}
 			if (cz != lowestLayer) {
-				offsetArray[cz * layerIdxOffset + threadIndex2D] = safe_add(idealX, offsetX);
-				offsetArray[directionIdxOffset + cz * layerIdxOffset + threadIndex2D] = safe_add(idealY, offsetY);
+				offsetArray[cz * layerIndexOffset + threadIndex2D] = safe_add(idealX, offsetX);
+				offsetArray[directionIndexOffset + cz * layerIndexOffset + threadIndex2D] = safe_add(idealY, offsetY);
 				i++;
 			}
 		}
