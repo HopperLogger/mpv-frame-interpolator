@@ -394,7 +394,7 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 	/*
 	* Calculation took too long (OFC had to be interupted)
 	*/
-	if (!OFCisDone) {
+	if (!ofcFinishedOnTime) {
 		// OFC interruption is critical, so we reduce the resolution
 		if (AUTO_FRAME_SCALE && priv->ofc->opticalFlowResScalar < 5) {
 			priv->ofc->opticalFlowResScalar += 1;
