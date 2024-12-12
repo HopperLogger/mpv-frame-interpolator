@@ -1,7 +1,7 @@
 // Kernel that determines the offset layer with the lowest delta
 __kernel void determineLowestLayerKernel(__global unsigned int* summedUpDeltaArray,
-										 __global unsigned short* globalLowestLayerArray,
-										 const int windowDim,
+										 __global unsigned char* lowestLayerArray,
+										 const int windowSize,
 										 const int numLayers,
 										 const int lowDimY,
 										 const int lowDimX) {
@@ -9,11 +9,11 @@ __kernel void determineLowestLayerKernel(__global unsigned int* summedUpDeltaArr
 	const int cx = get_global_id(0);
 	const int cy = get_global_id(1);
 	const int threadIndex2D = cy * lowDimX + cx; // Standard thread index without Z-Dim
-	bool isWindowRepresent = cy % windowDim == 0 && cx % windowDim == 0;
+	bool isWindowRepresent = cy % windowSize == 0 && cx % windowSize == 0;
 
 	// Find the layer with the lowest value
 	if (isWindowRepresent) {
-		unsigned short lowestLayer = 0;
+		unsigned char lowestLayer = 0;
 
 		for (int z = 1; z < numLayers; ++z) {
 			if (summedUpDeltaArray[z * lowDimY * lowDimX + threadIndex2D] < 
@@ -22,6 +22,6 @@ __kernel void determineLowestLayerKernel(__global unsigned int* summedUpDeltaArr
 			}
 		}
 
-		globalLowestLayerArray[threadIndex2D] = lowestLayer;
+		lowestLayerArray[threadIndex2D] = lowestLayer;
 	}
 }

@@ -1,20 +1,20 @@
 // Kernel that creates an HSV flow image from the offset array
-__kernel void convertFlowToHSVKernel(__global const char* flowArray,
+__kernel void visualizeFlowKernel(__global const char* offsetArray,
 									 __global unsigned short* outputFrame,
-									 __global const unsigned short* frame1,
-									 float blendScalar,
+									 __global const unsigned short* inputFrame,
 									 const int lowDimY,
 									 const int lowDimX,
 									 const int dimY,
 									 const int dimX,
 									 const int resolutionScalar,
-									 const int directionIdxOffset,
-									 const int channelIdxOffset,
-									 const int bwOutput) {
+									 const int directionIndexOffset,
+									 const int channelIndexOffset,
+									 const int doBWOutput) {
 	// Current entry to be computed by the thread
 	const int cx = get_global_id(0);
 	const int cy = get_global_id(1);
 	const int cz = get_global_id(2);
+	const float blendScalar = 0.5f;
 
 	const int scaledCx = cx >> resolutionScalar; // The X-Index of the current thread in the offset array
 	const int scaledCy = cy >> resolutionScalar; // The Y-Index of the current thread in the offset array
@@ -23,11 +23,11 @@ __kernel void convertFlowToHSVKernel(__global const char* flowArray,
 	char x;
 	char y;
 	if (cz == 0 && cy < dimY && cx < dimX) {
-		x = flowArray[scaledCy * lowDimX + scaledCx];
-		y = flowArray[directionIdxOffset + scaledCy * lowDimX + scaledCx];
+		x = offsetArray[scaledCy * lowDimX + scaledCx];
+		y = offsetArray[directionIndexOffset + scaledCy * lowDimX + scaledCx];
 	} else if (cz == 1 && cy < (dimY >> 1) && cx < dimX){
-		x = flowArray[(scaledCy << 1) * lowDimX + scaledCx];
-		y = flowArray[directionIdxOffset + (scaledCy << 1) * lowDimX + scaledCx];
+		x = offsetArray[(scaledCy << 1) * lowDimX + scaledCx];
+		y = offsetArray[directionIndexOffset + (scaledCy << 1) * lowDimX + scaledCx];
 	}
 
 	// Used for color output
@@ -40,7 +40,7 @@ __kernel void convertFlowToHSVKernel(__global const char* flowArray,
 	const unsigned short normFlow = min((abs(x) + abs(y)) << 10, 65535);
 
 	// Color Output
-	if (!bwOutput) {
+	if (!doBWOutput) {
 		// Calculate the angle in radians
 		const float angle_rad = atan2((float)y, (float)x);
 
@@ -119,18 +119,18 @@ __kernel void convertFlowToHSVKernel(__global const char* flowArray,
 
 	// Y Channel
 	if (cz == 0 && cy < dimY && cx < dimX) {
-		outputFrame[cy * dimX + cx] = bwOutput ? normFlow : ((unsigned short)(
+		outputFrame[cy * dimX + cx] = doBWOutput ? normFlow : ((unsigned short)(
 				(fmax(fmin(rgb.r * 0.299f + rgb.g * 0.587f + rgb.b * 0.114f, 255.0f), 0.0f)) * blendScalar) << 8) + 
-				frame1[cy * dimX + cx] * (1.0f - blendScalar);
+				inputFrame[cy * dimX + cx] * (1.0f - blendScalar);
 	// U/V Channels
 	} else if (cz == 1 && cy < (dimY >> 1) && cx < dimX) {
 		// U Channel
 		if ((cx & 1) == 0) {
-			outputFrame[channelIdxOffset + cy * dimX + (cx & ~1)] = bwOutput ? 32768 : (unsigned short)(
+			outputFrame[channelIndexOffset + cy * dimX + (cx & ~1)] = doBWOutput ? 32768 : (unsigned short)(
 						fmax(fmin(rgb.r * -0.168736f + rgb.g * -0.331264f + rgb.b * 0.5f + 128.0f, 255.0f), 0.0f)) << 8;
 		// V Channel
 		} else {
-			outputFrame[channelIdxOffset + cy * dimX + (cx & ~1) + 1] = bwOutput ? 32768 : (unsigned short)(
+			outputFrame[channelIndexOffset + cy * dimX + (cx & ~1) + 1] = doBWOutput ? 32768 : (unsigned short)(
 						fmax(fmin(rgb.r * 0.5f + rgb.g * -0.418688f + rgb.b * -0.081312f + 128.0f, 255.0f), 0.0f)) << 8;
 		}
 	}
