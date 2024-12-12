@@ -848,9 +848,9 @@ static bool detectDevices(struct OpticalFlowCalc* ofc) {
     // Capabilities we are going to check for
     cl_ulong availableVRAM;
     const cl_ulong requiredVRAM =
-        24 * ofc->frameHeight * ofc->frameWidth +
-        MAX_SEARCH_RADIUS * MAX_SEARCH_RADIUS * 3 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth +
-        12 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth;
+        24lu * ofc->frameHeight * ofc->frameWidth +
+        MAX_SEARCH_RADIUS * MAX_SEARCH_RADIUS * 3lu * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth +
+        12lu * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth;
     size_t maxWorkGroupSizes[3];
     const size_t requiredWorkGroupSizes[3] = {16, 16, 1};
     cl_ulong maxSharedMemSize;

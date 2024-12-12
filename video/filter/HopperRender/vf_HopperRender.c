@@ -648,17 +648,17 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     struct mp_frame frame = mp_pin_out_read(priv->conv->f->pins[1]);
     struct mp_image *img = frame.data;
 
+    // Detect if the frame is an end of frame
+    if (mp_frame_is_signaling(frame)) {
+        mp_pin_in_write(f->ppins[1], frame);
+        return;
+    }
+
     // If the source is already at or above 60 FPS, we don't need interpolation
     priv->sourceFPS = img->nominal_fps;
     priv->sourceFrameTime = 1.0 / (priv->sourceFPS * priv->playbackSpeed);
     if (priv->sourceFrameTime <= priv->targetFrameTime) {
         priv->interpolationState = NotNeeded;
-        mp_pin_in_write(f->ppins[1], frame);
-        return;
-    }
-
-    // Detect if the frame is an end of frame
-    if (mp_frame_is_signaling(frame)) {
         mp_pin_in_write(f->ppins[1], frame);
         return;
     }
