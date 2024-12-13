@@ -654,9 +654,13 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
         return;
     }
 
-    // If the source is already at or above 60 FPS, we don't need interpolation
-    priv->sourceFPS = img->nominal_fps;
+    // Retrieve the source frame time
+    if (img->nominal_fps > 0.0) {
+        priv->sourceFPS = img->nominal_fps;
+    }
     priv->sourceFrameTime = 1.0 / (priv->sourceFPS * priv->playbackSpeed);
+
+    // If the source is already at or above 60 FPS, we don't need interpolation
     if (priv->sourceFrameTime <= priv->targetFrameTime) {
         priv->interpolationState = NotNeeded;
         mp_pin_in_write(f->ppins[1], frame);
