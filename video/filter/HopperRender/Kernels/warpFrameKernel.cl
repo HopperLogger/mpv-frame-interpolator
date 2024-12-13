@@ -8,7 +8,6 @@ __kernel void warpFrameKernel(__global const unsigned short* sourceFrame, __glob
     const int cy = get_global_id(1);
     const int cz = get_global_id(2);
 
-    
     if (cz == 0 && cy < dimY && cx < dimX) {
         // Y Channel
         const int scaledCx = cx >> resolutionScalar;  // The X-Index of the current thread in the offset array
