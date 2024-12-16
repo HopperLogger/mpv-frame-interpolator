@@ -10,7 +10,7 @@ char safe_add(char a, char b) {
 }
 
 // Kernel that adjusts the offset array based on the comparison results
-__kernel void adjustOffsetArrayKernel(__global char* offsetArray, __global const unsigned char* lowestLayerArray,
+__kernel void adjustOffsetArrayKernel(__global short* offsetArray, __global const unsigned char* lowestLayerArray,
                                       const int windowSize, const int directionIndexOffset, const int layerIndexOffset,
                                       const int searchWindowSize, const int numLayers, const int lowDimY,
                                       const int lowDimX, const int isLastRun) {
@@ -25,8 +25,8 @@ __kernel void adjustOffsetArrayKernel(__global char* offsetArray, __global const
         const int wy = (cy / windowSize) * windowSize;
         unsigned char lowestLayer = lowestLayerArray[wy * lowDimX + wx];
 
-        char idealX = offsetArray[lowestLayer * layerIndexOffset + threadIndex2D];
-        char idealY = offsetArray[directionIndexOffset + lowestLayer * layerIndexOffset + threadIndex2D];
+        short idealX = offsetArray[lowestLayer * layerIndexOffset + threadIndex2D];
+        short idealY = offsetArray[directionIndexOffset + lowestLayer * layerIndexOffset + threadIndex2D];
 
         // If this is the last run, we need to adjust the offset array for the next iteration
         if (isLastRun) {
@@ -36,8 +36,8 @@ __kernel void adjustOffsetArrayKernel(__global char* offsetArray, __global const
         }
         int i = 0;
         for (int cz = 0; cz < numLayers; cz++) {
-            char offsetX = (i % searchWindowSize) - (searchWindowSize / 2);
-            char offsetY = (i / searchWindowSize) - (searchWindowSize / 2);
+            short offsetX = (i % searchWindowSize) - (searchWindowSize / 2);
+            short offsetY = (i / searchWindowSize) - (searchWindowSize / 2);
             if (offsetX == 0 && offsetY == 0) {
                 i++;
                 continue;

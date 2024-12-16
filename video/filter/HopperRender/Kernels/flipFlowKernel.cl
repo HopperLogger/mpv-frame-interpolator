@@ -1,5 +1,5 @@
 // Kernel that translates a flow array from frame 1 to frame 2 into a flow array from frame 2 to frame 1
-__kernel void flipFlowKernel(__global const char* offsetArray12, __global char* offsetArray21, const int lowDimY,
+__kernel void flipFlowKernel(__global const short* offsetArray12, __global short* offsetArray21, const int lowDimY,
                              const int lowDimX, const int resolutionScalar, const int directionIndexOffset) {
     // Current entry to be computed by the thread
     const int cx = get_global_id(0);
@@ -9,8 +9,8 @@ __kernel void flipFlowKernel(__global const char* offsetArray12, __global char* 
     // Check if we are inside the flow array
     if (cy < lowDimY && cx < lowDimX) {
         // Get the current flow values
-        const char x = offsetArray12[cy * lowDimX + cx];
-        const char y = offsetArray12[directionIndexOffset + cy * lowDimX + cx];
+        const short x = offsetArray12[cy * lowDimX + cx];
+        const short y = offsetArray12[directionIndexOffset + cy * lowDimX + cx];
         int newCx;
         int newCy;
         if (resolutionScalar) {

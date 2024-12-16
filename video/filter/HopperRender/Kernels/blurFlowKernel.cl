@@ -2,11 +2,11 @@
 #define KERNEL_RADIUS 4
 
 // Kernel that blurs a flow array
-__kernel void blurFlowKernel(__global const char* offsetArray12, __global const char* offsetArray21,
-                             __global char* blurredOffsetArray12, __global char* blurredOffsetArray21, const int dimY,
+__kernel void blurFlowKernel(__global const short* offsetArray12, __global const short* offsetArray21,
+                             __global short* blurredOffsetArray12, __global short* blurredOffsetArray21, const int dimY,
                              const int dimX) {
     // Shared memory for the tile, including halos for the blur
-    __local char localTile[BLOCK_SIZE + 2 * KERNEL_RADIUS][BLOCK_SIZE + 2 * KERNEL_RADIUS];
+    __local short localTile[BLOCK_SIZE + 2 * KERNEL_RADIUS][BLOCK_SIZE + 2 * KERNEL_RADIUS];
 
     // Thread and global indices
     int tx = get_local_id(0);   // Local thread x index
@@ -16,8 +16,8 @@ __kernel void blurFlowKernel(__global const char* offsetArray12, __global const 
     int gz = get_global_id(2);  // Global z index (layer index)
     const bool is12 = gz < 2;
     if (!is12) gz -= 2;
-    __global const char* input = is12 ? offsetArray12 : offsetArray21;
-    __global char* output = is12 ? blurredOffsetArray12 : blurredOffsetArray21;
+    __global const short* input = is12 ? offsetArray12 : offsetArray21;
+    __global short* output = is12 ? blurredOffsetArray12 : blurredOffsetArray21;
 
     // dimX of the shared memory
     int localSizeX = get_local_size(0);
@@ -90,6 +90,6 @@ __kernel void blurFlowKernel(__global const char* offsetArray12, __global const 
 
         // Average the sum
         int kernelSize = (2 * KERNEL_RADIUS) * (2 * KERNEL_RADIUS);
-        output[globalIndex] = (char)(sum / kernelSize);
+        output[globalIndex] = (short)(sum / kernelSize);
     }
 }

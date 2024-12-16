@@ -24,7 +24,7 @@ void warpReduce2x2(volatile __local unsigned int* partialSums, int tIdx) {
 
 // Kernel that sums up all the pixel deltas of each window
 __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __global const unsigned short* frame1,
-                                  __global const unsigned short* frame2, __global const char* offsetArray,
+                                  __global const unsigned short* frame2, __global const short* offsetArray,
                                   __global const unsigned char* lowestLayerArray, const int directionIndexOffset,
                                   const int dimY, const int dimX, const int lowDimY, const int lowDimX,
                                   const int windowSize, const int resolutionScalar, const int isFirstIteration) {
@@ -46,8 +46,8 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     unsigned int neighborBias = 0;                       // Bias to discourage non-uniform flow
 
     // Retrieve the offset values for the current thread that are going to be tested
-    char offsetX = offsetArray[layerOffset + threadIndex2D];
-    char offsetY = offsetArray[directionIndexOffset + layerOffset + threadIndex2D];
+    short offsetX = offsetArray[layerOffset + threadIndex2D];
+    short offsetY = offsetArray[directionIndexOffset + layerOffset + threadIndex2D];
     int newCx = scaledCx + offsetX;
     int newCy = scaledCy + offsetY;
 
@@ -58,18 +58,18 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     if (!isFirstIteration) {
         const int wx = (cx / windowSize) * windowSize;
         const int wy = (cy / windowSize) * windowSize;
-        unsigned char lowestLayer = lowestLayerArray[wy * lowDimX + wx];
-        const int idealLayerOffset = lowestLayer * 2 * lowDimY * lowDimX;
+        const unsigned char lowestLayer = lowestLayerArray[wy * lowDimX + wx];
+        const int idealLayerOffset = (int)lowestLayer * 2 * lowDimY * lowDimX;
 
         // Retrieve the ideal offset values of the neighboring windows
-        int neighborOffsetXDown = cy + windowSize < lowDimY ? offsetArray[idealLayerOffset + (cy + windowSize) * lowDimX + cx] : 0;
-        int neighborOffsetYDown = cy + windowSize < lowDimY ? offsetArray[directionIndexOffset + idealLayerOffset + (cy + windowSize) * lowDimX + cx] : 0;
-        int neighborOffsetXRight = cx + windowSize < lowDimX ? offsetArray[idealLayerOffset + cy * lowDimX + cx + windowSize] : 0;
-        int neighborOffsetYRight = cx + windowSize < lowDimX ? offsetArray[directionIndexOffset + idealLayerOffset + cy * lowDimX + cx + windowSize] : 0;
-        int neighborOffsetXLeft = cx - windowSize >= 0 ? offsetArray[idealLayerOffset + cy * lowDimX + cx - windowSize] : 0;
-        int neighborOffsetYLeft = cx - windowSize >= 0 ? offsetArray[directionIndexOffset + idealLayerOffset + cy * lowDimX + cx - windowSize] : 0;
-        int neighborOffsetXUp = cy - windowSize >= 0 ? offsetArray[idealLayerOffset + (cy - windowSize) * lowDimX + cx] : 0;
-        int neighborOffsetYUp = cy - windowSize >= 0 ? offsetArray[directionIndexOffset + idealLayerOffset + (cy - windowSize) * lowDimX + cx] : 0;
+        short neighborOffsetXDown = cy + windowSize < lowDimY ? offsetArray[idealLayerOffset + (cy + windowSize) * lowDimX + cx] : 0;
+        short neighborOffsetYDown = cy + windowSize < lowDimY ? offsetArray[directionIndexOffset + idealLayerOffset + (cy + windowSize) * lowDimX + cx] : 0;
+        short neighborOffsetXRight = cx + windowSize < lowDimX ? offsetArray[idealLayerOffset + cy * lowDimX + cx + windowSize] : 0;
+        short neighborOffsetYRight = cx + windowSize < lowDimX ? offsetArray[directionIndexOffset + idealLayerOffset + cy * lowDimX + cx + windowSize] : 0;
+        short neighborOffsetXLeft = cx - windowSize >= 0 ? offsetArray[idealLayerOffset + cy * lowDimX + cx - windowSize] : 0;
+        short neighborOffsetYLeft = cx - windowSize >= 0 ? offsetArray[directionIndexOffset + idealLayerOffset + cy * lowDimX + cx - windowSize] : 0;
+        short neighborOffsetXUp = cy - windowSize >= 0 ? offsetArray[idealLayerOffset + (cy - windowSize) * lowDimX + cx] : 0;
+        short neighborOffsetYUp = cy - windowSize >= 0 ? offsetArray[directionIndexOffset + idealLayerOffset + (cy - windowSize) * lowDimX + cx] : 0;
 
         // Collect the offset and neighbor biases that will be used to discourage unnecessary offset and non-uniform flow
         offsetBias = abs(offsetX) + abs(offsetY);
