@@ -86,14 +86,14 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
             (scaledCy < 0 || scaledCy >= dimY || scaledCx < 0 || scaledCx >= dimX || newCy < 0 || newCx < 0 ||
              newCy >= dimY || newCx >= dimX)
                 ? 0
-                : delta + offsetBias + neighborBias;
+                : (delta + offsetBias + neighborBias);
         return;
     } else {
         // All other window sizes
         partialSums[tIdx] = (scaledCy < 0 || scaledCy >= dimY || scaledCx < 0 || scaledCx >= dimX || newCy < 0 ||
                              newCx < 0 || newCy >= dimY || newCx >= dimX)
                                 ? 0
-                                : delta + offsetBias + neighborBias;
+                                : (delta + offsetBias + neighborBias);
     }
 
     barrier(CLK_LOCAL_MEM_FENCE);
