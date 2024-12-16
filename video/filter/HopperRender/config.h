@@ -4,7 +4,7 @@
 #define NUM_ITERATIONS 0 // How many times the window size used in the ofc calculation will be halved. This controls how precise the optical flow gets. (0: As often as possible)
 
 #define MIN_SEARCH_RADIUS 5 // The minimum window size used in the ofc calculation
-#define MAX_SEARCH_RADIUS 11 // The maximum window size used in the ofc calculation
+#define MAX_SEARCH_RADIUS 16 // The maximum window size used in the ofc calculation
 
 #define MAX_NUM_STEPS 2 // The maximum number of times to repeat each iteration to find the best offset for each window (allows farther movement to be detected)
 
