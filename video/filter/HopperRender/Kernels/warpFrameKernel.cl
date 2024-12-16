@@ -1,5 +1,5 @@
 // Kernel that warps a frame according to the offset array
-__kernel void warpFrameKernel(__global const unsigned short* sourceFrame, __global const char* offsetArray,
+__kernel void warpFrameKernel(__global const unsigned short* sourceFrame, __global const short* offsetArray,
                               __global unsigned short* warpedFrame, const float frameScalar, const int lowDimX,
                               const int dimY, const int dimX, const int resolutionScalar,
                               const int directionIndexOffset, const int channelIndexOffset) {

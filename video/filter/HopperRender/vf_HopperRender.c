@@ -348,10 +348,8 @@ static void vf_HopperRender_uninit(struct mp_filter *f) {
  */
 static void vf_HopperRender_reinit_ofc(struct mp_filter *f) {
     struct priv *priv = f->priv;
-    priv->ofc->opticalFlowSearchRadius = priv->ofc->opticalFlowSearchRadius;
     // Here we just adjust all the variables that are affected by the new resolution scalar
     if (priv->interpolationState == TooSlow) priv->interpolationState = Active;
-    priv->ofc->opticalFlowResScalar = priv->ofc->opticalFlowResScalar;
     priv->ofc->opticalFlowFrameWidth = priv->ofc->frameWidth >> priv->ofc->opticalFlowResScalar;
     priv->ofc->opticalFlowFrameHeight = priv->ofc->frameHeight >> priv->ofc->opticalFlowResScalar;
     priv->ofc->directionIndexOffset = priv->ofc->opticalFlowFrameHeight * priv->ofc->opticalFlowFrameWidth;
@@ -425,7 +423,6 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
         if (AUTO_SEARCH_RADIUS_ADJUST && priv->ofc->opticalFlowSearchRadius > MIN_SEARCH_RADIUS) {
             // Decrease the number of steps to reduce calculation time
             priv->ofc->opticalFlowSearchRadius = max(priv->ofc->opticalFlowSearchRadius - 1, MIN_SEARCH_RADIUS);
-            priv->ofc->opticalFlowSearchRadius = priv->ofc->opticalFlowSearchRadius;
             adjustSearchRadius(priv->ofc, priv->ofc->opticalFlowSearchRadius);
 
         } else if (AUTO_SEARCH_RADIUS_ADJUST && priv->ofc->opticalFlowSteps > 1) {
@@ -462,12 +459,10 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
             vf_HopperRender_reinit_ofc(f);
         } else if (AUTO_SEARCH_RADIUS_ADJUST && priv->ofc->opticalFlowSearchRadius < MAX_SEARCH_RADIUS) {
             priv->ofc->opticalFlowSearchRadius = min(priv->ofc->opticalFlowSearchRadius + 1, MAX_SEARCH_RADIUS);
-            priv->ofc->opticalFlowSearchRadius = priv->ofc->opticalFlowSearchRadius;
             adjustSearchRadius(priv->ofc, priv->ofc->opticalFlowSearchRadius);
         } else if (AUTO_SEARCH_RADIUS_ADJUST && priv->ofc->opticalFlowSteps < MAX_NUM_STEPS) {
             priv->ofc->opticalFlowSteps = priv->ofc->opticalFlowSteps + 1;
             priv->ofc->opticalFlowSearchRadius = MIN_SEARCH_RADIUS;
-            priv->ofc->opticalFlowSearchRadius = priv->ofc->opticalFlowSearchRadius;
             adjustSearchRadius(priv->ofc, priv->ofc->opticalFlowSearchRadius);
         }
         priv->performanceAdjustmentDelay = 3;

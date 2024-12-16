@@ -1,5 +1,5 @@
 // Kernel that creates an HSV flow image from the offset array
-__kernel void visualizeFlowKernel(__global const char* offsetArray, __global unsigned short* outputFrame,
+__kernel void visualizeFlowKernel(__global const short* offsetArray, __global unsigned short* outputFrame,
                                   __global const unsigned short* inputFrame, const int lowDimY, const int lowDimX,
                                   const int dimY, const int dimX, const int resolutionScalar,
                                   const int directionIndexOffset, const int channelIndexOffset, const int doBWOutput) {
@@ -13,8 +13,8 @@ __kernel void visualizeFlowKernel(__global const char* offsetArray, __global uns
     const int scaledCy = cy >> resolutionScalar;  // The Y-Index of the current thread in the offset array
 
     // Get the current flow values
-    char x;
-    char y;
+    short x;
+    short y;
     if (cz == 0 && cy < dimY && cx < dimX) {
         x = offsetArray[scaledCy * lowDimX + scaledCx];
         y = offsetArray[directionIndexOffset + scaledCy * lowDimX + scaledCx];
