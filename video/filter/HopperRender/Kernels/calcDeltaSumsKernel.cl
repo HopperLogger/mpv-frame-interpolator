@@ -52,7 +52,9 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     int newCy = scaledCy + offsetY;
 
     // Calculate the delta value for the current pixel
-    unsigned int delta = abs((int)frame1[scaledCy * dimX + scaledCx] - (int)frame2[newCy * dimX + newCx]);
+    unsigned int delta = (scaledCy < 0 || scaledCy >= dimY || scaledCx < 0 || scaledCx >= dimX || newCy < 0 || newCx < 0 || newCy >= dimY || newCx >= dimX)
+                         ? 0
+                         : abs_diff(frame1[scaledCy * dimX + scaledCx], frame2[newCy * dimX + newCx]);
 
     // Retrieve the layer that contains the ideal offset values for the current window
     if (!isFirstIteration) {
@@ -73,27 +75,20 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
 
         // Collect the offset and neighbor biases that will be used to discourage unnecessary offset and non-uniform flow
         offsetBias = abs(offsetX) + abs(offsetY);
-        neighborBias = (abs(neighborOffsetXDown - offsetX) + abs(neighborOffsetYDown - offsetY) +
-                        abs(neighborOffsetXRight - offsetX) + abs(neighborOffsetYRight - offsetY) +
-                        abs(neighborOffsetXLeft - offsetX) + abs(neighborOffsetYLeft - offsetY) +
-                        abs(neighborOffsetXUp - offsetX) + abs(neighborOffsetYUp - offsetY))
+        neighborBias = (abs_diff(neighborOffsetXDown, offsetX) + abs_diff(neighborOffsetYDown, offsetY) +
+                        abs_diff(neighborOffsetXRight, offsetX) + abs_diff(neighborOffsetYRight, offsetY) +
+                        abs_diff(neighborOffsetXLeft, offsetX) + abs_diff(neighborOffsetYLeft, offsetY) +
+                        abs_diff(neighborOffsetXUp, offsetX) + abs_diff(neighborOffsetYUp, offsetY))
                        << 2;
     }
 
     if (windowSize == 1) {
         // Window size of 1x1
-        summedUpDeltaArray[cz * lowDimY * lowDimX + cy * lowDimX + cx] =
-            (scaledCy < 0 || scaledCy >= dimY || scaledCx < 0 || scaledCx >= dimX || newCy < 0 || newCx < 0 ||
-             newCy >= dimY || newCx >= dimX)
-                ? 0
-                : (delta + offsetBias + neighborBias);
+        summedUpDeltaArray[cz * lowDimY * lowDimX + cy * lowDimX + cx] = delta + offsetBias + neighborBias;
         return;
     } else {
         // All other window sizes
-        partialSums[tIdx] = (scaledCy < 0 || scaledCy >= dimY || scaledCx < 0 || scaledCx >= dimX || newCy < 0 ||
-                             newCx < 0 || newCy >= dimY || newCx >= dimX)
-                                ? 0
-                                : (delta + offsetBias + neighborBias);
+        partialSums[tIdx] = delta + offsetBias + neighborBias;
     }
 
     barrier(CLK_LOCAL_MEM_FENCE);
