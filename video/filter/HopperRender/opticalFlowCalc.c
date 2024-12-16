@@ -331,7 +331,9 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
             // 1. Calculate the image delta and sum up the deltas of each window
             cl_int err = clSetKernelArg(ofc->calcDeltaSumsKernel, 1, sizeof(cl_mem), &ofc->blurredFrameArray[1]);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 2, sizeof(cl_mem), &ofc->blurredFrameArray[2]);
-            err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 9, sizeof(int), &windowSize);
+            err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 10, sizeof(int), &windowSize);
+            int isFirstIteration = (int)(iter == 0 && step == 0);
+            err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 12, sizeof(int), &isFirstIteration);
             ERR_MSG_CHECK(err, "calculateOpticalFlow");
             ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->calcDeltaSumsKernel, 3, ofc->lowGrid8x8xL,
                                         ofc->threads8x8x1, "calculateOpticalFlow"));
@@ -701,12 +703,13 @@ bool setKernelParameters(struct OpticalFlowCalc* ofc) {
     err |= clSetKernelArg(ofc->setInitialOffsetKernel, 5, sizeof(int), &ofc->layerIndexOffset);
     err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 0, sizeof(cl_mem), &ofc->summedDeltaValuesArray);
     err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 3, sizeof(cl_mem), &ofc->offsetArray12);
-    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 4, sizeof(int), &ofc->directionIndexOffset);
-    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 5, sizeof(int), &ofc->frameHeight);
-    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 6, sizeof(int), &ofc->frameWidth);
-    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 7, sizeof(int), &ofc->opticalFlowFrameHeight);
-    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 8, sizeof(int), &ofc->opticalFlowFrameWidth);
-    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 10, sizeof(int), &ofc->opticalFlowResScalar);
+    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 4, sizeof(cl_mem), &ofc->lowestLayerArray);
+    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 5, sizeof(int), &ofc->directionIndexOffset);
+    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 6, sizeof(int), &ofc->frameHeight);
+    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 7, sizeof(int), &ofc->frameWidth);
+    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 8, sizeof(int), &ofc->opticalFlowFrameHeight);
+    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 9, sizeof(int), &ofc->opticalFlowFrameWidth);
+    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 11, sizeof(int), &ofc->opticalFlowResScalar);
     err |= clSetKernelArg(ofc->determineLowestLayerKernel, 0, sizeof(cl_mem), &ofc->summedDeltaValuesArray);
     err |= clSetKernelArg(ofc->determineLowestLayerKernel, 1, sizeof(cl_mem), &ofc->lowestLayerArray);
     err |= clSetKernelArg(ofc->determineLowestLayerKernel, 3, sizeof(int), &numLayers);
