@@ -6,7 +6,7 @@
 #define MIN_SEARCH_RADIUS 5 // The minimum window size used in the ofc calculation
 #define MAX_SEARCH_RADIUS 16 // The maximum window size used in the ofc calculation
 
-#define MAX_NUM_STEPS 5 // The maximum number of times to repeat each iteration to find the best offset for each window (allows farther movement to be detected)
+#define MAX_NUM_STEPS 2 // The maximum number of times to repeat each iteration to find the best offset for each window (allows farther movement to be detected)
 
 // Performance Adjustments
 #define AUTO_FRAME_SCALE 1 // Whether to automatically reduce/increase the calculation resolution depending on performance (0: Disabled, 1: Enabled)
