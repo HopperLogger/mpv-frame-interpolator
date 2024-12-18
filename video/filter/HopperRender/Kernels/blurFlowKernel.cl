@@ -42,18 +42,18 @@ __kernel void blurFlowKernel(__global const short* offsetArray12, __global const
     if (ty < KERNEL_RADIUS) {
         int haloYTop = gy - KERNEL_RADIUS;
         int haloYBottom = gy + localSizeY;
-        localTile[ty][lx] = (haloYTop >= 0) ? input[gz * dimX * dimY + haloYTop * dimX + gx] : 0;
+        localTile[ty][lx] = (haloYTop >= 0 && gy < dimY && gx < dimX) ? input[gz * dimX * dimY + haloYTop * dimX + gx] : 0;
         localTile[ty + localSizeY + KERNEL_RADIUS][lx] =
-            (haloYBottom < dimY) ? input[gz * dimX * dimY + haloYBottom * dimX + gx] : 0;
+            (haloYBottom < dimY && gy < dimY && gx < dimX) ? input[gz * dimX * dimY + haloYBottom * dimX + gx] : 0;
     }
 
     // Left and right halo
     if (tx < KERNEL_RADIUS) {
         int haloXLeft = gx - KERNEL_RADIUS;
         int haloXRight = gx + localSizeX;
-        localTile[ly][tx] = (haloXLeft >= 0) ? input[gz * dimX * dimY + gy * dimX + haloXLeft] : 0;
+        localTile[ly][tx] = (haloXLeft >= 0 && gy < dimY && gx < dimX) ? input[gz * dimX * dimY + gy * dimX + haloXLeft] : 0;
         localTile[ly][tx + localSizeX + KERNEL_RADIUS] =
-            (haloXRight < dimX) ? input[gz * dimX * dimY + gy * dimX + haloXRight] : 0;
+            (haloXRight < dimX && gy < dimY && gx < dimX) ? input[gz * dimX * dimY + gy * dimX + haloXRight] : 0;
     }
 
     // Corner halo
@@ -62,16 +62,16 @@ __kernel void blurFlowKernel(__global const short* offsetArray12, __global const
         int haloXRight = gx + localSizeX;
         int haloYTop = gy - KERNEL_RADIUS;
         int haloYBottom = gy + localSizeY;
-        localTile[ty][tx] = (haloYTop >= 0 && haloXLeft >= 0) ? input[gz * dimX * dimY + haloYTop * dimX + haloXLeft]
+        localTile[ty][tx] = (haloYTop >= 0 && haloXLeft >= 0 && gy < dimY && gx < dimX) ? input[gz * dimX * dimY + haloYTop * dimX + haloXLeft]
                                                               : 0;  // Top Left square
-        localTile[ty][tx + localSizeX + KERNEL_RADIUS] = (haloYTop >= 0 && haloXRight < dimX)
+        localTile[ty][tx + localSizeX + KERNEL_RADIUS] = (haloYTop >= 0 && haloXRight < dimX && gy < dimY && gx < dimX)
                                                              ? input[gz * dimX * dimY + haloYTop * dimX + haloXRight]
                                                              : 0;  // Top Right square
-        localTile[ty + localSizeY + KERNEL_RADIUS][tx] = (haloYBottom < dimY && haloXLeft >= 0)
+        localTile[ty + localSizeY + KERNEL_RADIUS][tx] = (haloYBottom < dimY && haloXLeft >= 0 && gy < dimY && gx < dimX)
                                                              ? input[gz * dimX * dimY + haloYBottom * dimX + haloXLeft]
                                                              : 0;  // Bottom Left square
         localTile[ty + localSizeY + KERNEL_RADIUS][tx + localSizeX + KERNEL_RADIUS] =
-            (haloYBottom < dimY && haloXRight < dimX) ? input[gz * dimX * dimY + haloYBottom * dimX + haloXRight]
+            (haloYBottom < dimY && haloXRight < dimX && gy < dimY && gx < dimX) ? input[gz * dimX * dimY + haloYBottom * dimX + haloXRight]
                                                       : 0;  // Bottom Right square
     }
 

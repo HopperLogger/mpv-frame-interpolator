@@ -41,21 +41,28 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     const int scaledCx = cx << resolutionScalar;         // The X-Index of the current thread in the input frames
     const int scaledCy = cy << resolutionScalar;         // The Y-Index of the current thread in the input frames
     const int threadIndex2D = cy * lowDimX + cx;         // Standard thread index without Z-Dim
+    unsigned int delta = 0;                              // The delta value of the current pixel
     unsigned int offsetBias = 0;                         // Bias to discourage unnecessary offset
     unsigned int neighborBias = 0;                       // Bias to discourage non-uniform flow
 
     // Retrieve the offset values for the current thread that are going to be tested
-    const short offsetX = offsetArray[threadIndex2D];
-    const short offsetY = offsetArray[directionIndexOffset + threadIndex2D];
+    const short idealOffsetX = offsetArray[threadIndex2D];
+    const short idealOffsetY = offsetArray[directionIndexOffset + threadIndex2D];
     const short relOffsetAdjustmentX = (cz % searchWindowSize) - (searchWindowSize / 2);
     const short relOffsetAdjustmentY = (cz / searchWindowSize) - (searchWindowSize / 2);
-    const int newCx = scaledCx + offsetX + relOffsetAdjustmentX;
-    const int newCy = scaledCy + offsetY + relOffsetAdjustmentY;
+    const short offsetX = idealOffsetX + relOffsetAdjustmentX;
+    const short offsetY = idealOffsetY + relOffsetAdjustmentY;
+    const int newCx = scaledCx + offsetX;
+    const int newCy = scaledCy + offsetY;
 
     // Calculate the delta value for the current pixel
-    const unsigned int delta = (scaledCy < 0 || scaledCy >= dimY || scaledCx < 0 || scaledCx >= dimX || newCy < 0 || newCx < 0 || newCy >= dimY || newCx >= dimX)
-                         ? 0
-                         : abs_diff(frame1[scaledCy * dimX + scaledCx], frame2[newCy * dimX + newCx]);
+    if (scaledCy < 0 || scaledCx < 0 || scaledCy >= dimY || scaledCx >= dimX) {
+        delta = 32768;
+    } else if (newCy < 0 || newCx < 0 || newCy >= dimY || newCx >= dimX) {
+        delta = frame1[scaledCy * dimX + scaledCx];
+    } else {
+        delta = abs_diff(frame1[scaledCy * dimX + scaledCx], frame2[newCy * dimX + newCx]);
+    }
 
     if (!isFirstIteration) {
         // Retrieve the ideal offset values of the neighboring windows
@@ -96,9 +103,9 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
         }
 
         // Collect the offset and neighbor biases that will be used to discourage unnecessary offset and non-uniform flow
-        offsetBias = abs(offsetX + relOffsetAdjustmentX) + abs(offsetY + relOffsetAdjustmentY);
+        offsetBias = abs(offsetX) + abs(offsetY);
         neighborBias = (smallest + second_smallest);
-        //neighborBias = downDiff + rightDiff + leftDiff + upDiff;
+        //neighborBias = 0;
     }
 
     if (windowSize == 1) {

@@ -405,7 +405,7 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
         if (AUTO_FRAME_SCALE && priv->ofc->opticalFlowResScalar < 5) {
             priv->ofc->opticalFlowResScalar += 1;
             vf_HopperRender_reinit_ofc(f);
-            priv->performanceAdjustmentDelay = 3;
+            priv->performanceAdjustmentDelay = 2;
         }
         return;
     }
@@ -440,7 +440,7 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
             }
         }
 
-        priv->performanceAdjustmentDelay = 3;
+        priv->performanceAdjustmentDelay = 2;
 
         // Disable Interpolation if we are too slow
         if ((AUTO_FRAME_SCALE || AUTO_SEARCH_RADIUS_ADJUST) && ((currTotalCalcDuration * 1.05) > priv->sourceFrameTime))
@@ -465,7 +465,7 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
             priv->ofc->opticalFlowSearchRadius = MIN_SEARCH_RADIUS;
             adjustSearchRadius(priv->ofc, priv->ofc->opticalFlowSearchRadius);
         }
-        priv->performanceAdjustmentDelay = 3;
+        priv->performanceAdjustmentDelay = 2;
     }
 #endif
 }
