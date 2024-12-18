@@ -25,9 +25,9 @@ void warpReduce2x2(volatile __local unsigned int* partialSums, int tIdx) {
 // Kernel that sums up all the pixel deltas of each window
 __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __global const unsigned short* frame1,
                                   __global const unsigned short* frame2, __global const short* offsetArray,
-                                  __global const unsigned char* lowestLayerArray, const int directionIndexOffset,
-                                  const int dimY, const int dimX, const int lowDimY, const int lowDimX,
-                                  const int windowSize, const int resolutionScalar, const int isFirstIteration) {
+                                  const int directionIndexOffset, const int dimY, const int dimX, const int lowDimY,
+                                  const int lowDimX, const int windowSize, const int searchWindowSize,
+                                  const int resolutionScalar, const int isFirstIteration) {
     // Shared memory for the partial sums of the current block
     __local unsigned int partialSums[64];
 
@@ -38,7 +38,6 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     cy = min(cy, lowDimY - 1);
     const int cz = get_global_id(2);
     const int tIdx = get_local_id(1) * get_local_size(0) + get_local_id(0);
-    const int layerOffset = cz * 2 * lowDimY * lowDimX;  // Offset to index the layer of the current thread
     const int scaledCx = cx << resolutionScalar;         // The X-Index of the current thread in the input frames
     const int scaledCy = cy << resolutionScalar;         // The Y-Index of the current thread in the input frames
     const int threadIndex2D = cy * lowDimX + cx;         // Standard thread index without Z-Dim
@@ -46,40 +45,60 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     unsigned int neighborBias = 0;                       // Bias to discourage non-uniform flow
 
     // Retrieve the offset values for the current thread that are going to be tested
-    short offsetX = offsetArray[layerOffset + threadIndex2D];
-    short offsetY = offsetArray[directionIndexOffset + layerOffset + threadIndex2D];
-    int newCx = scaledCx + offsetX;
-    int newCy = scaledCy + offsetY;
+    const short offsetX = offsetArray[threadIndex2D];
+    const short offsetY = offsetArray[directionIndexOffset + threadIndex2D];
+    const short relOffsetAdjustmentX = (cz % searchWindowSize) - (searchWindowSize / 2);
+    const short relOffsetAdjustmentY = (cz / searchWindowSize) - (searchWindowSize / 2);
+    const int newCx = scaledCx + offsetX + relOffsetAdjustmentX;
+    const int newCy = scaledCy + offsetY + relOffsetAdjustmentY;
 
     // Calculate the delta value for the current pixel
-    unsigned int delta = (scaledCy < 0 || scaledCy >= dimY || scaledCx < 0 || scaledCx >= dimX || newCy < 0 || newCx < 0 || newCy >= dimY || newCx >= dimX)
+    const unsigned int delta = (scaledCy < 0 || scaledCy >= dimY || scaledCx < 0 || scaledCx >= dimX || newCy < 0 || newCx < 0 || newCy >= dimY || newCx >= dimX)
                          ? 0
                          : abs_diff(frame1[scaledCy * dimX + scaledCx], frame2[newCy * dimX + newCx]);
 
-    // Retrieve the layer that contains the ideal offset values for the current window
     if (!isFirstIteration) {
-        const int wx = (cx / windowSize) * windowSize;
-        const int wy = (cy / windowSize) * windowSize;
-        const unsigned char lowestLayer = lowestLayerArray[wy * lowDimX + wx];
-        const int idealLayerOffset = (int)lowestLayer * 2 * lowDimY * lowDimX;
-
         // Retrieve the ideal offset values of the neighboring windows
-        short neighborOffsetXDown = cy + windowSize < lowDimY ? offsetArray[idealLayerOffset + (cy + windowSize) * lowDimX + cx] : 0;
-        short neighborOffsetYDown = cy + windowSize < lowDimY ? offsetArray[directionIndexOffset + idealLayerOffset + (cy + windowSize) * lowDimX + cx] : 0;
-        short neighborOffsetXRight = cx + windowSize < lowDimX ? offsetArray[idealLayerOffset + cy * lowDimX + cx + windowSize] : 0;
-        short neighborOffsetYRight = cx + windowSize < lowDimX ? offsetArray[directionIndexOffset + idealLayerOffset + cy * lowDimX + cx + windowSize] : 0;
-        short neighborOffsetXLeft = cx - windowSize >= 0 ? offsetArray[idealLayerOffset + cy * lowDimX + cx - windowSize] : 0;
-        short neighborOffsetYLeft = cx - windowSize >= 0 ? offsetArray[directionIndexOffset + idealLayerOffset + cy * lowDimX + cx - windowSize] : 0;
-        short neighborOffsetXUp = cy - windowSize >= 0 ? offsetArray[idealLayerOffset + (cy - windowSize) * lowDimX + cx] : 0;
-        short neighborOffsetYUp = cy - windowSize >= 0 ? offsetArray[directionIndexOffset + idealLayerOffset + (cy - windowSize) * lowDimX + cx] : 0;
+        const short neighborOffsetXDown = cy + windowSize < lowDimY ? offsetArray[(cy + windowSize) * lowDimX + cx] : 0;
+        const short neighborOffsetYDown = cy + windowSize < lowDimY ? offsetArray[directionIndexOffset + (cy + windowSize) * lowDimX + cx] : 0;
+        const short neighborOffsetXRight = cx + windowSize < lowDimX ? offsetArray[cy * lowDimX + cx + windowSize] : 0;
+        const short neighborOffsetYRight = cx + windowSize < lowDimX ? offsetArray[directionIndexOffset + cy * lowDimX + cx + windowSize] : 0;
+        const short neighborOffsetXLeft = cx - windowSize >= 0 ? offsetArray[cy * lowDimX + cx - windowSize] : 0;
+        const short neighborOffsetYLeft = cx - windowSize >= 0 ? offsetArray[directionIndexOffset + cy * lowDimX + cx - windowSize] : 0;
+        const short neighborOffsetXUp = cy - windowSize >= 0 ? offsetArray[(cy - windowSize) * lowDimX + cx] : 0;
+        const short neighborOffsetYUp = cy - windowSize >= 0 ? offsetArray[directionIndexOffset + (cy - windowSize) * lowDimX + cx] : 0;
+
+        const unsigned short downDiff = abs_diff(neighborOffsetXDown, offsetX) + abs_diff(neighborOffsetYDown, offsetY);
+        const unsigned short rightDiff = abs_diff(neighborOffsetXRight, offsetX) + abs_diff(neighborOffsetYRight, offsetY);
+        const unsigned short leftDiff = abs_diff(neighborOffsetXLeft, offsetX) + abs_diff(neighborOffsetYLeft, offsetY);
+        const unsigned short upDiff = abs_diff(neighborOffsetXUp, offsetX) + abs_diff(neighborOffsetYUp, offsetY);
+
+        // Find the two smallest differences
+        unsigned short smallest, second_smallest;
+        if (downDiff < rightDiff) {
+            smallest = downDiff;
+            second_smallest = rightDiff;
+        } else {
+            smallest = rightDiff;
+            second_smallest = downDiff;
+        }
+        if (leftDiff < smallest) {
+            second_smallest = smallest;
+            smallest = leftDiff;
+        } else if (leftDiff < second_smallest) {
+            second_smallest = leftDiff;
+        }
+        if (upDiff < smallest) {
+            second_smallest = smallest;
+            smallest = upDiff;
+        } else if (upDiff < second_smallest) {
+            second_smallest = upDiff;
+        }
 
         // Collect the offset and neighbor biases that will be used to discourage unnecessary offset and non-uniform flow
-        offsetBias = abs(offsetX) + abs(offsetY);
-        neighborBias = (abs_diff(neighborOffsetXDown, offsetX) + abs_diff(neighborOffsetYDown, offsetY) +
-                        abs_diff(neighborOffsetXRight, offsetX) + abs_diff(neighborOffsetYRight, offsetY) +
-                        abs_diff(neighborOffsetXLeft, offsetX) + abs_diff(neighborOffsetYLeft, offsetY) +
-                        abs_diff(neighborOffsetXUp, offsetX) + abs_diff(neighborOffsetYUp, offsetY))
-                       << 2;
+        offsetBias = abs(offsetX + relOffsetAdjustmentX) + abs(offsetY + relOffsetAdjustmentY);
+        neighborBias = (smallest + second_smallest);
+        //neighborBias = downDiff + rightDiff + leftDiff + upDiff;
     }
 
     if (windowSize == 1) {

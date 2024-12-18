@@ -71,7 +71,6 @@ typedef struct OpticalFlowCalc {
 
     // Kernels
     cl_kernel blurFrameKernel;
-    cl_kernel setInitialOffsetKernel;
     cl_kernel calcDeltaSumsKernel;
     cl_kernel determineLowestLayerKernel;
     cl_kernel adjustOffsetArrayKernel;
