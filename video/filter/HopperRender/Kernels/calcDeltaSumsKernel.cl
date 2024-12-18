@@ -80,31 +80,9 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
         const unsigned short leftDiff = abs_diff(neighborOffsetXLeft, offsetX) + abs_diff(neighborOffsetYLeft, offsetY);
         const unsigned short upDiff = abs_diff(neighborOffsetXUp, offsetX) + abs_diff(neighborOffsetYUp, offsetY);
 
-        // Find the two smallest differences
-        unsigned short smallest, second_smallest;
-        if (downDiff < rightDiff) {
-            smallest = downDiff;
-            second_smallest = rightDiff;
-        } else {
-            smallest = rightDiff;
-            second_smallest = downDiff;
-        }
-        if (leftDiff < smallest) {
-            second_smallest = smallest;
-            smallest = leftDiff;
-        } else if (leftDiff < second_smallest) {
-            second_smallest = leftDiff;
-        }
-        if (upDiff < smallest) {
-            second_smallest = smallest;
-            smallest = upDiff;
-        } else if (upDiff < second_smallest) {
-            second_smallest = upDiff;
-        }
-
         // Collect the offset and neighbor biases that will be used to discourage unnecessary offset and non-uniform flow
         offsetBias = abs(offsetX) + abs(offsetY);
-        neighborBias = (smallest + second_smallest);
+        neighborBias = (downDiff + rightDiff + leftDiff + upDiff) << 1;
         //neighborBias = 0;
     }
 
