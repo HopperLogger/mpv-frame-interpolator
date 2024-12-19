@@ -181,56 +181,14 @@ static bool cl_create_kernel(cl_kernel* kernel, cl_context context, cl_device_id
 }
 
 /*
- * Blurs the newest source frame
- *
- * @param ofc: Pointer to the optical flow calculator
- * @param outputBlurDirectly: Whether to output the blurred frame directly
- *
- * @return: Whether or not the frame was blurred successfully
- */
-static bool blurFrameArray(struct OpticalFlowCalc* ofc, const bool outputBlurDirectly) {
-    // Early exit if kernel size is too small to blur
-    if (!ofc->frameBlurEnabled) {
-        ERR_CHECK(cl_copy_buffer(ofc->queueOFC, ofc->inputFrameArray[0], 0, ofc->blurredFrameArray[0], 0,
-                                 ofc->frameHeight * ofc->frameWidth * sizeof(unsigned short), "blurFrameArray"));
-        return 0;
-    }
-
-    // Set the arguments to our compute kernel
-    cl_int err = clSetKernelArg(ofc->blurFrameKernel, 0, sizeof(cl_mem), &ofc->inputFrameArray[0]);
-    err |= clSetKernelArg(ofc->blurFrameKernel, 1, sizeof(cl_mem), &ofc->blurredFrameArray[0]);
-    ERR_MSG_CHECK(err, "blurFrameArray");
-
-    // Execute the kernel over the entire range of the data set
-    ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->blurFrameKernel, 2, ofc->grid16x16x1, ofc->threads16x16x1,
-                                "blurFrameArray"));
-
-    // Wait for the command queue to be serviced before reading back results
-    ERR_CHECK(cl_finish_queue(ofc->queueOFC, "blurFrameArray"));
-
-    // Handle direct output if necessary
-    if (outputBlurDirectly) {
-        ERR_CHECK(cl_copy_buffer(ofc->queueOFC, ofc->blurredFrameArray[0], 0, ofc->outputFrameArray, 0,
-                                 ofc->frameHeight * ofc->frameWidth * sizeof(unsigned short), "blurFrameArray"));
-        ERR_CHECK(cl_copy_buffer(
-            ofc->queueOFC, ofc->inputFrameArray[0], ofc->frameHeight * ofc->frameWidth * sizeof(unsigned short),
-            ofc->outputFrameArray, ofc->frameHeight * ofc->frameWidth * sizeof(unsigned short),
-            0.5 * (ofc->frameHeight * ofc->frameWidth * sizeof(unsigned short)), "blurFrameArray"));
-        ERR_CHECK(cl_finish_queue(ofc->queueOFC, "blurFrameArray"));
-    }
-    return 0;
-}
-
-/*
  * Updates the frame arrays and blurs them if necessary
  *
  * @param ofc: Pointer to the optical flow calculator
  * @param inputPlanes: Pointer to the input planes of the new source frame
- * @param outputBlurDirectly: Whether to output the blurred frame directly
  *
  * @return: Whether or not the frame arrays were updated successfully
  */
-bool updateFrame(struct OpticalFlowCalc* ofc, unsigned char** inputPlanes, const bool outputBlurDirectly) {
+bool updateFrame(struct OpticalFlowCalc* ofc, unsigned char** inputPlanes) {
     ERR_CHECK(cl_upload_buffer(ofc->queueOFC, inputPlanes[0], ofc->inputFrameArray[0], 0,
                                ofc->frameHeight * ofc->frameWidth * sizeof(unsigned short), "updateFrame"));
     ERR_CHECK(cl_upload_buffer(ofc->queueOFC, inputPlanes[1], ofc->inputFrameArray[0],
@@ -238,19 +196,11 @@ bool updateFrame(struct OpticalFlowCalc* ofc, unsigned char** inputPlanes, const
                                (ofc->frameHeight / 2) * ofc->frameWidth * sizeof(unsigned short), "updateFrame"));
     ERR_CHECK(cl_finish_queue(ofc->queueOFC, "updateFrame"));
 
-    // Blur the frame
-    ERR_CHECK(blurFrameArray(ofc, outputBlurDirectly));
-
     // Swap the frame buffers
     cl_mem temp0 = ofc->inputFrameArray[0];
     ofc->inputFrameArray[0] = ofc->inputFrameArray[1];
     ofc->inputFrameArray[1] = ofc->inputFrameArray[2];
     ofc->inputFrameArray[2] = temp0;
-
-    temp0 = ofc->blurredFrameArray[0];
-    ofc->blurredFrameArray[0] = ofc->blurredFrameArray[1];
-    ofc->blurredFrameArray[1] = ofc->blurredFrameArray[2];
-    ofc->blurredFrameArray[2] = temp0;
 
     // Swap the blurred offset arrays
     temp0 = ofc->blurredOffsetArray12[0];
@@ -277,7 +227,7 @@ bool downloadFrame(struct OpticalFlowCalc* ofc, const cl_mem sourceBuffer, unsig
                                  ofc->frameHeight * ofc->frameWidth * sizeof(unsigned short), "downloadFrame"));
     ERR_CHECK(cl_download_buffer(ofc->queueWarping1, sourceBuffer, outputPlanes[1],
                                  ofc->frameHeight * ofc->frameWidth * sizeof(unsigned short),
-                                 (ofc->frameHeight >> 1) * ofc->frameWidth * sizeof(unsigned short), "downloadFrame"));
+                                 (ofc->frameHeight / 2) * ofc->frameWidth * sizeof(unsigned short), "downloadFrame"));
     return 0;
 }
 
@@ -326,8 +276,8 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
                                      sizeof(unsigned int), "calculateOpticalFlow"));
 
             // 1. Calculate the image delta and sum up the deltas of each window
-            cl_int err = clSetKernelArg(ofc->calcDeltaSumsKernel, 1, sizeof(cl_mem), &ofc->blurredFrameArray[1]);
-            err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 2, sizeof(cl_mem), &ofc->blurredFrameArray[2]);
+            cl_int err = clSetKernelArg(ofc->calcDeltaSumsKernel, 1, sizeof(cl_mem), &ofc->inputFrameArray[1]);
+            err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 2, sizeof(cl_mem), &ofc->inputFrameArray[2]);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 9, sizeof(int), &windowSize);
             int isFirstIteration = (int)(iter == 0 && step == 0);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 12, sizeof(int), &isFirstIteration);
@@ -696,9 +646,7 @@ bool setKernelParameters(struct OpticalFlowCalc* ofc) {
     ERR_CHECK(cl_finish_queue(ofc->queueOFC, "reinit"));
 
     // Set kernel arguments
-    cl_int err = clSetKernelArg(ofc->blurFrameKernel, 2, sizeof(int), &ofc->frameHeight);
-    err |= clSetKernelArg(ofc->blurFrameKernel, 3, sizeof(int), &ofc->frameWidth);
-    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 0, sizeof(cl_mem), &ofc->summedDeltaValuesArray);
+    cl_int err = clSetKernelArg(ofc->calcDeltaSumsKernel, 0, sizeof(cl_mem), &ofc->summedDeltaValuesArray);
     err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 3, sizeof(cl_mem), &ofc->offsetArray12);
     err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 4, sizeof(int), &ofc->directionIndexOffset);
     err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 5, sizeof(int), &ofc->frameHeight);
@@ -796,9 +744,6 @@ void freeOFC(struct OpticalFlowCalc* ofc) {
     clReleaseMemObject(ofc->inputFrameArray[0]);
     clReleaseMemObject(ofc->inputFrameArray[1]);
     clReleaseMemObject(ofc->inputFrameArray[2]);
-    clReleaseMemObject(ofc->blurredFrameArray[0]);
-    clReleaseMemObject(ofc->blurredFrameArray[1]);
-    clReleaseMemObject(ofc->blurredFrameArray[2]);
     clReleaseMemObject(ofc->warpedFrameArray12);
     clReleaseMemObject(ofc->warpedFrameArray21);
     clReleaseMemObject(ofc->outputFrameArray);
@@ -815,7 +760,6 @@ void freeOFC(struct OpticalFlowCalc* ofc) {
 #endif
 
     // Release the kernels
-    clReleaseKernel(ofc->blurFrameKernel);
     clReleaseKernel(ofc->calcDeltaSumsKernel);
     clReleaseKernel(ofc->determineLowestLayerKernel);
     clReleaseKernel(ofc->adjustOffsetArrayKernel);
@@ -844,9 +788,9 @@ static bool detectDevices(struct OpticalFlowCalc* ofc) {
     // Capabilities we are going to check for
     cl_ulong availableVRAM;
     const cl_ulong requiredVRAM =
-        24lu * ofc->frameHeight * ofc->frameWidth +
+        18lu * ofc->frameHeight * ofc->frameWidth +
         25lu * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth +
-        MAX_SEARCH_RADIUS * MAX_SEARCH_RADIUS * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * 4lu;
+        MAX_SEARCH_RADIUS * MAX_SEARCH_RADIUS * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(unsigned int);
     size_t maxWorkGroupSizes[3];
     const size_t requiredWorkGroupSizes[3] = {16, 16, 1};
     cl_ulong maxSharedMemSize;
@@ -944,9 +888,8 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     ofc->layerIndexOffset = 2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth;
     ofc->channelIndexOffset = ofc->frameHeight * ofc->frameWidth;
     ofc->opticalFlowCalcShouldTerminate = false;
-    ofc->frameBlurEnabled = ofc->frameHeight <= 1080;
     ofc->flowBlurEnabled = true;
-    if (!ofc->frameBlurEnabled) {
+    if (ofc->frameHeight > 1080) {
         ofc->opticalFlowMinResScalar++;
         ofc->opticalFlowResScalar++;
     }
@@ -1000,12 +943,6 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
                                "frame[1]"));
     ERR_CHECK(cl_create_buffer(&ofc->inputFrameArray[2], ofc->clContext, CL_MEM_READ_ONLY, 3 * frameHeight * frameWidth,
                                "frame[2]"));
-    ERR_CHECK(cl_create_buffer(&ofc->blurredFrameArray[0], ofc->clContext, CL_MEM_READ_WRITE,
-                               frameHeight * frameWidth * sizeof(unsigned short), "blurredFrame[0]"));
-    ERR_CHECK(cl_create_buffer(&ofc->blurredFrameArray[1], ofc->clContext, CL_MEM_READ_WRITE,
-                               frameHeight * frameWidth * sizeof(unsigned short), "blurredFrame[1]"));
-    ERR_CHECK(cl_create_buffer(&ofc->blurredFrameArray[2], ofc->clContext, CL_MEM_READ_WRITE,
-                               frameHeight * frameWidth * sizeof(unsigned short), "blurredFrame[2]"));
     ERR_CHECK(cl_create_buffer(&ofc->warpedFrameArray12, ofc->clContext, CL_MEM_READ_WRITE,
                                3 * frameHeight * frameWidth, "warpedFrame12"));
     ERR_CHECK(cl_create_buffer(&ofc->warpedFrameArray21, ofc->clContext, CL_MEM_READ_WRITE,
@@ -1045,7 +982,6 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
 #endif
 
     // Compile the kernels
-    ERR_CHECK(cl_create_kernel(&ofc->blurFrameKernel, ofc->clContext, ofc->clDeviceId, "blurFrameKernel"));
     ERR_CHECK(cl_create_kernel(&ofc->calcDeltaSumsKernel, ofc->clContext, ofc->clDeviceId, "calcDeltaSumsKernel"));
     ERR_CHECK(cl_create_kernel(&ofc->determineLowestLayerKernel, ofc->clContext, ofc->clDeviceId,
                                "determineLowestLayerKernel"));

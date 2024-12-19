@@ -27,7 +27,6 @@ typedef struct OpticalFlowCalc {
     int layerIndexOffset;         // opticalFlowFrameHeight * opticalFlowFrameWidth
     int channelIndexOffset;       // frameHeight * frameWidth
     volatile bool opticalFlowCalcShouldTerminate;  // Whether or not the optical flow calculator should terminate
-    bool frameBlurEnabled;                         // Whether or not the frame should be blurred
     bool flowBlurEnabled;                          // Whether or not the flow should be blurred
 
     // OpenCL variables
@@ -62,7 +61,6 @@ typedef struct OpticalFlowCalc {
                               // new value decreased)
     cl_mem outputFrameArray;  // Array containing the output frame
     cl_mem inputFrameArray[3];    // Array containing the last three frames
-    cl_mem blurredFrameArray[3];  // Array containing the last three frames after blurring
     cl_mem warpedFrameArray12;    // Array containing the warped frame (frame 1 to frame 2)
     cl_mem warpedFrameArray21;    // Array containing the warped frame (frame 2 to frame 1)
 #if DUMP_IMAGES
@@ -70,7 +68,6 @@ typedef struct OpticalFlowCalc {
 #endif
 
     // Kernels
-    cl_kernel blurFrameKernel;
     cl_kernel calcDeltaSumsKernel;
     cl_kernel determineLowestLayerKernel;
     cl_kernel adjustOffsetArrayKernel;
@@ -88,7 +85,7 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int frameHeight, con
 void freeOFC(struct OpticalFlowCalc *ofc);
 bool adjustSearchRadius(struct OpticalFlowCalc *ofc, int newSearchRadius);
 bool setKernelParameters(struct OpticalFlowCalc *ofc);
-bool updateFrame(struct OpticalFlowCalc *ofc, unsigned char **inputPlanes, const bool outputBlurDirectly);
+bool updateFrame(struct OpticalFlowCalc *ofc, unsigned char **inputPlanes);
 bool downloadFrame(struct OpticalFlowCalc *ofc, const cl_mem sourceBuffer, unsigned char **outputPlanes);
 bool calculateOpticalFlow(struct OpticalFlowCalc *ofc);
 bool flipFlow(struct OpticalFlowCalc *ofc);
