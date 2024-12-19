@@ -30,7 +30,6 @@ typedef enum FrameOutput {
     BlendedFrame,
     HSVFlow,
     GreyFlow,
-    BlurredFrames,
     SideBySide1,
     SideBySide2,
     TearingTest
@@ -177,9 +176,6 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv) {
             break;
         case 5:
             priv->frameOutputMode = GreyFlow;
-            break;
-        case 6:
-            priv->frameOutputMode = BlurredFrames;
             break;
         case 7:
             priv->frameOutputMode = SideBySide1;
@@ -549,7 +545,7 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
     if (priv->interpolatedFrameNum < 100) gettimeofday(&priv->startTimeWarping[priv->interpolatedFrameNum], NULL);
 
     // Warp frames
-    if (priv->frameOutputMode != HSVFlow && priv->frameOutputMode != BlurredFrames) {
+    if (priv->frameOutputMode != HSVFlow) {
         ERR_CHECK(
             warpFrames(priv->ofc, priv->blendingScalar, priv->frameOutputMode, (int)(priv->interpolatedFrameNum == 0)),
             "warpFrames", f);
@@ -710,10 +706,10 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     vf_HopperRender_auto_adjust_settings(f, OFCisDone);
 
     // Upload the source frame to the GPU buffers and blur it for OFC calculation
-    ERR_CHECK(updateFrame(priv->ofc, img->planes, priv->frameOutputMode == BlurredFrames), "updateFrame", f);
+    ERR_CHECK(updateFrame(priv->ofc, img->planes), "updateFrame", f);
 
     // Calculate the optical flow
-    if (priv->interpolationState == Active && priv->sourceFrameNum >= 2 && priv->frameOutputMode != BlurredFrames &&
+    if (priv->interpolationState == Active && priv->sourceFrameNum >= 2 &&
         priv->frameOutputMode != TearingTest) {
         pthread_kill(priv->m_ptOFCThreadID, SIGUSR1);
     }
@@ -954,7 +950,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 }
 
 #define OPT_BASE_STRUCT struct HopperRender_opts
-static const m_option_t vf_opts_fields[] = {{"FrameOutput", OPT_INT(frame_output), M_RANGE(0, 8), OPTDEF_INT(2)}};
+static const m_option_t vf_opts_fields[] = {{"FrameOutput", OPT_INT(frame_output), M_RANGE(0, 7), OPTDEF_INT(2)}};
 
 // Filter entry
 const struct mp_user_filter_entry vf_HopperRender = {.desc = {.description = "Optical-Flow Frame Interpolation",

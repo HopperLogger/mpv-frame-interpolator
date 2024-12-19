@@ -31,10 +31,6 @@ def on_greyscaleflow_activate(widget):
     if widget.get_active():
         print(5, flush=True)
 
-def on_blurred_frames_activate(widget):
-    if widget.get_active():
-        print(6, flush=True)
-
 def on_sidebyside1_activate(widget):
     if widget.get_active():
         print(7, flush=True)
@@ -134,11 +130,6 @@ class HopperRenderSettings:
         greyscaleflow_item.connect("activate", on_greyscaleflow_activate)
         frame_output_menu.append(greyscaleflow_item)
         frame_output_group = greyscaleflow_item.get_group()
-
-        blurred_frames_item = Gtk.RadioMenuItem.new_with_label(frame_output_group, "BlurredFrames")
-        blurred_frames_item.connect("activate", on_blurred_frames_activate)
-        frame_output_menu.append(blurred_frames_item)
-        frame_output_group = blurred_frames_item.get_group()
 
         sidebyside1_item = Gtk.RadioMenuItem.new_with_label(frame_output_group, "SideBySide1")
         sidebyside1_item.connect("activate", on_sidebyside1_activate)
