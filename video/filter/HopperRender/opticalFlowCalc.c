@@ -250,9 +250,11 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
         }
         windowSize = maxDim << 1;
     }
+    windowSize /= 8; // We don't want to compute movement of the entire frame, so we start with smaller windows
 
-    if (ofc->opticalFlowIterations == 0 || ofc->opticalFlowIterations > log2(windowSize) + 1) {
-        ofc->opticalFlowIterations = log2(windowSize) + 1;
+    // We only want to compute windows that are 2x2 or larger, so we adjust the needed iterations
+    if (ofc->opticalFlowIterations == 0 || ofc->opticalFlowIterations > log2(windowSize) - 1) {
+        ofc->opticalFlowIterations = log2(windowSize) - 1;
     }
 
     // Reset the number of offset layers
@@ -264,7 +266,7 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
                              2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
                              sizeof(short), "calculateOpticalFlow"));
 
-    // We calculate the ideal offset array for each window size (entire frame, ..., individual pixels)
+    // We calculate the ideal offset array for each window size
     for (int iter = 0; iter < ofc->opticalFlowIterations; iter++) {
         for (int step = 0; step < ofc->opticalFlowSteps; step++) {
             if (ofc->opticalFlowCalcShouldTerminate) return 0;
@@ -296,14 +298,14 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
             // 3. Adjust the offset array based on the comparison results
             err = clSetKernelArg(ofc->adjustOffsetArrayKernel, 2, sizeof(int), &windowSize);
             ERR_MSG_CHECK(err, "calculateOpticalFlow");
-            ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->adjustOffsetArrayKernel, 2, ofc->lowGrid16x16x1,
+            ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->adjustOffsetArrayKernel, 3, ofc->lowGrid16x16x2,
                                         ofc->threads16x16x1, "calculateOpticalFlow"));
             ERR_CHECK(cl_finish_queue(ofc->queueOFC, "calculateOpticalFlow"));
         }
 
         // 4. Adjust variables for the next iteration
         windowSize = max(windowSize >> 1, (int)1);
-        if (!(iter == ofc->opticalFlowIterations - 1)) {
+        if (iter != ofc->opticalFlowIterations - 1) {
             currSearchRadius = max(ofc->opticalFlowSearchRadius - iter, 5);
             ERR_CHECK(adjustSearchRadius(ofc, currSearchRadius));
         }
@@ -339,7 +341,7 @@ bool blurFlowArrays(struct OpticalFlowCalc* ofc) {
     if (ofc->opticalFlowCalcShouldTerminate) return 0;
 
     // No need to blur the flow
-    if (!ofc->flowBlurEnabled) {
+    if (!FLOW_BLUR_ENABLED) {
         ERR_CHECK(cl_copy_buffer(ofc->queueOFC, ofc->offsetArray12, 0, ofc->blurredOffsetArray12[1], 0,
                                  2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
                                  "blurFlowArrays"));
@@ -885,10 +887,8 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     ofc->opticalFlowFrameWidth = ofc->frameWidth >> ofc->opticalFlowResScalar;
     ofc->opticalFlowFrameHeight = ofc->frameHeight >> ofc->opticalFlowResScalar;
     ofc->directionIndexOffset = ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth;
-    ofc->layerIndexOffset = 2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth;
     ofc->channelIndexOffset = ofc->frameHeight * ofc->frameWidth;
     ofc->opticalFlowCalcShouldTerminate = false;
-    ofc->flowBlurEnabled = true;
     if (ofc->frameHeight > 1080) {
         ofc->opticalFlowMinResScalar++;
         ofc->opticalFlowResScalar++;

@@ -6,7 +6,8 @@ __kernel void adjustOffsetArrayKernel(__global short* offsetArray, __global cons
     // Current entry to be computed by the thread
     const int cx = get_global_id(0);
     const int cy = get_global_id(1);
-    const int threadIndex2D = cy * lowDimX + cx;  // Standard thread index without Z-Dim
+    const int cz = get_global_id(2);
+    const int threadIndex3D = cz * directionIndexOffset + cy * lowDimX + cx;  // Standard thread index without Z-Dim
 
     if (cy < lowDimY && cx < lowDimX) {
         // We only need the lowestLayer if we are still searching
@@ -15,11 +16,12 @@ __kernel void adjustOffsetArrayKernel(__global short* offsetArray, __global cons
         const unsigned char lowestLayer = lowestLayerArray[wy * lowDimX + wx];
 
         // Calculate the relative offset adjustment that was determined to be ideal
-        const short idealRelOffsetX = (lowestLayer % searchWindowSize) - (searchWindowSize / 2);
-        const short idealRelOffsetY = (lowestLayer / searchWindowSize) - (searchWindowSize / 2);
-
-        // Add the ideal relative adjustment to the offset array
-        offsetArray[threadIndex2D] += idealRelOffsetX;
-        offsetArray[directionIndexOffset + threadIndex2D] += idealRelOffsetY;
+        if (cz == 0) {
+            const short idealRelOffsetX = (lowestLayer % searchWindowSize) - (searchWindowSize / 2);
+            offsetArray[threadIndex3D] += idealRelOffsetX;
+        } else {
+            const short idealRelOffsetY = (lowestLayer / searchWindowSize) - (searchWindowSize / 2);
+            offsetArray[threadIndex3D] += idealRelOffsetY;
+        }
     }
 }

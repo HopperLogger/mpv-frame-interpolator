@@ -349,7 +349,6 @@ static void vf_HopperRender_reinit_ofc(struct mp_filter *f) {
     priv->ofc->opticalFlowFrameWidth = priv->ofc->frameWidth >> priv->ofc->opticalFlowResScalar;
     priv->ofc->opticalFlowFrameHeight = priv->ofc->frameHeight >> priv->ofc->opticalFlowResScalar;
     priv->ofc->directionIndexOffset = priv->ofc->opticalFlowFrameHeight * priv->ofc->opticalFlowFrameWidth;
-    priv->ofc->layerIndexOffset = 2 * priv->ofc->opticalFlowFrameHeight * priv->ofc->opticalFlowFrameWidth;
     ERR_CHECK(setKernelParameters(priv->ofc), "reinit", f);
 }
 #endif

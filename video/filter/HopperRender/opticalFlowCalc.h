@@ -23,11 +23,9 @@ typedef struct OpticalFlowCalc {
     int opticalFlowFrameWidth;    // Width of the frame used by the optical flow calculation
     int opticalFlowFrameHeight;   // Height of the frame used by the optical flow calculation
     int opticalFlowSearchRadius;  // Search radius used for the optical flow calculation
-    int directionIndexOffset;     // m_iNumLayers * opticalFlowFrameHeight * opticalFlowFrameWidth
-    int layerIndexOffset;         // opticalFlowFrameHeight * opticalFlowFrameWidth
+    int directionIndexOffset;     // opticalFlowFrameHeight * opticalFlowFrameWidth
     int channelIndexOffset;       // frameHeight * frameWidth
     volatile bool opticalFlowCalcShouldTerminate;  // Whether or not the optical flow calculator should terminate
-    bool flowBlurEnabled;                          // Whether or not the flow should be blurred
 
     // OpenCL variables
     cl_device_id clDeviceId;
