@@ -1,3 +1,11 @@
+// Helper function to get neighbor offset values
+inline short getNeighborOffset(__global const short *offsetArray, int neighborIndexX, int neighborIndexY, 
+                               int lowDimX, int lowDimY, int directionIndexOffset) {
+    return (neighborIndexX >= 0 && neighborIndexX < lowDimX && neighborIndexY >= 0 && neighborIndexY < lowDimY)
+        ? offsetArray[directionIndexOffset + neighborIndexY * lowDimX + neighborIndexX]
+        : 0;
+}
+
 // Helper kernel for the calcDeltaSums kernel
 void warpReduce8x8(volatile __local unsigned int* partialSums, int tIdx) {
     partialSums[tIdx] += partialSums[tIdx + 32];
@@ -42,16 +50,21 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     const int scaledCy = cy << resolutionScalar;         // The Y-Index of the current thread in the input frames
     const int threadIndex2D = cy * lowDimX + cx;         // Standard thread index without Z-Dim
     unsigned int delta = 0;                              // The delta value of the current pixel
-    unsigned int offsetBias = 0;                         // Bias to discourage unnecessary offset
-    unsigned int neighborBias = 0;                       // Bias to discourage non-uniform flow
+    unsigned int offsetBias = 0;
+    unsigned int neighborBias1 = 0;
+    unsigned int neighborBias2 = 0;
+    unsigned int neighborBias3 = 0;
+    short neighborOffsetX = 0;
+    short neighborOffsetY = 0;
+    unsigned short diffToNeighbor = 0;
 
     // Retrieve the offset values for the current thread that are going to be tested
     const short idealOffsetX = offsetArray[threadIndex2D];
     const short idealOffsetY = offsetArray[directionIndexOffset + threadIndex2D];
     const short relOffsetAdjustmentX = (cz % searchWindowSize) - (searchWindowSize / 2);
     const short relOffsetAdjustmentY = (cz / searchWindowSize) - (searchWindowSize / 2);
-    const short offsetX = idealOffsetX + relOffsetAdjustmentX;
-    const short offsetY = idealOffsetY + relOffsetAdjustmentY;
+    const short offsetX = idealOffsetX + (relOffsetAdjustmentX << 1);
+    const short offsetY = idealOffsetY + (relOffsetAdjustmentY << 1);
     const int newCx = scaledCx + offsetX;
     const int newCy = scaledCy + offsetY;
 
@@ -69,34 +82,58 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     }
 
     if (!isFirstIteration) {
-        // Retrieve the ideal offset values of the neighboring windows
-        const short neighborOffsetXDown = cy + windowSize < lowDimY ? offsetArray[(cy + windowSize) * lowDimX + cx] : 0;
-        const short neighborOffsetYDown = cy + windowSize < lowDimY ? offsetArray[directionIndexOffset + (cy + windowSize) * lowDimX + cx] : 0;
-        const short neighborOffsetXRight = cx + windowSize < lowDimX ? offsetArray[cy * lowDimX + cx + windowSize] : 0;
-        const short neighborOffsetYRight = cx + windowSize < lowDimX ? offsetArray[directionIndexOffset + cy * lowDimX + cx + windowSize] : 0;
-        const short neighborOffsetXLeft = cx - windowSize >= 0 ? offsetArray[cy * lowDimX + cx - windowSize] : 0;
-        const short neighborOffsetYLeft = cx - windowSize >= 0 ? offsetArray[directionIndexOffset + cy * lowDimX + cx - windowSize] : 0;
-        const short neighborOffsetXUp = cy - windowSize >= 0 ? offsetArray[(cy - windowSize) * lowDimX + cx] : 0;
-        const short neighborOffsetYUp = cy - windowSize >= 0 ? offsetArray[directionIndexOffset + (cy - windowSize) * lowDimX + cx] : 0;
+        // Relative positions of neighbors
+        const int neighborOffsets[12][2] = {
+            {0, windowSize},   // Down
+            {windowSize, 0},   // Right
+            {-windowSize, 0},  // Left
+            {0, -windowSize},  // Up
+            {-windowSize, -windowSize}, // Top Left
+            {windowSize, -windowSize},  // Top Right
+            {-windowSize, windowSize},  // Bottom Left
+            {windowSize, windowSize},   // Bottom Right
+            {0, 2 * windowSize},        // Down Down
+            {2 * windowSize, 0},        // Right Right
+            {-2 * windowSize, 0},       // Left Left
+            {0, -2 * windowSize}        // Up Up
+        };
 
-        const unsigned short downDiff = abs_diff(neighborOffsetXDown, offsetX) + abs_diff(neighborOffsetYDown, offsetY);
-        const unsigned short rightDiff = abs_diff(neighborOffsetXRight, offsetX) + abs_diff(neighborOffsetYRight, offsetY);
-        const unsigned short leftDiff = abs_diff(neighborOffsetXLeft, offsetX) + abs_diff(neighborOffsetYLeft, offsetY);
-        const unsigned short upDiff = abs_diff(neighborOffsetXUp, offsetX) + abs_diff(neighborOffsetYUp, offsetY);
+        // Iterate over neighbors
+        for (int i = 0; i < 12; ++i) {
+            int neighborIndexX = cx + neighborOffsets[i][0];
+            int neighborIndexY = cy + neighborOffsets[i][1];
 
-        // Collect the offset and neighbor biases that will be used to discourage unnecessary offset and non-uniform flow
+            // Get the offset values of the current neighbor
+            neighborOffsetX = getNeighborOffset(offsetArray, neighborIndexX, neighborIndexY, lowDimX, lowDimY, 0);
+            neighborOffsetY = getNeighborOffset(offsetArray, neighborIndexX, neighborIndexY, lowDimX, lowDimY, directionIndexOffset);
+
+            // Calculate the difference between the proposed offset and the neighbor's offset
+            diffToNeighbor = abs_diff(neighborOffsetX, offsetX) + abs_diff(neighborOffsetY, offsetY);
+
+            // Sum differences into appropriate groups
+            if (i < 4) {
+                neighborBias1 += diffToNeighbor; // Neighbors
+            } else if (i < 8) {
+                neighborBias2 += diffToNeighbor; // Diagonal neighbors
+            } else if (i < 12) {
+                neighborBias3 += diffToNeighbor; // Distant neighbors
+            }
+        }
+
+        // Collect biases
         offsetBias = abs(offsetX) + abs(offsetY);
-        neighborBias = (downDiff + rightDiff + leftDiff + upDiff) << 4;
-        //neighborBias = 0;
+        neighborBias1 <<= 4;
+        neighborBias2 <<= 4;
+        neighborBias3 <<= 3;
     }
 
     if (windowSize == 1) {
         // Window size of 1x1
-        summedUpDeltaArray[cz * lowDimY * lowDimX + cy * lowDimX + cx] = delta + offsetBias + neighborBias;
+        summedUpDeltaArray[cz * lowDimY * lowDimX + cy * lowDimX + cx] = delta + offsetBias + neighborBias1 + neighborBias2 + neighborBias3;
         return;
     } else {
         // All other window sizes
-        partialSums[tIdx] = delta + offsetBias + neighborBias;
+        partialSums[tIdx] = delta + offsetBias + neighborBias1 + neighborBias2 + neighborBias3;
     }
 
     barrier(CLK_LOCAL_MEM_FENCE);

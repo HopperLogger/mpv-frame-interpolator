@@ -18,10 +18,10 @@ __kernel void adjustOffsetArrayKernel(__global short* offsetArray, __global cons
         // Calculate the relative offset adjustment that was determined to be ideal
         if (cz == 0) {
             const short idealRelOffsetX = (lowestLayer % searchWindowSize) - (searchWindowSize / 2);
-            offsetArray[threadIndex3D] += idealRelOffsetX;
+            offsetArray[threadIndex3D] += idealRelOffsetX << 1;
         } else {
             const short idealRelOffsetY = (lowestLayer / searchWindowSize) - (searchWindowSize / 2);
-            offsetArray[threadIndex3D] += idealRelOffsetY;
+            offsetArray[threadIndex3D] += idealRelOffsetY << 1;
         }
     }
 }
