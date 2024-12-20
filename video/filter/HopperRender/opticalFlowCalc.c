@@ -253,8 +253,8 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
     windowSize /= 8; // We don't want to compute movement of the entire frame, so we start with smaller windows
 
     // We only want to compute windows that are 2x2 or larger, so we adjust the needed iterations
-    if (ofc->opticalFlowIterations == 0 || ofc->opticalFlowIterations > log2(windowSize) - 1) {
-        ofc->opticalFlowIterations = log2(windowSize) - 1;
+    if (NUM_ITERATIONS == 0 || NUM_ITERATIONS > log2(windowSize)) {
+        ofc->opticalFlowIterations = log2(windowSize);
     }
 
     // Reset the number of offset layers
