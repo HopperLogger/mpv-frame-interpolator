@@ -86,7 +86,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
 
         // Collect the offset and neighbor biases that will be used to discourage unnecessary offset and non-uniform flow
         offsetBias = abs(offsetX) + abs(offsetY);
-        neighborBias = (downDiff + rightDiff + leftDiff + upDiff) << 1;
+        neighborBias = (downDiff + rightDiff + leftDiff + upDiff) << 4;
         //neighborBias = 0;
     }
 
