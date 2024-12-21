@@ -306,7 +306,7 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
         // 4. Adjust variables for the next iteration
         windowSize = max(windowSize >> 1, (int)1);
         if (iter != ofc->opticalFlowIterations - 1) {
-            currSearchRadius = max(ofc->opticalFlowSearchRadius - iter, 5);
+            currSearchRadius = max(ofc->opticalFlowSearchRadius - iter * 2, 4);
             ERR_CHECK(adjustSearchRadius(ofc, currSearchRadius));
         }
     }

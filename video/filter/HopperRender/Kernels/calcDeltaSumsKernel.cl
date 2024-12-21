@@ -62,14 +62,14 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     const short idealOffsetY = offsetArray[directionIndexOffset + threadIndex2D];
     const short relOffsetAdjustmentX = (cz % searchWindowSize) - (searchWindowSize / 2);
     const short relOffsetAdjustmentY = (cz / searchWindowSize) - (searchWindowSize / 2);
-    const short offsetX = idealOffsetX + (relOffsetAdjustmentX << 1);
-    const short offsetY = idealOffsetY + (relOffsetAdjustmentY << 1);
+    const short offsetX = idealOffsetX + (relOffsetAdjustmentX * relOffsetAdjustmentX * (relOffsetAdjustmentX > 0 ? 1 : -1));
+    const short offsetY = idealOffsetY + (relOffsetAdjustmentY * relOffsetAdjustmentY * (relOffsetAdjustmentY > 0 ? 1 : -1));
     const int newCx = scaledCx + offsetX;
     const int newCy = scaledCy + offsetY;
 
     // Calculate the delta value for the current pixel
     if (scaledCy < 0 || scaledCx < 0 || scaledCy >= dimY || scaledCx >= dimX) {
-        delta = 0;
+        delta = 32768;
     } else if (newCy < 0 || newCx < 0 || newCy >= dimY || newCx >= dimX) {
         delta = frame1[scaledCy * dimX + scaledCx] + 
                 frame1[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1)] + 
@@ -80,6 +80,10 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
                 abs_diff(frame1[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1) + 1], frame2[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1) + 1]);
     }
 
+    // Calculate the offset bias
+    offsetBias = abs(offsetX) + abs(offsetY);
+
+    // Calculate the neighbor biases
     if (!isFirstIteration) {
         // Relative positions of neighbors
         const int neighborOffsets[8][2] = {
@@ -113,8 +117,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
             }
         }
 
-        // Collect biases
-        offsetBias = abs(offsetX) + abs(offsetY);
+        // Scale biases
         neighborBias1 <<= 4;
         neighborBias2 <<= 3;
     }
