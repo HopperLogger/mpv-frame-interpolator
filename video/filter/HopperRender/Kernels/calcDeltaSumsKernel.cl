@@ -53,7 +53,6 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     unsigned int offsetBias = 0;
     unsigned int neighborBias1 = 0;
     unsigned int neighborBias2 = 0;
-    unsigned int neighborBias3 = 0;
     short neighborOffsetX = 0;
     short neighborOffsetY = 0;
     unsigned short diffToNeighbor = 0;
@@ -83,7 +82,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
 
     if (!isFirstIteration) {
         // Relative positions of neighbors
-        const int neighborOffsets[12][2] = {
+        const int neighborOffsets[8][2] = {
             {0, windowSize},   // Down
             {windowSize, 0},   // Right
             {-windowSize, 0},  // Left
@@ -92,14 +91,10 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
             {windowSize, -windowSize},  // Top Right
             {-windowSize, windowSize},  // Bottom Left
             {windowSize, windowSize},   // Bottom Right
-            {0, 2 * windowSize},        // Down Down
-            {2 * windowSize, 0},        // Right Right
-            {-2 * windowSize, 0},       // Left Left
-            {0, -2 * windowSize}        // Up Up
         };
 
         // Iterate over neighbors
-        for (int i = 0; i < 12; ++i) {
+        for (int i = 0; i < 8; ++i) {
             int neighborIndexX = cx + neighborOffsets[i][0];
             int neighborIndexY = cy + neighborOffsets[i][1];
 
@@ -115,25 +110,22 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
                 neighborBias1 += diffToNeighbor; // Neighbors
             } else if (i < 8) {
                 neighborBias2 += diffToNeighbor; // Diagonal neighbors
-            } else if (i < 12) {
-                neighborBias3 += diffToNeighbor; // Distant neighbors
             }
         }
 
         // Collect biases
         offsetBias = abs(offsetX) + abs(offsetY);
         neighborBias1 <<= 4;
-        neighborBias2 <<= 4;
-        neighborBias3 <<= 3;
+        neighborBias2 <<= 3;
     }
-
+    
     if (windowSize == 1) {
         // Window size of 1x1
-        summedUpDeltaArray[cz * lowDimY * lowDimX + cy * lowDimX + cx] = delta + offsetBias + neighborBias1 + neighborBias2 + neighborBias3;
+        summedUpDeltaArray[cz * lowDimY * lowDimX + cy * lowDimX + cx] = delta + offsetBias + neighborBias1 + neighborBias2;
         return;
     } else {
         // All other window sizes
-        partialSums[tIdx] = delta + offsetBias + neighborBias1 + neighborBias2 + neighborBias3;
+        partialSums[tIdx] = delta + offsetBias + neighborBias1 + neighborBias2;
     }
 
     barrier(CLK_LOCAL_MEM_FENCE);
