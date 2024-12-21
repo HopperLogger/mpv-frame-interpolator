@@ -281,7 +281,7 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
             cl_int err = clSetKernelArg(ofc->calcDeltaSumsKernel, 1, sizeof(cl_mem), &ofc->inputFrameArray[1]);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 2, sizeof(cl_mem), &ofc->inputFrameArray[2]);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 9, sizeof(int), &windowSize);
-            int isFirstIteration = (int)(iter == 0 && step == 0);
+            int isFirstIteration = (int)(iter <= 1);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 12, sizeof(int), &isFirstIteration);
             ERR_MSG_CHECK(err, "calculateOpticalFlow");
             ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->calcDeltaSumsKernel, 3, ofc->lowGrid8x8xL,
