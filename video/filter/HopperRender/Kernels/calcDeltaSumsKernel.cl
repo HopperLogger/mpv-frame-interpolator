@@ -71,9 +71,9 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     if (scaledCy < 0 || scaledCx < 0 || scaledCy >= dimY || scaledCx >= dimX) {
         delta = 32768;
     } else if (newCy < 0 || newCx < 0 || newCy >= dimY || newCx >= dimX) {
-        delta = frame1[scaledCy * dimX + scaledCx] + 
-                frame1[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1)] + 
-                frame1[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1) + 1];
+        delta = (abs_diff(frame1[scaledCy * dimX + scaledCx], frame2[min(max(newCy, 0), dimY - 1) * dimX + min(max(newCx, 0), dimX - 1)]) + 
+                abs_diff(frame1[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1)], frame2[dimY * dimX + (min(max(newCy, 0), dimY - 1) >> 1) * dimX + (min(max(newCx, 0), dimX - 1) & ~1)]) + 
+                abs_diff(frame1[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1) + 1], frame2[dimY * dimX + (min(max(newCy, 0), dimY - 1) >> 1) * dimX + (min(max(newCx, 0), dimX - 1) & ~1) + 1])) >> 2;
     } else {
         delta = abs_diff(frame1[scaledCy * dimX + scaledCx], frame2[newCy * dimX + newCx]) + 
                 abs_diff(frame1[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1)], frame2[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1)]) + 
@@ -118,8 +118,8 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
         }
 
         // Scale biases
-        neighborBias1 <<= 4;
-        neighborBias2 <<= 3;
+        neighborBias1 <<= 5;
+        neighborBias2 <<= 5;
     }
     
     if (windowSize == 1) {

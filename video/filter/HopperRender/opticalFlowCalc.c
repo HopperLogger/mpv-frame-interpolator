@@ -645,7 +645,6 @@ bool setKernelParameters(struct OpticalFlowCalc* ofc) {
     ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->blurredOffsetArray21[1],
                              2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
                              sizeof(short), "reinit"));
-    ERR_CHECK(cl_finish_queue(ofc->queueOFC, "reinit"));
 
     // Set kernel arguments
     cl_int err = clSetKernelArg(ofc->calcDeltaSumsKernel, 0, sizeof(cl_mem), &ofc->summedDeltaValuesArray);
