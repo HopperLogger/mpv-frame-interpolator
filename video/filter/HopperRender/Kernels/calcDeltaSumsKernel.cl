@@ -46,9 +46,11 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     cy = min(cy, lowDimY - 1);
     const int cz = get_global_id(2);
     const int tIdx = get_local_id(1) * get_local_size(0) + get_local_id(0);
-    const int scaledCx = cx << resolutionScalar;         // The X-Index of the current thread in the input frames
-    const int scaledCy = cy << resolutionScalar;         // The Y-Index of the current thread in the input frames
+    int scaledCx = cx << resolutionScalar;               // The X-Index of the current thread in the input frames
+    int scaledCy = cy << resolutionScalar;               // The Y-Index of the current thread in the input frames
     const int threadIndex2D = cy * lowDimX + cx;         // Standard thread index without Z-Dim
+    const int wx = (cx / windowSize) * windowSize;       // The X-Index of the current window
+    const int wy = (cy / windowSize) * windowSize;       // The Y-Index of the current window
     unsigned int delta = 0;                              // The delta value of the current pixel
     unsigned int offsetBias = 0;
     unsigned int neighborBias1 = 0;
@@ -64,21 +66,23 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     const short relOffsetAdjustmentY = (cz / searchWindowSize) - (searchWindowSize / 2);
     const short offsetX = idealOffsetX + (relOffsetAdjustmentX * relOffsetAdjustmentX * (relOffsetAdjustmentX > 0 ? 1 : -1));
     const short offsetY = idealOffsetY + (relOffsetAdjustmentY * relOffsetAdjustmentY * (relOffsetAdjustmentY > 0 ? 1 : -1));
-    const int newCx = scaledCx + offsetX;
-    const int newCy = scaledCy + offsetY;
+    int newCx = scaledCx + offsetX;
+    int newCy = scaledCy + offsetY;
 
     // Calculate the delta value for the current pixel
     if (scaledCy < 0 || scaledCx < 0 || scaledCy >= dimY || scaledCx >= dimX) {
         delta = 32768;
-    } else if (newCy < 0 || newCx < 0 || newCy >= dimY || newCx >= dimX) {
-        delta = (abs_diff(frame1[scaledCy * dimX + scaledCx], frame2[min(max(newCy, 0), dimY - 1) * dimX + min(max(newCx, 0), dimX - 1)]) + 
-                abs_diff(frame1[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1)], frame2[dimY * dimX + (min(max(newCy, 0), dimY - 1) >> 1) * dimX + (min(max(newCx, 0), dimX - 1) & ~1)]) + 
-                abs_diff(frame1[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1) + 1], frame2[dimY * dimX + (min(max(newCy, 0), dimY - 1) >> 1) * dimX + (min(max(newCx, 0), dimX - 1) & ~1) + 1])) >> 2;
-    } else {
-        delta = abs_diff(frame1[scaledCy * dimX + scaledCx], frame2[newCy * dimX + newCx]) + 
-                abs_diff(frame1[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1)], frame2[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1)]) + 
-                abs_diff(frame1[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1) + 1], frame2[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1) + 1]);
+    } else if (wy + offsetY < 0 || wx + offsetX < 0 || wy + windowSize + offsetY >= dimY || wx + windowSize + offsetX >= dimX) {
+        const int overshootX = ((wx + offsetX) < 0) ? offsetX : ((wx + windowSize + offsetX) >= dimX) ? (wx + windowSize + offsetX - dimX + 1) : 0;
+        const int overshootY = ((wy + offsetY) < 0) ? offsetY : ((wy + windowSize + offsetY) >= dimY) ? (wy + windowSize + offsetY - dimY + 1) : 0;
+        newCx -= overshootX;
+        newCy -= overshootY;
+        scaledCx -= overshootX;
+        scaledCy -= overshootY;
     }
+    delta = abs_diff(frame1[scaledCy * dimX + scaledCx], frame2[newCy * dimX + newCx]) + 
+            abs_diff(frame1[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1)], frame2[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1)]) + 
+            abs_diff(frame1[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1) + 1], frame2[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1) + 1]);
 
     // Calculate the offset bias
     offsetBias = abs(offsetX) + abs(offsetY);
