@@ -1,6 +1,16 @@
 #define BLOCK_SIZE 16
 #define KERNEL_RADIUS 4
 
+// Helper function to mirror the coordinate if it is outside the bounds
+int mirrorCoordinate(int pos, int dim) {
+    if (pos >= dim) {
+        return dim - (pos - dim + 1);
+    } else if (pos < 0) {
+        return -pos - 1;
+    }
+    return pos;
+}
+
 // Kernel that blurs a flow array
 __kernel void blurFlowKernel(__global const short* offsetArray12, __global const short* offsetArray21,
                              __global short* blurredOffsetArray12, __global short* blurredOffsetArray21, const int dimY,
@@ -27,52 +37,36 @@ __kernel void blurFlowKernel(__global const short* offsetArray12, __global const
     int lx = tx + KERNEL_RADIUS;
     int ly = ty + KERNEL_RADIUS;
 
-    // Calculate global index for this thread
-    int globalIndex = gz * dimX * dimY + gy * dimX + gx;
-
     // Load the main data into shared memory
-    if (gx < dimX && gy < dimY) {
-        localTile[ly][lx] = input[globalIndex];
-    } else {
-        localTile[ly][lx] = 0;  // Padding for threads outside image bounds
-    }
+    localTile[ly][lx] = input[gz * dimX * dimY + mirrorCoordinate(gy, dimY) * dimX + mirrorCoordinate(gx, dimX)];
 
     // Load the halo regions
     // Top and bottom halo
     if (ty < KERNEL_RADIUS) {
-        int haloYTop = gy - KERNEL_RADIUS;
-        int haloYBottom = gy + localSizeY;
-        localTile[ty][lx] = (haloYTop >= 0 && gy < dimY && gx < dimX) ? input[gz * dimX * dimY + haloYTop * dimX + gx] : 0;
-        localTile[ty + localSizeY + KERNEL_RADIUS][lx] =
-            (haloYBottom < dimY && gy < dimY && gx < dimX) ? input[gz * dimX * dimY + haloYBottom * dimX + gx] : 0;
+        int haloYTop = mirrorCoordinate(gy - KERNEL_RADIUS, dimY);
+        int haloYBottom = mirrorCoordinate(gy + localSizeY, dimY);
+        localTile[ty][lx] = input[gz * dimX * dimY + haloYTop * dimX + mirrorCoordinate(gx, dimX)];
+        localTile[ty + localSizeY + KERNEL_RADIUS][lx] = input[gz * dimX * dimY + haloYBottom * dimX + mirrorCoordinate(gx, dimX)];
     }
 
     // Left and right halo
     if (tx < KERNEL_RADIUS) {
-        int haloXLeft = gx - KERNEL_RADIUS;
-        int haloXRight = gx + localSizeX;
-        localTile[ly][tx] = (haloXLeft >= 0 && gy < dimY && gx < dimX) ? input[gz * dimX * dimY + gy * dimX + haloXLeft] : 0;
-        localTile[ly][tx + localSizeX + KERNEL_RADIUS] =
-            (haloXRight < dimX && gy < dimY && gx < dimX) ? input[gz * dimX * dimY + gy * dimX + haloXRight] : 0;
+        int haloXLeft = mirrorCoordinate(gx - KERNEL_RADIUS, dimX);
+        int haloXRight = mirrorCoordinate(gx + localSizeX, dimX);
+        localTile[ly][tx] = input[gz * dimX * dimY + mirrorCoordinate(gy, dimY) * dimX + haloXLeft];
+        localTile[ly][tx + localSizeX + KERNEL_RADIUS] = input[gz * dimX * dimY + mirrorCoordinate(gy, dimY) * dimX + haloXRight];
     }
 
     // Corner halo
     if (tx < KERNEL_RADIUS && ty < KERNEL_RADIUS) {
-        int haloXLeft = gx - KERNEL_RADIUS;
-        int haloXRight = gx + localSizeX;
-        int haloYTop = gy - KERNEL_RADIUS;
-        int haloYBottom = gy + localSizeY;
-        localTile[ty][tx] = (haloYTop >= 0 && haloXLeft >= 0 && gy < dimY && gx < dimX) ? input[gz * dimX * dimY + haloYTop * dimX + haloXLeft]
-                                                              : 0;  // Top Left square
-        localTile[ty][tx + localSizeX + KERNEL_RADIUS] = (haloYTop >= 0 && haloXRight < dimX && gy < dimY && gx < dimX)
-                                                             ? input[gz * dimX * dimY + haloYTop * dimX + haloXRight]
-                                                             : 0;  // Top Right square
-        localTile[ty + localSizeY + KERNEL_RADIUS][tx] = (haloYBottom < dimY && haloXLeft >= 0 && gy < dimY && gx < dimX)
-                                                             ? input[gz * dimX * dimY + haloYBottom * dimX + haloXLeft]
-                                                             : 0;  // Bottom Left square
-        localTile[ty + localSizeY + KERNEL_RADIUS][tx + localSizeX + KERNEL_RADIUS] =
-            (haloYBottom < dimY && haloXRight < dimX && gy < dimY && gx < dimX) ? input[gz * dimX * dimY + haloYBottom * dimX + haloXRight]
-                                                      : 0;  // Bottom Right square
+        int haloXLeft = mirrorCoordinate(gx - KERNEL_RADIUS, dimX);
+        int haloXRight = mirrorCoordinate(gx + localSizeX, dimX);
+        int haloYTop = mirrorCoordinate(gy - KERNEL_RADIUS, dimY);
+        int haloYBottom = mirrorCoordinate(gy + localSizeY, dimY);
+        localTile[ty][tx] = input[gz * dimX * dimY + haloYTop * dimX + haloXLeft];  // Top Left square
+        localTile[ty][tx + localSizeX + KERNEL_RADIUS] = input[gz * dimX * dimY + haloYTop * dimX + haloXRight];  // Top Right square
+        localTile[ty + localSizeY + KERNEL_RADIUS][tx] = input[gz * dimX * dimY + haloYBottom * dimX + haloXLeft];  // Bottom Left square
+        localTile[ty + localSizeY + KERNEL_RADIUS][tx + localSizeX + KERNEL_RADIUS] = input[gz * dimX * dimY + haloYBottom * dimX + haloXRight];  // Bottom Right square
     }
 
     // Wait for all threads to finish loading shared memory
@@ -90,6 +84,6 @@ __kernel void blurFlowKernel(__global const short* offsetArray12, __global const
 
         // Average the sum
         int kernelSize = (2 * KERNEL_RADIUS) * (2 * KERNEL_RADIUS);
-        output[globalIndex] = (short)(sum / kernelSize);
+        output[gz * dimX * dimY + gy * dimX + gx] = (short)(sum / kernelSize);
     }
 }
