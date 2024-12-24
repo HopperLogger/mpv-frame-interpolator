@@ -392,26 +392,13 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 #endif
 
 #if !DUMP_IMAGES
-    /*
-     * Calculation took too long (OFC had to be interupted)
-     */
-    if (!ofcFinishedOnTime) {
-        // OFC interruption is critical, so we reduce the resolution
-        if (AUTO_FRAME_SCALE && priv->ofc->opticalFlowResScalar < 5) {
-            priv->ofc->opticalFlowResScalar += 1;
-            vf_HopperRender_reinit_ofc(f);
-            priv->performanceAdjustmentDelay = 2;
-        }
-        return;
-    }
-
     // Adjust the performance buffer delay
-    if (priv->performanceAdjustmentDelay > 0) {
+    if (ofcFinishedOnTime && priv->performanceAdjustmentDelay > 0) {
         priv->performanceAdjustmentDelay -= 1;
         return;
     }
 
-    if ((currTotalCalcDuration * UPPER_PERF_BUFFER) > priv->sourceFrameTime) {
+    if (!ofcFinishedOnTime || (currTotalCalcDuration * UPPER_PERF_BUFFER) > priv->sourceFrameTime) {
         /*
          * Calculation took longer than the threshold
          */
@@ -446,20 +433,22 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
          * We have left over capacity
          */
         // Increase the frame scalar if we have enough leftover capacity
-        if (AUTO_FRAME_SCALE && priv->ofc->opticalFlowResScalar > priv->ofc->opticalFlowMinResScalar &&
-            priv->ofc->opticalFlowSearchRadius >= MAX_SEARCH_RADIUS) {
-            priv->numTooSlow = 0;
-            priv->ofc->opticalFlowResScalar -= 1;
-            priv->ofc->opticalFlowSearchRadius = MIN_SEARCH_RADIUS;
-            vf_HopperRender_reinit_ofc(f);
-        } else if (AUTO_SEARCH_RADIUS_ADJUST && priv->ofc->opticalFlowSearchRadius < MAX_SEARCH_RADIUS) {
+        if (AUTO_SEARCH_RADIUS_ADJUST && priv->ofc->opticalFlowSearchRadius < MAX_SEARCH_RADIUS) {
             priv->ofc->opticalFlowSearchRadius = min(priv->ofc->opticalFlowSearchRadius + 1, MAX_SEARCH_RADIUS);
             adjustSearchRadius(priv->ofc, priv->ofc->opticalFlowSearchRadius);
         } else if (AUTO_SEARCH_RADIUS_ADJUST && priv->ofc->opticalFlowSteps < MAX_NUM_STEPS) {
             priv->ofc->opticalFlowSteps = priv->ofc->opticalFlowSteps + 1;
             priv->ofc->opticalFlowSearchRadius = MIN_SEARCH_RADIUS;
             adjustSearchRadius(priv->ofc, priv->ofc->opticalFlowSearchRadius);
+        } else if (AUTO_FRAME_SCALE && priv->ofc->opticalFlowResScalar > priv->ofc->opticalFlowMinResScalar &&
+            priv->ofc->opticalFlowSearchRadius >= MAX_SEARCH_RADIUS) {
+            priv->numTooSlow = 0;
+            priv->ofc->opticalFlowResScalar -= 1;
+            priv->ofc->opticalFlowSearchRadius = MIN_SEARCH_RADIUS;
+            priv->ofc->opticalFlowSteps = 1;
+            vf_HopperRender_reinit_ofc(f);
         }
+        
         priv->performanceAdjustmentDelay = 2;
     }
 #endif
