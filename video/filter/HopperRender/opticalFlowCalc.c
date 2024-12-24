@@ -388,10 +388,18 @@ bool warpFrames(struct OpticalFlowCalc* ofc, const float blendingScalar, const i
 
     // Flush the warped frame buffers to avoid artifacts from previous frames
     if (isNewFrame) {
-        ERR_CHECK(cl_copy_buffer(ofc->queueWarping1, ofc->inputFrameArray[0], 0, ofc->warpedFrameArray12, 0,
+        if (frameOutputMode == 0) {
+            ERR_CHECK(cl_copy_buffer(ofc->queueWarping1, ofc->inputFrameArray[0], 0, ofc->outputFrameArray, 0,
                                  3 * ofc->frameHeight * ofc->frameWidth, "warpFrames1"));
-        ERR_CHECK(cl_copy_buffer(ofc->queueWarping2, ofc->inputFrameArray[1], 0, ofc->warpedFrameArray21, 0,
+        } else if (frameOutputMode == 1) {
+            ERR_CHECK(cl_copy_buffer(ofc->queueWarping2, ofc->inputFrameArray[1], 0, ofc->outputFrameArray, 0,
                                  3 * ofc->frameHeight * ofc->frameWidth, "warpFrames2"));
+        } else {
+            ERR_CHECK(cl_copy_buffer(ofc->queueWarping1, ofc->inputFrameArray[0], 0, ofc->warpedFrameArray12, 0,
+                                 3 * ofc->frameHeight * ofc->frameWidth, "warpFrames1"));
+            ERR_CHECK(cl_copy_buffer(ofc->queueWarping2, ofc->inputFrameArray[1], 0, ofc->warpedFrameArray21, 0,
+                                 3 * ofc->frameHeight * ofc->frameWidth, "warpFrames2"));
+        }
     }
 
     // Warp Frame 1 to Frame 2
