@@ -35,7 +35,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
                                   __global const unsigned short* frame2, __global const short* offsetArray,
                                   const int directionIndexOffset, const int dimY, const int dimX, const int lowDimY,
                                   const int lowDimX, const int windowSize, const int searchWindowSize,
-                                  const int resolutionScalar, const int isFirstIteration) {
+                                  const int resolutionScalar, const int isFirstIteration, const int step) {
     // Shared memory for the partial sums of the current block
     __local unsigned int partialSums[64];
 
@@ -50,18 +50,23 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     int scaledCy = cy << resolutionScalar;               // The Y-Index of the current thread in the input frames
     const int threadIndex2D = cy * lowDimX + cx;         // Standard thread index without Z-Dim
     unsigned int delta = 0;                              // The delta value of the current pixel
-    unsigned int offsetBias = 0;
-    unsigned int neighborBias1 = 0;
-    unsigned int neighborBias2 = 0;
-    short neighborOffsetX = 0;
-    short neighborOffsetY = 0;
-    unsigned short diffToNeighbor = 0;
+    unsigned int offsetBias = 0;                         // The bias of the current offset
+    unsigned int neighborBias1 = 0;                      // The bias of the neighbors (up, down, left, right)
+    unsigned int neighborBias2 = 0;                      // The bias of the diagonal neighbors
+    short neighborOffsetX = 0;                           // The X-Offset of the current neighbor
+    short neighborOffsetY = 0;                           // The Y-Offset of the current neighbor
+    unsigned short diffToNeighbor = 0;                   // The difference of the current offset to the neighbor's offset
 
     // Retrieve the offset values for the current thread that are going to be tested
     const short idealOffsetX = offsetArray[threadIndex2D];
     const short idealOffsetY = offsetArray[directionIndexOffset + threadIndex2D];
-    const short relOffsetAdjustmentX = (cz % searchWindowSize) - (searchWindowSize / 2);
-    const short relOffsetAdjustmentY = (cz / searchWindowSize) - (searchWindowSize / 2);
+    short relOffsetAdjustmentX = 0;
+    short relOffsetAdjustmentY = 0;
+    if (!(step & 1)) {
+        relOffsetAdjustmentX = (cz % searchWindowSize) - (searchWindowSize / 2);
+    } else {
+        relOffsetAdjustmentY = (cz % searchWindowSize) - (searchWindowSize / 2);
+    }
     const short offsetX = idealOffsetX + (relOffsetAdjustmentX * relOffsetAdjustmentX * (relOffsetAdjustmentX > 0 ? 1 : -1));
     const short offsetY = idealOffsetY + (relOffsetAdjustmentY * relOffsetAdjustmentY * (relOffsetAdjustmentY > 0 ? 1 : -1));
     int newCx = scaledCx + offsetX;
@@ -127,8 +132,8 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
         }
 
         // Scale biases
-        neighborBias1 <<= 5;
-        neighborBias2 <<= 5;
+        neighborBias1 <<= 4;
+        neighborBias2 <<= 4;
     }
     
     if (windowSize == 1) {
