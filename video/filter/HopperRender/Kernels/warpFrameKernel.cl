@@ -20,7 +20,7 @@ __kernel void warpFrameKernel(__global const unsigned short* sourceFrame, __glob
 
         // Check if the current pixel is inside the frame
         if (newCy >= 0 && newCy < dimY && newCx >= 0 && newCx < dimX) {
-            warpedFrame[newCy * dimX + newCx] = sourceFrame[cy * dimX + cx];
+            warpedFrame[newCy * dimX + newCx] = sourceFrame[min(max(cy, 1), dimY - 2) * dimX + min(max(cx, 1), dimX - 2)];
         }
         
     } else if (cz == 1 && cy < (dimY >> 1) && cx < dimX) {
@@ -39,12 +39,12 @@ __kernel void warpFrameKernel(__global const unsigned short* sourceFrame, __glob
             if ((cx & 1) == 0) {
 				// U-Channel
                 warpedFrame[channelIndexOffset + newCy * dimX + (newCx & ~1)] =
-                    sourceFrame[channelIndexOffset + cy * dimX + cx];
+                    sourceFrame[channelIndexOffset + min(max(cy, 1), dimY - 2) * dimX + (min(max(cx, 1), dimX - 2) & ~1)];
 
             } else {
 				// V-Channel
                 warpedFrame[channelIndexOffset + newCy * dimX + (newCx & ~1) + 1] =
-                    sourceFrame[channelIndexOffset + cy * dimX + cx];
+                    sourceFrame[channelIndexOffset + min(max(cy, 1), dimY - 2) * dimX + (min(max(cx, 1), dimX - 2) & ~1) + 1];
             }
         }
     }
