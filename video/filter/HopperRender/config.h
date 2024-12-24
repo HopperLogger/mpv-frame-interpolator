@@ -4,16 +4,16 @@
 #define NUM_ITERATIONS 0 // How many times the window size used in the ofc calculation will be halved. This controls how precise the optical flow gets. (0: As often as possible)
 
 #define MIN_SEARCH_RADIUS 5  // The minimum window size used in the ofc calculation
-#define MAX_SEARCH_RADIUS 16 // The maximum window size used in the ofc calculation
+#define MAX_SEARCH_RADIUS 32 // The maximum window size used in the ofc calculation
 
-#define MAX_NUM_STEPS 2 // The maximum number of times to repeat each iteration to find the best offset for each window (allows farther movement to be detected)
+#define MAX_NUM_STEPS 1 // The maximum number of times to repeat each iteration to find the best offset for each window (allows farther movement to be detected)
 
 // Performance Adjustments
 #define AUTO_FRAME_SCALE 1          // Whether to automatically reduce/increase the calculation resolution depending on performance (0: Disabled, 1: Enabled)
 #define AUTO_SEARCH_RADIUS_ADJUST 1 // Whether to automatically reduce/increase the number of calculation steps and window size depending on performance (0: Disabled, 1: Enabled)
 
-#define UPPER_PERF_BUFFER 1.2 // The upper performance buffer, i.e. calc_time * upper_buffer > frame_time triggers quality reduction
-#define LOWER_PERF_BUFFER 1.4 // The lower performance buffer, i.e. calc_time * lower_buffer < frame_time triggers quality improvement
+#define UPPER_PERF_BUFFER 1.4 // The upper performance buffer, i.e. calc_time * upper_buffer > frame_time triggers quality reduction
+#define LOWER_PERF_BUFFER 1.6 // The lower performance buffer, i.e. calc_time * lower_buffer < frame_time triggers quality improvement
 
 // Debugging
 #define DUMP_IMAGES 0          // Whether or not to dump the warped frames to the 'dump' folder (0: Disabled, 1: Enabled)
