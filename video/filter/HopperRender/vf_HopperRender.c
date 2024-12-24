@@ -433,15 +433,15 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
          * We have left over capacity
          */
         // Increase the frame scalar if we have enough leftover capacity
-        if (AUTO_SEARCH_RADIUS_ADJUST && priv->ofc->opticalFlowSearchRadius < MAX_SEARCH_RADIUS) {
-            priv->ofc->opticalFlowSearchRadius = min(priv->ofc->opticalFlowSearchRadius + 1, MAX_SEARCH_RADIUS);
+        if (AUTO_SEARCH_RADIUS_ADJUST && priv->ofc->opticalFlowSearchRadius < priv->ofc->opticalFlowMAXSearchRadius) {
+            priv->ofc->opticalFlowSearchRadius = min(priv->ofc->opticalFlowSearchRadius + 1, priv->ofc->opticalFlowMAXSearchRadius);
             adjustSearchRadius(priv->ofc, priv->ofc->opticalFlowSearchRadius);
         } else if (AUTO_SEARCH_RADIUS_ADJUST && priv->ofc->opticalFlowSteps < MAX_NUM_STEPS) {
             priv->ofc->opticalFlowSteps = priv->ofc->opticalFlowSteps + 1;
             priv->ofc->opticalFlowSearchRadius = MIN_SEARCH_RADIUS;
             adjustSearchRadius(priv->ofc, priv->ofc->opticalFlowSearchRadius);
         } else if (AUTO_FRAME_SCALE && priv->ofc->opticalFlowResScalar > priv->ofc->opticalFlowMinResScalar &&
-            priv->ofc->opticalFlowSearchRadius >= MAX_SEARCH_RADIUS) {
+            priv->ofc->opticalFlowSearchRadius >= priv->ofc->opticalFlowMAXSearchRadius) {
             priv->numTooSlow = 0;
             priv->ofc->opticalFlowResScalar -= 1;
             priv->ofc->opticalFlowSearchRadius = MIN_SEARCH_RADIUS;

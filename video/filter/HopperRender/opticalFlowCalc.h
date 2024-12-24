@@ -7,25 +7,27 @@
 
 #include "config.h"
 
-typedef struct OpticalFlowCalc {
+typedef struct OpticalFlowCalc
+{
     // Video properties
-    int frameWidth;          // Width of the frame
-    int frameHeight;         // Height of the frame
-    float outputBlackLevel;  // The black level used for the output frame
-    float outputWhiteLevel;  // The white level used for the output frame
+    int frameWidth;         // Width of the frame
+    int frameHeight;        // Height of the frame
+    float outputBlackLevel; // The black level used for the output frame
+    float outputWhiteLevel; // The white level used for the output frame
 
     // Optical flow calculation
-    int opticalFlowIterations;  // Number of iterations to use in the optical flow calculation (0: As many as possible)
-    int opticalFlowSteps;  // How many repetitions of each iteration will be executed to find the best offset for each
-                           // window
-    int opticalFlowResScalar;     // Determines which resolution scalar will be used for the optical flow calculation
-    int opticalFlowMinResScalar;  // The minimum resolution scalar
-    int opticalFlowFrameWidth;    // Width of the frame used by the optical flow calculation
-    int opticalFlowFrameHeight;   // Height of the frame used by the optical flow calculation
-    int opticalFlowSearchRadius;  // Search radius used for the optical flow calculation
-    int directionIndexOffset;     // opticalFlowFrameHeight * opticalFlowFrameWidth
-    int channelIndexOffset;       // frameHeight * frameWidth
-    volatile bool opticalFlowCalcShouldTerminate;  // Whether or not the optical flow calculator should terminate
+    int opticalFlowIterations;                    // Number of iterations to use in the optical flow calculation (0: As many as possible)
+    int opticalFlowSteps;                         // How many repetitions of each iteration will be executed to find the best offset for each
+                                                  // window
+    int opticalFlowResScalar;                     // Determines which resolution scalar will be used for the optical flow calculation
+    int opticalFlowMinResScalar;                  // The minimum resolution scalar
+    int opticalFlowFrameWidth;                    // Width of the frame used by the optical flow calculation
+    int opticalFlowFrameHeight;                   // Height of the frame used by the optical flow calculation
+    int opticalFlowSearchRadius;                  // Search radius used for the optical flow calculation
+    int opticalFlowMAXSearchRadius;               // Maximum search radius used for the optical flow calculation
+    int directionIndexOffset;                     // opticalFlowFrameHeight * opticalFlowFrameWidth
+    int channelIndexOffset;                       // frameHeight * frameWidth
+    volatile bool opticalFlowCalcShouldTerminate; // Whether or not the optical flow calculator should terminate
 
     // OpenCL variables
     cl_device_id clDeviceId;
@@ -46,23 +48,23 @@ typedef struct OpticalFlowCalc {
     size_t threads8x8x1[3];
 
     // Queues
-    cl_command_queue queueOFC;                      // Queue used for the optical flow calculation
-    cl_command_queue queueWarping1, queueWarping2;  // Queues used for the warping
+    cl_command_queue queueOFC;                     // Queue used for the optical flow calculation
+    cl_command_queue queueWarping1, queueWarping2; // Queues used for the warping
 
     // GPU Arrays
-    cl_mem offsetArray12;            // Array containing x,y offsets for each pixel of frame1
-    cl_mem offsetArray21;            // Array containing x,y offsets for each pixel of frame2
-    cl_mem blurredOffsetArray12[2];  // Array containing x,y offsets for each pixel of frame1
-    cl_mem blurredOffsetArray21[2];  // Array containing x,y offsets for each pixel of frame2
-    cl_mem summedDeltaValuesArray;   // Array containing the summed up delta values of each window
-    cl_mem lowestLayerArray;  // Array containing the comparison results of the two normalized delta arrays (true if the
-                              // new value decreased)
-    cl_mem outputFrameArray;  // Array containing the output frame
-    cl_mem inputFrameArray[3];    // Array containing the last three frames
-    cl_mem warpedFrameArray12;    // Array containing the warped frame (frame 1 to frame 2)
-    cl_mem warpedFrameArray21;    // Array containing the warped frame (frame 2 to frame 1)
+    cl_mem offsetArray12;           // Array containing x,y offsets for each pixel of frame1
+    cl_mem offsetArray21;           // Array containing x,y offsets for each pixel of frame2
+    cl_mem blurredOffsetArray12[2]; // Array containing x,y offsets for each pixel of frame1
+    cl_mem blurredOffsetArray21[2]; // Array containing x,y offsets for each pixel of frame2
+    cl_mem summedDeltaValuesArray;  // Array containing the summed up delta values of each window
+    cl_mem lowestLayerArray;        // Array containing the comparison results of the two normalized delta arrays (true if the
+                                    // new value decreased)
+    cl_mem outputFrameArray;        // Array containing the output frame
+    cl_mem inputFrameArray[3];      // Array containing the last three frames
+    cl_mem warpedFrameArray12;      // Array containing the warped frame (frame 1 to frame 2)
+    cl_mem warpedFrameArray21;      // Array containing the warped frame (frame 2 to frame 1)
 #if DUMP_IMAGES
-    unsigned short *imageDumpArray;  // Array containing the image data
+    unsigned short *imageDumpArray; // Array containing the image data
 #endif
 
     // Kernels
@@ -99,4 +101,4 @@ bool tearingTest(struct OpticalFlowCalc *ofc);
 bool saveImage(struct OpticalFlowCalc *ofc, const char *filePath);
 #endif
 
-#endif  // OPTICALFLOWCALC_H
+#endif // OPTICALFLOWCALC_H

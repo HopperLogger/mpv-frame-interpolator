@@ -307,10 +307,10 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
 
         // 4. Adjust variables for the next iteration
         windowSize = max(windowSize >> 1, (int)1);
-        if (iter != ofc->opticalFlowIterations - 1) {
-            currSearchRadius = max(ofc->opticalFlowSearchRadius - iter * 2, 4);
+/*         if (iter != ofc->opticalFlowIterations - 1) {
+            currSearchRadius = max(ofc->opticalFlowSearchRadius - iter, 4);
             ERR_CHECK(adjustSearchRadius(ofc, currSearchRadius));
-        }
+        } */
     }
     return 0;
 }
@@ -887,6 +887,7 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     // Optical flow calculation
     ofc->opticalFlowIterations = NUM_ITERATIONS;
     ofc->opticalFlowSearchRadius = DUMP_IMAGES ? MAX_SEARCH_RADIUS : MIN_SEARCH_RADIUS;
+    ofc->opticalFlowMAXSearchRadius = DUMP_IMAGES ? MAX_SEARCH_RADIUS : min((8.0 / 1080.0) * frameHeight, MAX_SEARCH_RADIUS);
     ofc->opticalFlowSteps = DUMP_IMAGES ? MAX_NUM_STEPS : 1;
     ofc->opticalFlowResScalar = MAX_RES_SCALAR;
     ofc->opticalFlowMinResScalar = MAX_RES_SCALAR;
@@ -896,8 +897,8 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     ofc->channelIndexOffset = ofc->frameHeight * ofc->frameWidth;
     ofc->opticalFlowCalcShouldTerminate = false;
     if (ofc->frameHeight > 1080) {
-        ofc->opticalFlowMinResScalar++;
-        ofc->opticalFlowResScalar++;
+        ofc->opticalFlowMinResScalar += 2;
+        ofc->opticalFlowResScalar += 2;
     }
 
     // Check if the Kernels are accessible
