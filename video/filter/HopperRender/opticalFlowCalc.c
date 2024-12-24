@@ -250,7 +250,7 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
         }
         windowSize = maxDim << 1;
     }
-    windowSize /= 8; // We don't want to compute movement of the entire frame, so we start with smaller windows
+    windowSize /= 2; // We don't want to compute movement of the entire frame, so we start with smaller windows
 
     // We only want to compute windows that are 2x2 or larger, so we adjust the needed iterations
     if (NUM_ITERATIONS == 0 || NUM_ITERATIONS > log2(windowSize)) {
@@ -268,12 +268,12 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
 
     // We calculate the ideal offset array for each window size
     for (int iter = 0; iter < ofc->opticalFlowIterations; iter++) {
-        for (int step = 0; step < ofc->opticalFlowSteps; step++) {
+        for (int step = 0; step < ofc->opticalFlowSteps * 2; step++) {
             if (ofc->opticalFlowCalcShouldTerminate) return 0;
 
             // Reset the summed up delta array
             ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->summedDeltaValuesArray,
-                                     currSearchRadius * currSearchRadius * ofc->opticalFlowFrameHeight *
+                                     currSearchRadius * ofc->opticalFlowFrameHeight *
                                          ofc->opticalFlowFrameWidth * sizeof(unsigned int),
                                      sizeof(unsigned int), "calculateOpticalFlow"));
 
@@ -281,8 +281,9 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
             cl_int err = clSetKernelArg(ofc->calcDeltaSumsKernel, 1, sizeof(cl_mem), &ofc->inputFrameArray[1]);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 2, sizeof(cl_mem), &ofc->inputFrameArray[2]);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 9, sizeof(int), &windowSize);
-            int isFirstIteration = (int)(iter <= 1);
+            int isFirstIteration = (int)(iter <= 3);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 12, sizeof(int), &isFirstIteration);
+            err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 13, sizeof(int), &step);
             ERR_MSG_CHECK(err, "calculateOpticalFlow");
             ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->calcDeltaSumsKernel, 3, ofc->lowGrid8x8xL,
                                         ofc->threads8x8x1, "calculateOpticalFlow"));
@@ -297,8 +298,9 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
 
             // 3. Adjust the offset array based on the comparison results
             err = clSetKernelArg(ofc->adjustOffsetArrayKernel, 2, sizeof(int), &windowSize);
+            err = clSetKernelArg(ofc->adjustOffsetArrayKernel, 7, sizeof(int), &step);
             ERR_MSG_CHECK(err, "calculateOpticalFlow");
-            ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->adjustOffsetArrayKernel, 3, ofc->lowGrid16x16x2,
+            ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->adjustOffsetArrayKernel, 2, ofc->lowGrid16x16x1,
                                         ofc->threads16x16x1, "calculateOpticalFlow"));
             ERR_CHECK(cl_finish_queue(ofc->queueOFC, "calculateOpticalFlow"));
         }
@@ -591,12 +593,10 @@ bool saveImage(struct OpticalFlowCalc* ofc, const char* filePath) {
  * @return: Whether or not the kernel parameters were set successfully
  */
 bool setKernelParameters(struct OpticalFlowCalc* ofc) {
-    const int numLayers = ofc->opticalFlowSearchRadius * ofc->opticalFlowSearchRadius;
-
     // Define the global and local work sizes
     ofc->lowGrid16x16xL[0] = ceil(ofc->opticalFlowFrameWidth / 16.0) * 16.0;
     ofc->lowGrid16x16xL[1] = ceil(ofc->opticalFlowFrameHeight / 16.0) * 16.0;
-    ofc->lowGrid16x16xL[2] = numLayers;
+    ofc->lowGrid16x16xL[2] = ofc->opticalFlowSearchRadius;
     ofc->lowGrid16x16x4[0] = ceil(ofc->opticalFlowFrameWidth / 16.0) * 16.0;
     ofc->lowGrid16x16x4[1] = ceil(ofc->opticalFlowFrameHeight / 16.0) * 16.0;
     ofc->lowGrid16x16x4[2] = 4;
@@ -608,7 +608,7 @@ bool setKernelParameters(struct OpticalFlowCalc* ofc) {
     ofc->lowGrid16x16x1[2] = 1;
     ofc->lowGrid8x8xL[0] = ceil(ofc->opticalFlowFrameWidth / 8.0) * 8.0;
     ofc->lowGrid8x8xL[1] = ceil(ofc->opticalFlowFrameHeight / 8.0) * 8.0;
-    ofc->lowGrid8x8xL[2] = numLayers;
+    ofc->lowGrid8x8xL[2] = ofc->opticalFlowSearchRadius;
     ofc->grid16x16x2[0] = ceil(ofc->frameWidth / 16.0) * 16.0;
     ofc->grid16x16x2[1] = ceil(ofc->frameHeight / 16.0) * 16.0;
     ofc->grid16x16x2[2] = 2;
@@ -658,7 +658,7 @@ bool setKernelParameters(struct OpticalFlowCalc* ofc) {
     err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 11, sizeof(int), &ofc->opticalFlowResScalar);
     err |= clSetKernelArg(ofc->determineLowestLayerKernel, 0, sizeof(cl_mem), &ofc->summedDeltaValuesArray);
     err |= clSetKernelArg(ofc->determineLowestLayerKernel, 1, sizeof(cl_mem), &ofc->lowestLayerArray);
-    err |= clSetKernelArg(ofc->determineLowestLayerKernel, 3, sizeof(int), &numLayers);
+    err |= clSetKernelArg(ofc->determineLowestLayerKernel, 3, sizeof(int), &ofc->opticalFlowSearchRadius);
     err |= clSetKernelArg(ofc->determineLowestLayerKernel, 4, sizeof(int), &ofc->opticalFlowFrameHeight);
     err |= clSetKernelArg(ofc->determineLowestLayerKernel, 5, sizeof(int), &ofc->opticalFlowFrameWidth);
     err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 0, sizeof(cl_mem), &ofc->offsetArray12);
@@ -725,11 +725,10 @@ bool setKernelParameters(struct OpticalFlowCalc* ofc) {
  * @return: Whether or not the search radius was adjusted successfully
  */
 bool adjustSearchRadius(struct OpticalFlowCalc* ofc, int newSearchRadius) {
-    int newNumLayers = newSearchRadius * newSearchRadius;
-    ofc->lowGrid16x16xL[2] = newNumLayers;
-    ofc->lowGrid8x8xL[2] = newNumLayers;
+    ofc->lowGrid16x16xL[2] = newSearchRadius;
+    ofc->lowGrid8x8xL[2] = newSearchRadius;
     cl_int err = clSetKernelArg(ofc->calcDeltaSumsKernel, 10, sizeof(int), &newSearchRadius);
-    err |= clSetKernelArg(ofc->determineLowestLayerKernel, 3, sizeof(int), &newNumLayers);
+    err |= clSetKernelArg(ofc->determineLowestLayerKernel, 3, sizeof(int), &newSearchRadius);
     err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 4, sizeof(int), &newSearchRadius);
     ERR_MSG_CHECK(err, "adjustSearchRadius");
     return 0;
@@ -791,7 +790,7 @@ static bool detectDevices(struct OpticalFlowCalc* ofc) {
     const cl_ulong requiredVRAM =
         18lu * ofc->frameHeight * ofc->frameWidth +
         25lu * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth +
-        MAX_SEARCH_RADIUS * MAX_SEARCH_RADIUS * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(unsigned int);
+        MAX_SEARCH_RADIUS * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(unsigned int);
     size_t maxWorkGroupSizes[3];
     const size_t requiredWorkGroupSizes[3] = {16, 16, 1};
     cl_ulong maxSharedMemSize;
@@ -967,7 +966,7 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
                                2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
                                "blurredOffsetArray21[1]"));
     ERR_CHECK(cl_create_buffer(&ofc->summedDeltaValuesArray, ofc->clContext, CL_MEM_READ_WRITE,
-                               MAX_SEARCH_RADIUS * MAX_SEARCH_RADIUS * ofc->opticalFlowFrameHeight *
+                               MAX_SEARCH_RADIUS * ofc->opticalFlowFrameHeight *
                                    ofc->opticalFlowFrameWidth * sizeof(unsigned int),
                                "summedUpDeltaArray"));
     ERR_CHECK(cl_create_buffer(&ofc->lowestLayerArray, ofc->clContext, CL_MEM_READ_WRITE,

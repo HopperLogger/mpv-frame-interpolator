@@ -829,8 +829,8 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
         MP_ERR(parent, "MAX_SEARCH_RADIUS must be at least 2.\n");
         return NULL;
     }
-    if (MAX_SEARCH_RADIUS > 16) {
-        MP_ERR(parent, "MAX_SEARCH_RADIUS must be at most 16.\n");
+    if (MAX_SEARCH_RADIUS > 256) {
+        MP_ERR(parent, "MAX_SEARCH_RADIUS must be at most 256.\n");
         return NULL;
     }
     if (MAX_SEARCH_RADIUS < MIN_SEARCH_RADIUS) {
