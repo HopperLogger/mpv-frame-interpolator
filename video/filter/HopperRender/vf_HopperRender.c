@@ -74,8 +74,6 @@ struct priv {
     // Optical flow calculation
     struct OpticalFlowCalc *ofc;     // Optical flow calculator struct
     double blendingScalar;           // The scalar used to determine the position between frame1 and frame2
-    volatile bool isOFCBusy;         // Whether or not the optical flow calculation is currently running
-    bool hasOFCFailed;               // Whether or not the optical flow calculation has failed
     int performanceAdjustmentDelay;  // The number of frames to not adjust the performance after a change
 
     // Frame output
@@ -88,12 +86,9 @@ struct priv {
     // Performance and activation status
     int numTooSlow;  // The number of times the interpolation has been too slow
     InterpolationState
-        interpolationState;       // The state of the filter (0: Deactivated, 1: Not Needed, 2: Active, 3: Too Slow)
-    struct timeval startTimeOFC;  // The start time of the optical flow calculation
-    struct timeval endTimeOFC;    // The end time of the optical flow calculation
-    struct timeval startTimeWarping[100];  // The start times of the warp calculations
-    struct timeval endTimeWarping[100];    // The end times of the warp calculations
-    double opticalFlowCalcDuration;        // The duration of the optical flow calculation
+        interpolationState;         // The state of the filter (0: Deactivated, 1: Not Needed, 2: Active, 3: Too Slow)
+    double warpCalcDurations[10];  // The durations of the warp calculations
+    double currTotalCalcDuration;   // The total duration of the current frame calculation
 };
 
 #define max(a, b) ((a) > (b) ? (a) : (b))
@@ -108,8 +103,6 @@ struct priv {
     }
 
 // Prototypes
-void *vf_HopperRender_optical_flow_calc_thread(void *arg);
-
 #if INC_APP_IND
 void *vf_HopperRender_launch_AppIndicator_script(void *arg);
 
@@ -156,7 +149,6 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv) {
             if (priv->interpolationState != Deactivated) {
                 priv->interpolationState = Deactivated;
                 priv->interpolatedFrameNum = 0;
-                priv->ofc->opticalFlowCalcShouldTerminate = true;
             } else {
                 priv->interpolationState = Active;
             }
@@ -221,25 +213,23 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv) {
  *
  * @param priv: The video filter private data
  */
-static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv, double warpCalcDurations[100],
-                                                       double currTotalWarpDuration) {
+static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv) {
     char buffer2[512];
     memset(buffer2, 0, sizeof(buffer2));
     int offset =
         snprintf(buffer2, sizeof(buffer2),
                  "Num Steps: %d\nSearch Radius: %d\nCalc Res: %dx%d\nTarget Time: %06.2f ms (%.1f fps)\nFrame Time: "
-                 "%06.2f ms (%.3f fps | %.2fx)\nOfc: %06.2f ms (%.0f fps)\nWarp Time: %06.2f ms (%.0f fps)",
+                 "%06.2f ms (%.3f fps | %.2fx)\nCalc Time: %06.2f ms (%.0f fps > %.3f fps)",
                  priv->ofc->opticalFlowSteps, priv->ofc->opticalFlowSearchRadius,
                  priv->ofc->frameWidth >> priv->ofc->opticalFlowResScalar,
                  priv->ofc->frameHeight >> priv->ofc->opticalFlowResScalar, priv->targetFrameTime * 1000.0,
                  1.0 / priv->targetFrameTime, priv->sourceFrameTime * 1000.0, 1.0 / priv->sourceFrameTime,
-                 priv->playbackSpeed, priv->opticalFlowCalcDuration * 1000.0, 1.0 / priv->opticalFlowCalcDuration,
-                 currTotalWarpDuration * 1000.0, 1.0 / currTotalWarpDuration);
+                 priv->playbackSpeed, priv->currTotalCalcDuration * 1000.0, 1.0 / priv->currTotalCalcDuration, 1.0 / priv->sourceFrameTime);
 
     for (int i = 0; i < 10; i++) {
         if (i < min(priv->numIntFrames, 10)) {
             offset += snprintf(buffer2 + offset, sizeof(buffer2) - offset, "\nWarp%d: %06.2f ms", i,
-                               warpCalcDurations[i] * 1000.0);
+                               priv->warpCalcDurations[i] * 1000.0);
         } else {
             offset += snprintf(buffer2 + offset, sizeof(buffer2) - offset, "\n");
         }
@@ -323,9 +313,6 @@ static void vf_HopperRender_uninit(struct mp_filter *f) {
     mp_image_pool_clear(priv->imagePool);
     if (priv->isFilterInitialized) {
         mp_image_unrefp(&priv->referenceImage);
-        priv->ofc->opticalFlowCalcShouldTerminate = true;
-        pthread_kill(priv->m_ptOFCThreadID, SIGTERM);
-        pthread_join(priv->m_ptOFCThreadID, NULL);
         freeOFC(priv->ofc);
     }
     free(priv->ofc);
@@ -357,24 +344,13 @@ static void vf_HopperRender_reinit_ofc(struct mp_filter *f) {
  * Adjust optical flow calculation settings for optimal performance and quality
  *
  * @param f: The video filter instance
- * @param OFCisDone: Whether or not the optical flow calculation finished on time
  */
-static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool ofcFinishedOnTime) {
+static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f) {
     struct priv *priv = f->priv;
-
-    // Calculate the calculation durations
-    double warpCalcDurations[100];
-    double currTotalWarpDuration = 0.0;
-    for (int i = 0; i < min(priv->numIntFrames, 100); i++) {
-        warpCalcDurations[i] = (priv->endTimeWarping[i].tv_sec - priv->startTimeWarping[i].tv_sec) +
-                               ((priv->endTimeWarping[i].tv_usec - priv->startTimeWarping[i].tv_usec) / 1000000.0);
-        currTotalWarpDuration += warpCalcDurations[i];
-    }
-    double currTotalCalcDuration = max(priv->opticalFlowCalcDuration, currTotalWarpDuration);
 
 // Send the stats to the AppIndicator status widget
 #if INC_APP_IND
-    vf_HopperRender_update_AppIndicator_widget(priv, warpCalcDurations, currTotalWarpDuration);
+    vf_HopperRender_update_AppIndicator_widget(priv);
 #endif
 
 // Save the stats to a file
@@ -386,19 +362,19 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
     }
     char buffer[512];
     memset(buffer, 0, sizeof(buffer));
-    sprintf(buffer, "%f\n", priv->opticalFlowCalcDuration);
+    sprintf(buffer, "%f\n", priv->currTotalCalcDuration);
     fprintf(file, "%s", buffer);
     fclose(file);
 #endif
 
 #if !DUMP_IMAGES
     // Adjust the performance buffer delay
-    if (ofcFinishedOnTime && priv->performanceAdjustmentDelay > 0) {
+    if (priv->performanceAdjustmentDelay > 0) {
         priv->performanceAdjustmentDelay -= 1;
         return;
     }
 
-    if (!ofcFinishedOnTime || (currTotalCalcDuration * UPPER_PERF_BUFFER) > priv->sourceFrameTime) {
+    if ((priv->currTotalCalcDuration * UPPER_PERF_BUFFER) > priv->sourceFrameTime) {
         /*
          * Calculation took longer than the threshold
          */
@@ -425,10 +401,10 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
         priv->performanceAdjustmentDelay = 2;
 
         // Disable Interpolation if we are too slow
-        if ((AUTO_FRAME_SCALE || AUTO_SEARCH_RADIUS_ADJUST) && ((currTotalCalcDuration * 1.05) > priv->sourceFrameTime))
+        if ((AUTO_FRAME_SCALE || AUTO_SEARCH_RADIUS_ADJUST) && ((priv->currTotalCalcDuration * 1.05) > priv->sourceFrameTime))
             priv->interpolationState = TooSlow;
 
-    } else if ((currTotalCalcDuration * LOWER_PERF_BUFFER) < priv->sourceFrameTime) {
+    } else if ((priv->currTotalCalcDuration * LOWER_PERF_BUFFER) < priv->sourceFrameTime) {
         /*
          * We have left over capacity
          */
@@ -455,73 +431,6 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f, const bool
 }
 
 /*
- * The optical flow calculation thread
- *
- * @param arg: The video filter private data (struct priv)
- */
-void *vf_HopperRender_optical_flow_calc_thread(void *arg) {
-    sigset_t set;
-    int sig;
-    struct priv *priv = (struct priv *)arg;
-
-    // Block signals SIGUSR1 and SIGTERM in the thread
-    sigemptyset(&set);
-    sigaddset(&set, SIGUSR1);
-    sigaddset(&set, SIGTERM);
-    pthread_sigmask(SIG_BLOCK, &set, NULL);
-
-    // Loop until SIGUSR1 or SIGTERM is received
-    while (1) {
-        sigwait(&set, &sig);
-
-        if (sig == SIGUSR1) {
-            gettimeofday(&priv->startTimeOFC, NULL);
-            priv->isOFCBusy = true;
-
-            bool needsFlipping = (priv->frameOutputMode == WarpedFrame21 || priv->frameOutputMode == BlendedFrame ||
-                                  priv->frameOutputMode == SideBySide1 || priv->frameOutputMode == SideBySide2);
-
-            if (calculateOpticalFlow(priv->ofc) || (needsFlipping && flipFlow(priv->ofc)) ||
-                blurFlowArrays(priv->ofc) ||
-                (priv->ofc->opticalFlowCalcShouldTerminate && setKernelParameters(priv->ofc))) {
-                priv->hasOFCFailed = true;
-            }
-
-            gettimeofday(&priv->endTimeOFC, NULL);
-            priv->opticalFlowCalcDuration = (priv->endTimeOFC.tv_sec - priv->startTimeOFC.tv_sec) +
-                                            ((priv->endTimeOFC.tv_usec - priv->startTimeOFC.tv_usec) / 1000000.0);
-            priv->isOFCBusy = false;
-            priv->ofc->opticalFlowCalcShouldTerminate = false;
-        } else if (sig == SIGTERM) {
-            priv->isOFCBusy = false;
-            priv->hasOFCFailed = true;
-            priv->ofc->opticalFlowCalcShouldTerminate = false;
-            pthread_exit(NULL);
-        }
-    }
-}
-
-/*
- * Initializes the video filter.
- *
- * @param f: The video filter instance
- * @param dimY: The height of the video
- * @param dimX: The stride width of the video
- *
- * @return: The result of the configuration
- */
-static void vf_HopperRender_init(struct mp_filter *f, int frameHeight, int frameWidth) {
-    struct priv *priv = f->priv;
-
-    // Initialize the optical flow calculator
-    ERR_CHECK(initOpticalFlowCalc(priv->ofc, frameHeight, frameWidth), "initOpticalFlowCalc", f);
-
-    // Create the optical flow calc thread
-    ERR_CHECK(pthread_create(&priv->m_ptOFCThreadID, NULL, vf_HopperRender_optical_flow_calc_thread, priv),
-              "pthread_create", f);
-}
-
-/*
  * Coordinates the optical flow calc thread and generates the interpolated frames
  *
  * @param f: The video filter instance
@@ -530,7 +439,8 @@ static void vf_HopperRender_init(struct mp_filter *f, int frameHeight, int frame
 static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char **outputPlanes) {
     struct priv *priv = f->priv;
 
-    if (priv->interpolatedFrameNum < 100) gettimeofday(&priv->startTimeWarping[priv->interpolatedFrameNum], NULL);
+    struct timeval startTime, endTime;
+    gettimeofday(&startTime, NULL);
 
     // Warp frames
     if (priv->frameOutputMode != HSVFlow) {
@@ -574,7 +484,10 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 
     // Download the result to the output buffer
     ERR_CHECK(downloadFrame(priv->ofc, priv->ofc->outputFrameArray, outputPlanes), "downloadFrame", f);
-    if (priv->interpolatedFrameNum < 100) gettimeofday(&priv->endTimeWarping[priv->interpolatedFrameNum], NULL);
+    gettimeofday(&endTime, NULL);
+    if (priv->interpolatedFrameNum < 10) priv->warpCalcDurations[priv->interpolatedFrameNum] =
+        (endTime.tv_sec - startTime.tv_sec) + ((endTime.tv_usec - startTime.tv_usec) / 1000000.0);
+    priv->currTotalCalcDuration += (endTime.tv_sec - startTime.tv_sec) + ((endTime.tv_usec - startTime.tv_usec) / 1000000.0);
 
     priv->blendingScalar += priv->targetFrameTime / priv->sourceFrameTime;
     if (priv->blendingScalar >= 1.0) {
@@ -649,7 +562,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     // Initialize the filter if needed
     if (!priv->isFilterInitialized) {
         priv->referenceImage = mp_image_new_ref(img);
-        vf_HopperRender_init(f, img->h, img->w);
+        ERR_CHECK(initOpticalFlowCalc(priv->ofc, img->h, img->w), "initOpticalFlowCalc", f);
         priv->isFilterInitialized = true;
     }
 
@@ -671,36 +584,26 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
         priv->numIntFrames = 1;
     }
 
-    // Check if the OFC is still busy
-    bool OFCisDone = true;
-    double currCalcTime = 0.0;
-    while (priv->isOFCBusy) {
-        if (OFCisDone) {
-            gettimeofday(&priv->endTimeOFC, NULL);
-            currCalcTime = (priv->endTimeOFC.tv_sec - priv->startTimeOFC.tv_sec) +
-                           ((priv->endTimeOFC.tv_usec - priv->startTimeOFC.tv_usec) / 1000000.0);
-            if (currCalcTime > priv->sourceFrameTime * 0.95) {
-                OFCisDone = false;
-                MP_WARN(f, "OFC was too slow!\n");
-                priv->ofc->opticalFlowCalcShouldTerminate = true;  // Interrupts the OFC calculator
-            }
-        }
-    }
-
-    // Check if the OFC failed
-    ERR_CHECK(priv->hasOFCFailed, "OFC failed", f);
-
     // Adjust the settings to process everything fast enough
-    vf_HopperRender_auto_adjust_settings(f, OFCisDone);
+    vf_HopperRender_auto_adjust_settings(f);
 
-    // Upload the source frame to the GPU buffers and blur it for OFC calculation
+    // Upload the source frame to the GPU buffers
+    struct timeval startTime, endTime;
+    gettimeofday(&startTime, NULL);
     ERR_CHECK(updateFrame(priv->ofc, img->planes), "updateFrame", f);
 
     // Calculate the optical flow
     if (priv->interpolationState == Active && priv->sourceFrameNum >= 2 &&
         priv->frameOutputMode != TearingTest) {
-        pthread_kill(priv->m_ptOFCThreadID, SIGUSR1);
+        bool needsFlipping = (priv->frameOutputMode == WarpedFrame21 || priv->frameOutputMode == BlendedFrame ||
+                                priv->frameOutputMode == SideBySide1 || priv->frameOutputMode == SideBySide2);
+
+        ERR_CHECK(calculateOpticalFlow(priv->ofc) || 
+                 (needsFlipping && flipFlow(priv->ofc)) ||
+                  blurFlowArrays(priv->ofc), "OFC failed", f);
     }
+    gettimeofday(&endTime, NULL);
+    priv->currTotalCalcDuration = (endTime.tv_sec - startTime.tv_sec) + ((endTime.tv_usec - startTime.tv_usec) / 1000000.0);
 
     // Interpolate the frames
     if (priv->interpolationState == Active && (priv->sourceFrameNum >= 3 || priv->frameOutputMode == SideBySide2) &&
@@ -781,7 +684,6 @@ static void vf_HopperRender_reset(struct mp_filter *f) {
     priv->sourceFrameNum = 0;
     priv->interpolatedFrameNum = 0;
     priv->blendingScalar = 0.0;
-    priv->ofc->opticalFlowCalcShouldTerminate = true;
 }
 
 // Filter definition
@@ -916,8 +818,6 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 
     // Optical Flow calculation
     priv->blendingScalar = 0.0;
-    priv->isOFCBusy = false;
-    priv->hasOFCFailed = false;
     priv->performanceAdjustmentDelay = 0;
 
     // Frame output
@@ -929,7 +829,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
     // Performance and activation status
     priv->numTooSlow = 0;
     priv->interpolationState = Active;
-    priv->opticalFlowCalcDuration = 0.0;
+    priv->currTotalCalcDuration = 0.0;
 
     // Optical Flow calculator
     priv->ofc = calloc(1, sizeof(struct OpticalFlowCalc));
