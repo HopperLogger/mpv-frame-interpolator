@@ -27,7 +27,6 @@ typedef struct OpticalFlowCalc
     int opticalFlowMAXSearchRadius;               // Maximum search radius used for the optical flow calculation
     int directionIndexOffset;                     // opticalFlowFrameHeight * opticalFlowFrameWidth
     int channelIndexOffset;                       // frameHeight * frameWidth
-    volatile bool opticalFlowCalcShouldTerminate; // Whether or not the optical flow calculator should terminate
 
     // OpenCL variables
     cl_device_id clDeviceId;
@@ -48,8 +47,7 @@ typedef struct OpticalFlowCalc
     size_t threads8x8x1[3];
 
     // Queues
-    cl_command_queue queueOFC;                     // Queue used for the optical flow calculation
-    cl_command_queue queueWarping1, queueWarping2; // Queues used for the warping
+    cl_command_queue queueOFC;      // Queue used for the optical flow calculation
 
     // GPU Arrays
     cl_mem offsetArray12;           // Array containing x,y offsets for each pixel of frame1
