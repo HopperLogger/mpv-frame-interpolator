@@ -15,6 +15,7 @@ __kernel void sideBySide1Kernel(__global const unsigned short* sourceFrame, __gl
                                            0.0f);
     } else if (cz == 1 && cy < (dimY >> 1) && cx < (dimX >> 1)) {
 		// U/V Channels
-        outputFrame[channelIndexOffset + cy * dimX + cx] = sourceFrame[channelIndexOffset + cy * dimX + cx];
+        outputFrame[channelIndexOffset + cy * dimX + cx] = (unsigned short)fmax(
+            fmin(((float)sourceFrame[channelIndexOffset + cy * dimX + cx] - 32768.0f) / outputWhiteLevel * 65535.0f + 32768.0f, 65535.0f), 0.0f);
     }
 }

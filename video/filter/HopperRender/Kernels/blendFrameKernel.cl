@@ -20,6 +20,7 @@ __kernel void blendFrameKernel(__global const unsigned short* warpedFrameArray12
 		// U/V Channels
         pixelValue = (float)warpedFrameArray12[channelIndexOffset + cy * dimX + cx] * frame1Scalar +
                      (float)warpedFrameArray21[channelIndexOffset + cy * dimX + cx] * frame2Scalar;
-        outputFrame[channelIndexOffset + cy * dimX + cx] = (unsigned short)pixelValue;
+        outputFrame[channelIndexOffset + cy * dimX + cx] = (unsigned short)fmax(
+            fmin((pixelValue - 32768.0f) / outputWhiteLevel * 65535.0f + 32768.0f, 65535.0f), 0.0f);
     }
 }

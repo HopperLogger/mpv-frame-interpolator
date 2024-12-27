@@ -6,9 +6,18 @@ gi.require_version('Gtk', '3.0')
 gi.require_version('AppIndicator3', '0.1')
 from gi.repository import Gtk, AppIndicator3, GLib
 
-FIFO_PATH = "/tmp/hopperrender" # FIFO used to comunicate with the video filter
+FIFO_PATH = "/tmp/hopperrender" # FIFO used to communicate with the video filter
 BUFFER_SIZE = 512               # Size of the buffer used to read from the FIFO
 UPDATE_INTERVAL = 1/60          # Interval at which the update function will be called
+
+# Slider callback functions
+def on_black_level_slider_change(slider):
+    value = int(slider.get_value())
+    print(value + 100, flush=True)
+
+def on_white_level_slider_change(slider):
+    value = int(slider.get_value())
+    print(value + 400, flush=True)
 
 # Callback functions for the radio items
 def on_warped_frame12_activate(widget):
@@ -42,22 +51,6 @@ def on_sidebyside2_activate(widget):
 def on_tearingtest_activate(widget):
     if widget.get_active():
         print(9, flush=True)
-
-def on_shader_bright_activate(widget):
-    if widget.get_active():
-        print(10, flush=True)
-
-def on_shader_full_activate(widget):
-    if widget.get_active():
-        print(11, flush=True)
-
-def on_shader_calm_activate(widget):
-    if widget.get_active():
-        print(12, flush=True)
-
-def on_shader_off_activate(widget):
-    if widget.get_active():
-        print(13, flush=True)
 
 def on_activation_toggle(widget):
     print(0, flush=True)
@@ -95,12 +88,11 @@ class HopperRenderSettings:
         main_menu.append(frame_output_item)
         frame_output_menu = Gtk.Menu()
         frame_output_item.set_submenu(frame_output_menu)
-        
-        # Shader menu
-        shader_item = Gtk.MenuItem(label="Shader")
-        main_menu.append(shader_item)
-        shader_menu = Gtk.Menu()
-        shader_item.set_submenu(shader_menu)
+
+        # Level submenu
+        level_slider_item = Gtk.MenuItem(label="Levels")
+        level_slider_item.connect("activate", self.open_slider_window)
+        main_menu.append(level_slider_item)
 
         # Frame output radio items
         frame_output_group = None
@@ -146,27 +138,6 @@ class HopperRenderSettings:
         frame_output_menu.append(tearingtest_item)
         frame_output_group = tearingtest_item.get_group()
 
-        # Shader radio items
-        shader_group = None
-
-        shader_bright_item = Gtk.RadioMenuItem.new_with_label(shader_group, "0 - 220")
-        shader_bright_item.connect("activate", on_shader_bright_activate)
-        shader_menu.append(shader_bright_item)
-        shader_group = shader_bright_item.get_group()
-
-        shader_full_item = Gtk.RadioMenuItem.new_with_label(shader_group, "16 - 235")
-        shader_full_item.connect("activate", on_shader_full_activate)
-        shader_menu.append(shader_full_item)
-
-        shader_calm_item = Gtk.RadioMenuItem.new_with_label(shader_group, "10 - 235")
-        shader_calm_item.connect("activate", on_shader_calm_activate)
-        shader_menu.append(shader_calm_item)
-
-        shader_off_item = Gtk.RadioMenuItem.new_with_label(shader_group, "Off")
-        shader_off_item.set_active(True)
-        shader_off_item.connect("activate", on_shader_off_activate)
-        shader_menu.append(shader_off_item)
-
         # Activation toggle
         activation_toggle = Gtk.CheckMenuItem(label="Activate")
         activation_toggle.set_active(True)
@@ -184,6 +155,37 @@ class HopperRenderSettings:
         GLib.idle_add(self.update)  # Add the update function that will listen on the FIFO for changes
         Gtk.main()
 
+    # Function to open the level slider window
+    def open_slider_window(self, source):
+        # Create a new window
+        self.window = Gtk.Window(title="Adjust Levels")
+        self.window.set_default_size(300, 200)
+
+        # Create a box to contain the slider
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self.window.add(vbox)
+
+        # Create a horizontal slider
+        black_level_label = Gtk.Label(label="Black Level")
+        self.black_level_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 255, 1)
+        self.black_level_slider.set_value(0)
+        self.black_level_slider.connect("value-changed", on_black_level_slider_change)
+
+        # Create a horizontal slider
+        white_level_label = Gtk.Label(label="White Level")
+        self.white_level_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 255, 1)
+        self.white_level_slider.set_value(255)
+        self.white_level_slider.connect("value-changed", on_white_level_slider_change)
+
+        # Add the slider to the box
+        vbox.pack_start(black_level_label, True, True, 0)
+        vbox.pack_start(self.black_level_slider, True, True, 0)
+        vbox.pack_start(white_level_label, True, True, 0)
+        vbox.pack_start(self.white_level_slider, True, True, 0)
+
+        # Show all components
+        self.window.show_all()
+
     # Update function that listens on the FIFO for changes
     def update(self):
         sleep(UPDATE_INTERVAL)  # Reduce the CPU usage by only refreshing every intermediate frame (assuming we are running on a 60hz display)
@@ -191,23 +193,7 @@ class HopperRenderSettings:
             data = os.read(self.fd, BUFFER_SIZE)
             if data:
                 text = data.decode('utf-8')
-
-                # Retreive the available calc resolutions and display them in the submenu
-                if text.startswith("RES0"):
-                    self.scalar_0_item.set_label(text[5:])
-                elif text.startswith("RES1"):
-                    self.scalar_1_item.set_label(text[5:])
-                elif text.startswith("RES2"):
-                    self.scalar_2_item.set_label(text[5:])
-                elif text.startswith("RES3"):
-                    self.scalar_3_item.set_label(text[5:])
-                elif text.startswith("RES4"):
-                    self.scalar_4_item.set_label(text[5:])
-                elif text.startswith("RES5"):
-                    self.scalar_5_item.set_label(text[5:])
-                # Display the current status in the status label
-                else:
-                    self.status_label.set_text(text)
+                self.status_label.set_text(text)
                 
         except BlockingIOError:
             pass
