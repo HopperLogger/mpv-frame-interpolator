@@ -1,10 +1,8 @@
 #include <fcntl.h>
 #include <pthread.h>
-#include <signal.h>
 #include <sys/stat.h>
 #include <sys/time.h>
 #include <sys/wait.h>
-#include <unistd.h>
 
 #include "config.h"
 #include "filters/f_autoconvert.h"
@@ -74,7 +72,6 @@ struct priv {
     // Optical flow calculation
     struct OpticalFlowCalc *ofc;     // Optical flow calculator struct
     double blendingScalar;           // The scalar used to determine the position between frame1 and frame2
-    int performanceAdjustmentDelay;  // The number of frames to not adjust the performance after a change
 
     // Frame output
     struct mp_image_pool *imagePool;  // The software image pool used to store the source frames
@@ -199,9 +196,9 @@ static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv) {
     memset(buffer2, 0, sizeof(buffer2));
     int offset =
         snprintf(buffer2, sizeof(buffer2),
-                 "Num Steps: %d\nSearch Radius: %d\nCalc Res: %dx%d\nTarget Time: %06.2f ms (%.1f fps)\nFrame Time: "
+                 "Search Radius: %d\nCalc Res: %dx%d\nTarget Time: %06.2f ms (%.1f fps)\nFrame Time: "
                  "%06.2f ms (%.3f fps | %.2fx)\nCalc Time: %06.2f ms (%.0f fps > %.3f fps)",
-                 priv->ofc->opticalFlowSteps, priv->ofc->opticalFlowSearchRadius,
+                 priv->ofc->opticalFlowSearchRadius,
                  priv->ofc->frameWidth >> priv->ofc->opticalFlowResScalar,
                  priv->ofc->frameHeight >> priv->ofc->opticalFlowResScalar, priv->targetFrameTime * 1000.0,
                  1.0 / priv->targetFrameTime, priv->sourceFrameTime * 1000.0, 1.0 / priv->sourceFrameTime,
@@ -304,23 +301,6 @@ static void vf_HopperRender_uninit(struct mp_filter *f) {
 #endif
 }
 
-#if !DUMP_IMAGES
-/*
- * Applies the new resolution scalar to the optical flow calculator and clears the offset arrays
- *
- * @param f: The video filter instance
- */
-static void vf_HopperRender_reinit_ofc(struct mp_filter *f) {
-    struct priv *priv = f->priv;
-    // Here we just adjust all the variables that are affected by the new resolution scalar
-    if (priv->interpolationState == TooSlow) priv->interpolationState = Active;
-    priv->ofc->opticalFlowFrameWidth = priv->ofc->frameWidth >> priv->ofc->opticalFlowResScalar;
-    priv->ofc->opticalFlowFrameHeight = priv->ofc->frameHeight >> priv->ofc->opticalFlowResScalar;
-    priv->ofc->directionIndexOffset = priv->ofc->opticalFlowFrameHeight * priv->ofc->opticalFlowFrameWidth;
-    ERR_CHECK(setKernelParameters(priv->ofc), "reinit", f);
-}
-#endif
-
 /*
  * Adjust optical flow calculation settings for optimal performance and quality
  *
@@ -348,65 +328,24 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f) {
     fclose(file);
 #endif
 
-#if !DUMP_IMAGES
-    // Adjust the performance buffer delay
-    if (priv->performanceAdjustmentDelay > 0) {
-        priv->performanceAdjustmentDelay -= 1;
-        return;
-    }
-
+#if !DUMP_IMAGES && AUTO_SEARCH_RADIUS_ADJUST
+    // Check if we were too slow or have leftover capacity
     if ((priv->currTotalCalcDuration * UPPER_PERF_BUFFER) > priv->sourceFrameTime) {
-        /*
-         * Calculation took longer than the threshold
-         */
-        if (AUTO_SEARCH_RADIUS_ADJUST && priv->ofc->opticalFlowSearchRadius > MIN_SEARCH_RADIUS) {
+        if (priv->ofc->opticalFlowSearchRadius > MIN_SEARCH_RADIUS) {
             // Decrease the number of steps to reduce calculation time
-            priv->ofc->opticalFlowSearchRadius = max(priv->ofc->opticalFlowSearchRadius - 1, MIN_SEARCH_RADIUS);
+            priv->ofc->opticalFlowSearchRadius--;
             adjustSearchRadius(priv->ofc, priv->ofc->opticalFlowSearchRadius);
-
-        } else if (AUTO_SEARCH_RADIUS_ADJUST && priv->ofc->opticalFlowSteps > 1) {
-            // We can't reduce the search radius any further, so we reduce the number of steps instead
-            priv->ofc->opticalFlowSteps = max(priv->ofc->opticalFlowSteps - 1, 1);
-
-        } else if (AUTO_FRAME_SCALE && priv->ofc->opticalFlowResScalar < 5) {
-            // We can't reduce the number of steps any further, so we reduce the resolution divider instead
-            // To avoid adjustments, we only adjust the resolution divider if we have been too slow for a while
-            priv->numTooSlow += 1;
-            if (priv->numTooSlow > 1) {
-                priv->numTooSlow = 0;
-                priv->ofc->opticalFlowResScalar += 1;
-                vf_HopperRender_reinit_ofc(f);
-            }
-        }
-
-        priv->performanceAdjustmentDelay = 2;
-
-        // Disable Interpolation if we are too slow
-        if ((AUTO_FRAME_SCALE || AUTO_SEARCH_RADIUS_ADJUST) && ((priv->currTotalCalcDuration * 1.05) > priv->sourceFrameTime))
+        } else {
+            // Disable Interpolation if we are too slow
             priv->interpolationState = TooSlow;
+        }
 
     } else if ((priv->currTotalCalcDuration * LOWER_PERF_BUFFER) < priv->sourceFrameTime) {
-        /*
-         * We have left over capacity
-         */
         // Increase the frame scalar if we have enough leftover capacity
-        if (AUTO_SEARCH_RADIUS_ADJUST && priv->ofc->opticalFlowSearchRadius < priv->ofc->opticalFlowMAXSearchRadius) {
-            priv->ofc->opticalFlowSearchRadius = min(priv->ofc->opticalFlowSearchRadius + 1, priv->ofc->opticalFlowMAXSearchRadius);
+        if (priv->ofc->opticalFlowSearchRadius < MAX_SEARCH_RADIUS) {
+            priv->ofc->opticalFlowSearchRadius++;
             adjustSearchRadius(priv->ofc, priv->ofc->opticalFlowSearchRadius);
-        } else if (AUTO_SEARCH_RADIUS_ADJUST && priv->ofc->opticalFlowSteps < MAX_NUM_STEPS) {
-            priv->ofc->opticalFlowSteps = priv->ofc->opticalFlowSteps + 1;
-            priv->ofc->opticalFlowSearchRadius = MIN_SEARCH_RADIUS;
-            adjustSearchRadius(priv->ofc, priv->ofc->opticalFlowSearchRadius);
-        } else if (AUTO_FRAME_SCALE && priv->ofc->opticalFlowResScalar > priv->ofc->opticalFlowMinResScalar &&
-            priv->ofc->opticalFlowSearchRadius >= priv->ofc->opticalFlowMAXSearchRadius) {
-            priv->numTooSlow = 0;
-            priv->ofc->opticalFlowResScalar -= 1;
-            priv->ofc->opticalFlowSearchRadius = MIN_SEARCH_RADIUS;
-            priv->ofc->opticalFlowSteps = 1;
-            vf_HopperRender_reinit_ofc(f);
         }
-        
-        priv->performanceAdjustmentDelay = 2;
     }
 #endif
 }
@@ -680,8 +619,8 @@ static const struct mp_filter_info vf_HopperRender_filter = {.name = "HopperRend
  */
 static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *options) {
     // Validate the defines
-    if (MAX_RES_SCALAR < 0 || MAX_RES_SCALAR > 5) {
-        MP_ERR(parent, "MAX_RES_SCALAR must be between 0 and 5.\n");
+    if (MAX_CALC_RES < 64) {
+        MP_ERR(parent, "MAX_CALC_RES must be at least 64.\n");
         return NULL;
     }
     if (NUM_ITERATIONS < 0) {
@@ -704,10 +643,6 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
     }
     if (MAX_SEARCH_RADIUS < MIN_SEARCH_RADIUS) {
         MP_ERR(parent, "MAX_SEARCH_RADIUS must be greater than or equal to MIN_SEARCH_RADIUS.\n");
-        return NULL;
-    }
-    if (MAX_NUM_STEPS < 1) {
-        MP_ERR(parent, "MAX_NUM_STEPS must be at least 1.\n");
         return NULL;
     }
     if (UPPER_PERF_BUFFER < 1.0) {
@@ -796,7 +731,6 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 
     // Optical Flow calculation
     priv->blendingScalar = 0.0;
-    priv->performanceAdjustmentDelay = 0;
 
     // Frame output
     priv->imagePool = mp_image_pool_new(NULL);
