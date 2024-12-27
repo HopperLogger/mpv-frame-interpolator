@@ -17,14 +17,10 @@ typedef struct OpticalFlowCalc
 
     // Optical flow calculation
     int opticalFlowIterations;                    // Number of iterations to use in the optical flow calculation (0: As many as possible)
-    int opticalFlowSteps;                         // How many repetitions of each iteration will be executed to find the best offset for each
-                                                  // window
     int opticalFlowResScalar;                     // Determines which resolution scalar will be used for the optical flow calculation
-    int opticalFlowMinResScalar;                  // The minimum resolution scalar
     int opticalFlowFrameWidth;                    // Width of the frame used by the optical flow calculation
     int opticalFlowFrameHeight;                   // Height of the frame used by the optical flow calculation
     int opticalFlowSearchRadius;                  // Search radius used for the optical flow calculation
-    int opticalFlowMAXSearchRadius;               // Maximum search radius used for the optical flow calculation
     int directionIndexOffset;                     // opticalFlowFrameHeight * opticalFlowFrameWidth
     int channelIndexOffset;                       // frameHeight * frameWidth
 
@@ -83,7 +79,6 @@ typedef struct OpticalFlowCalc
 bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int frameHeight, const int frameWidth);
 void freeOFC(struct OpticalFlowCalc *ofc);
 bool adjustSearchRadius(struct OpticalFlowCalc *ofc, int newSearchRadius);
-bool setKernelParameters(struct OpticalFlowCalc *ofc);
 bool updateFrame(struct OpticalFlowCalc *ofc, unsigned char **inputPlanes);
 bool downloadFrame(struct OpticalFlowCalc *ofc, const cl_mem sourceBuffer, unsigned char **outputPlanes);
 bool calculateOpticalFlow(struct OpticalFlowCalc *ofc);

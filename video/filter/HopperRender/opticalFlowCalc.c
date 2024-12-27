@@ -255,7 +255,7 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
 
     // We calculate the ideal offset array for each window size
     for (int iter = 0; iter < ofc->opticalFlowIterations; iter++) {
-        for (int step = 0; step < ofc->opticalFlowSteps * 2; step++) {
+        for (int step = 0; step < 2; step++) {
             // Reset the summed up delta array
             ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->summedDeltaValuesArray,
                                      currSearchRadius * ofc->opticalFlowFrameHeight *
@@ -563,137 +563,6 @@ bool saveImage(struct OpticalFlowCalc* ofc, const char* filePath) {
 #endif
 
 /*
- * Sets the kernel parameters and other kernel related variables used in the optical flow calculation
- *
- * @param ofc: The optical flow calculation struct
- *
- * @return: Whether or not the kernel parameters were set successfully
- */
-bool setKernelParameters(struct OpticalFlowCalc* ofc) {
-    // Define the global and local work sizes
-    ofc->lowGrid16x16xL[0] = ceil(ofc->opticalFlowFrameWidth / 16.0) * 16.0;
-    ofc->lowGrid16x16xL[1] = ceil(ofc->opticalFlowFrameHeight / 16.0) * 16.0;
-    ofc->lowGrid16x16xL[2] = ofc->opticalFlowSearchRadius;
-    ofc->lowGrid16x16x4[0] = ceil(ofc->opticalFlowFrameWidth / 16.0) * 16.0;
-    ofc->lowGrid16x16x4[1] = ceil(ofc->opticalFlowFrameHeight / 16.0) * 16.0;
-    ofc->lowGrid16x16x4[2] = 4;
-    ofc->lowGrid16x16x2[0] = ceil(ofc->opticalFlowFrameWidth / 16.0) * 16.0;
-    ofc->lowGrid16x16x2[1] = ceil(ofc->opticalFlowFrameHeight / 16.0) * 16.0;
-    ofc->lowGrid16x16x2[2] = 2;
-    ofc->lowGrid16x16x1[0] = ceil(ofc->opticalFlowFrameWidth / 16.0) * 16.0;
-    ofc->lowGrid16x16x1[1] = ceil(ofc->opticalFlowFrameHeight / 16.0) * 16.0;
-    ofc->lowGrid16x16x1[2] = 1;
-    ofc->lowGrid8x8xL[0] = ceil(ofc->opticalFlowFrameWidth / 8.0) * 8.0;
-    ofc->lowGrid8x8xL[1] = ceil(ofc->opticalFlowFrameHeight / 8.0) * 8.0;
-    ofc->lowGrid8x8xL[2] = ofc->opticalFlowSearchRadius;
-    ofc->grid16x16x2[0] = ceil(ofc->frameWidth / 16.0) * 16.0;
-    ofc->grid16x16x2[1] = ceil(ofc->frameHeight / 16.0) * 16.0;
-    ofc->grid16x16x2[2] = 2;
-    ofc->grid16x16x1[0] = ceil(ofc->frameWidth / 16.0) * 16.0;
-    ofc->grid16x16x1[1] = ceil(ofc->frameHeight / 16.0) * 16.0;
-    ofc->grid16x16x1[2] = 1;
-    ofc->halfGrid16x16x2[0] = ceil((ofc->frameWidth / 2) / 16.0) * 16.0;
-    ofc->halfGrid16x16x2[1] = ceil(ofc->frameHeight / 16.0) * 16.0;
-    ofc->halfGrid16x16x2[2] = 2;
-
-    ofc->threads16x16x1[0] = 16;
-    ofc->threads16x16x1[1] = 16;
-    ofc->threads16x16x1[2] = 1;
-    ofc->threads8x8x1[0] = 8;
-    ofc->threads8x8x1[1] = 8;
-    ofc->threads8x8x1[2] = 1;
-
-    // Clear the flow arrays
-    ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->offsetArray12,
-                             2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
-                             sizeof(short), "reinit"));
-    ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->offsetArray21,
-                             2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
-                             sizeof(short), "reinit"));
-    ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->blurredOffsetArray12[0],
-                             2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
-                             sizeof(short), "reinit"));
-    ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->blurredOffsetArray21[0],
-                             2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
-                             sizeof(short), "reinit"));
-    ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->blurredOffsetArray12[1],
-                             2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
-                             sizeof(short), "reinit"));
-    ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->blurredOffsetArray21[1],
-                             2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
-                             sizeof(short), "reinit"));
-
-    // Set kernel arguments
-    cl_int err = clSetKernelArg(ofc->calcDeltaSumsKernel, 0, sizeof(cl_mem), &ofc->summedDeltaValuesArray);
-    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 3, sizeof(cl_mem), &ofc->offsetArray12);
-    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 4, sizeof(int), &ofc->directionIndexOffset);
-    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 5, sizeof(int), &ofc->frameHeight);
-    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 6, sizeof(int), &ofc->frameWidth);
-    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 7, sizeof(int), &ofc->opticalFlowFrameHeight);
-    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 8, sizeof(int), &ofc->opticalFlowFrameWidth);
-    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 10, sizeof(int), &ofc->opticalFlowSearchRadius);
-    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 11, sizeof(int), &ofc->opticalFlowResScalar);
-    err |= clSetKernelArg(ofc->determineLowestLayerKernel, 0, sizeof(cl_mem), &ofc->summedDeltaValuesArray);
-    err |= clSetKernelArg(ofc->determineLowestLayerKernel, 1, sizeof(cl_mem), &ofc->lowestLayerArray);
-    err |= clSetKernelArg(ofc->determineLowestLayerKernel, 3, sizeof(int), &ofc->opticalFlowSearchRadius);
-    err |= clSetKernelArg(ofc->determineLowestLayerKernel, 4, sizeof(int), &ofc->opticalFlowFrameHeight);
-    err |= clSetKernelArg(ofc->determineLowestLayerKernel, 5, sizeof(int), &ofc->opticalFlowFrameWidth);
-    err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 0, sizeof(cl_mem), &ofc->offsetArray12);
-    err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 1, sizeof(cl_mem), &ofc->lowestLayerArray);
-    err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 3, sizeof(int), &ofc->directionIndexOffset);
-    err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 4, sizeof(int), &ofc->opticalFlowSearchRadius);
-    err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 5, sizeof(int), &ofc->opticalFlowFrameHeight);
-    err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 6, sizeof(int), &ofc->opticalFlowFrameWidth);
-    err |= clSetKernelArg(ofc->warpFrameKernel, 4, sizeof(int), &ofc->opticalFlowFrameWidth);
-    err |= clSetKernelArg(ofc->warpFrameKernel, 5, sizeof(int), &ofc->frameHeight);
-    err |= clSetKernelArg(ofc->warpFrameKernel, 6, sizeof(int), &ofc->frameWidth);
-    err |= clSetKernelArg(ofc->warpFrameKernel, 7, sizeof(int), &ofc->opticalFlowResScalar);
-    err |= clSetKernelArg(ofc->warpFrameKernel, 8, sizeof(int), &ofc->directionIndexOffset);
-    err |= clSetKernelArg(ofc->warpFrameKernel, 9, sizeof(int), &ofc->channelIndexOffset);
-    err |= clSetKernelArg(ofc->blendFrameKernel, 0, sizeof(cl_mem), &ofc->warpedFrameArray12);
-    err |= clSetKernelArg(ofc->blendFrameKernel, 1, sizeof(cl_mem), &ofc->warpedFrameArray21);
-    err |= clSetKernelArg(ofc->blendFrameKernel, 2, sizeof(cl_mem), &ofc->outputFrameArray);
-    err |= clSetKernelArg(ofc->blendFrameKernel, 5, sizeof(int), &ofc->frameHeight);
-    err |= clSetKernelArg(ofc->blendFrameKernel, 6, sizeof(int), &ofc->frameWidth);
-    err |= clSetKernelArg(ofc->blendFrameKernel, 7, sizeof(int), &ofc->channelIndexOffset);
-    err |= clSetKernelArg(ofc->sideBySide1Kernel, 1, sizeof(cl_mem), &ofc->outputFrameArray);
-    err |= clSetKernelArg(ofc->sideBySide1Kernel, 2, sizeof(int), &ofc->frameHeight);
-    err |= clSetKernelArg(ofc->sideBySide1Kernel, 3, sizeof(int), &ofc->frameWidth);
-    err |= clSetKernelArg(ofc->sideBySide1Kernel, 4, sizeof(int), &ofc->channelIndexOffset);
-    err |= clSetKernelArg(ofc->sideBySide2Kernel, 3, sizeof(cl_mem), &ofc->outputFrameArray);
-    err |= clSetKernelArg(ofc->sideBySide2Kernel, 6, sizeof(int), &ofc->frameHeight);
-    err |= clSetKernelArg(ofc->sideBySide2Kernel, 7, sizeof(int), &ofc->frameWidth);
-    int halfFrameHeight = ofc->frameHeight / 2;
-    int halfFrameWidth = ofc->frameWidth / 2;
-    err |= clSetKernelArg(ofc->sideBySide2Kernel, 8, sizeof(int), &halfFrameHeight);
-    err |= clSetKernelArg(ofc->sideBySide2Kernel, 9, sizeof(int), &halfFrameWidth);
-    err |= clSetKernelArg(ofc->sideBySide2Kernel, 10, sizeof(int), &ofc->channelIndexOffset);
-    err |= clSetKernelArg(ofc->visualizeFlowKernel, 1, sizeof(cl_mem), &ofc->outputFrameArray);
-    err |= clSetKernelArg(ofc->visualizeFlowKernel, 3, sizeof(int), &ofc->opticalFlowFrameHeight);
-    err |= clSetKernelArg(ofc->visualizeFlowKernel, 4, sizeof(int), &ofc->opticalFlowFrameWidth);
-    err |= clSetKernelArg(ofc->visualizeFlowKernel, 5, sizeof(int), &ofc->frameHeight);
-    err |= clSetKernelArg(ofc->visualizeFlowKernel, 6, sizeof(int), &ofc->frameWidth);
-    err |= clSetKernelArg(ofc->visualizeFlowKernel, 7, sizeof(int), &ofc->opticalFlowResScalar);
-    err |= clSetKernelArg(ofc->visualizeFlowKernel, 8, sizeof(int), &ofc->directionIndexOffset);
-    err |= clSetKernelArg(ofc->visualizeFlowKernel, 9, sizeof(int), &ofc->channelIndexOffset);
-    err |= clSetKernelArg(ofc->flipFlowKernel, 0, sizeof(cl_mem), &ofc->offsetArray12);
-    err |= clSetKernelArg(ofc->flipFlowKernel, 1, sizeof(cl_mem), &ofc->offsetArray21);
-    err |= clSetKernelArg(ofc->flipFlowKernel, 2, sizeof(int), &ofc->opticalFlowFrameHeight);
-    err |= clSetKernelArg(ofc->flipFlowKernel, 3, sizeof(int), &ofc->opticalFlowFrameWidth);
-    err |= clSetKernelArg(ofc->flipFlowKernel, 4, sizeof(int), &ofc->opticalFlowResScalar);
-    err |= clSetKernelArg(ofc->flipFlowKernel, 5, sizeof(int), &ofc->directionIndexOffset);
-    err |= clSetKernelArg(ofc->blurFlowKernel, 0, sizeof(cl_mem), &ofc->offsetArray12);
-    err |= clSetKernelArg(ofc->blurFlowKernel, 1, sizeof(cl_mem), &ofc->offsetArray21);
-    err |= clSetKernelArg(ofc->blurFlowKernel, 4, sizeof(int), &ofc->opticalFlowFrameHeight);
-    err |= clSetKernelArg(ofc->blurFlowKernel, 5, sizeof(int), &ofc->opticalFlowFrameWidth);
-    err |= clSetKernelArg(ofc->tearingTestKernel, 0, sizeof(cl_mem), &ofc->outputFrameArray);
-    err |= clSetKernelArg(ofc->tearingTestKernel, 1, sizeof(int), &ofc->frameHeight);
-    err |= clSetKernelArg(ofc->tearingTestKernel, 2, sizeof(int), &ofc->frameWidth);
-    ERR_MSG_CHECK(err, "setKernelParameters");
-    return 0;
-}
-
-/*
  * Adjusts the search radius of the optical flow calculation
  *
  * @param ofc: Pointer to the optical flow calculator
@@ -855,18 +724,47 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     // Optical flow calculation
     ofc->opticalFlowIterations = NUM_ITERATIONS;
     ofc->opticalFlowSearchRadius = DUMP_IMAGES ? MAX_SEARCH_RADIUS : MIN_SEARCH_RADIUS;
-    ofc->opticalFlowMAXSearchRadius = MAX_SEARCH_RADIUS;
-    ofc->opticalFlowSteps = DUMP_IMAGES ? MAX_NUM_STEPS : 1;
-    ofc->opticalFlowResScalar = MAX_RES_SCALAR;
-    ofc->opticalFlowMinResScalar = MAX_RES_SCALAR;
+    ofc->opticalFlowResScalar = 0;
+    while (frameHeight >> ofc->opticalFlowResScalar > MAX_CALC_RES) {
+        ofc->opticalFlowResScalar++;
+    }
     ofc->opticalFlowFrameWidth = ofc->frameWidth >> ofc->opticalFlowResScalar;
     ofc->opticalFlowFrameHeight = ofc->frameHeight >> ofc->opticalFlowResScalar;
     ofc->directionIndexOffset = ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth;
     ofc->channelIndexOffset = ofc->frameHeight * ofc->frameWidth;
-    if (ofc->frameHeight > 1080) {
-        ofc->opticalFlowMinResScalar += 1;
-        ofc->opticalFlowResScalar += 1;
-    }
+
+    // Define the global and local work sizes
+    ofc->lowGrid16x16xL[0] = ceil(ofc->opticalFlowFrameWidth / 16.0) * 16.0;
+    ofc->lowGrid16x16xL[1] = ceil(ofc->opticalFlowFrameHeight / 16.0) * 16.0;
+    ofc->lowGrid16x16xL[2] = ofc->opticalFlowSearchRadius;
+    ofc->lowGrid16x16x4[0] = ceil(ofc->opticalFlowFrameWidth / 16.0) * 16.0;
+    ofc->lowGrid16x16x4[1] = ceil(ofc->opticalFlowFrameHeight / 16.0) * 16.0;
+    ofc->lowGrid16x16x4[2] = 4;
+    ofc->lowGrid16x16x2[0] = ceil(ofc->opticalFlowFrameWidth / 16.0) * 16.0;
+    ofc->lowGrid16x16x2[1] = ceil(ofc->opticalFlowFrameHeight / 16.0) * 16.0;
+    ofc->lowGrid16x16x2[2] = 2;
+    ofc->lowGrid16x16x1[0] = ceil(ofc->opticalFlowFrameWidth / 16.0) * 16.0;
+    ofc->lowGrid16x16x1[1] = ceil(ofc->opticalFlowFrameHeight / 16.0) * 16.0;
+    ofc->lowGrid16x16x1[2] = 1;
+    ofc->lowGrid8x8xL[0] = ceil(ofc->opticalFlowFrameWidth / 8.0) * 8.0;
+    ofc->lowGrid8x8xL[1] = ceil(ofc->opticalFlowFrameHeight / 8.0) * 8.0;
+    ofc->lowGrid8x8xL[2] = ofc->opticalFlowSearchRadius;
+    ofc->grid16x16x2[0] = ceil(ofc->frameWidth / 16.0) * 16.0;
+    ofc->grid16x16x2[1] = ceil(ofc->frameHeight / 16.0) * 16.0;
+    ofc->grid16x16x2[2] = 2;
+    ofc->grid16x16x1[0] = ceil(ofc->frameWidth / 16.0) * 16.0;
+    ofc->grid16x16x1[1] = ceil(ofc->frameHeight / 16.0) * 16.0;
+    ofc->grid16x16x1[2] = 1;
+    ofc->halfGrid16x16x2[0] = ceil((ofc->frameWidth / 2) / 16.0) * 16.0;
+    ofc->halfGrid16x16x2[1] = ceil(ofc->frameHeight / 16.0) * 16.0;
+    ofc->halfGrid16x16x2[2] = 2;
+
+    ofc->threads16x16x1[0] = 16;
+    ofc->threads16x16x1[1] = 16;
+    ofc->threads16x16x1[2] = 1;
+    ofc->threads8x8x1[0] = 8;
+    ofc->threads8x8x1[1] = 8;
+    ofc->threads8x8x1[2] = 1;
 
     // Check if the Kernels are accessible
     const char* home = getenv("HOME");
@@ -950,6 +848,26 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     }
 #endif
 
+    // Clear the flow arrays
+    ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->offsetArray12,
+                             2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
+                             sizeof(short), "reinit"));
+    ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->offsetArray21,
+                             2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
+                             sizeof(short), "reinit"));
+    ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->blurredOffsetArray12[0],
+                             2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
+                             sizeof(short), "reinit"));
+    ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->blurredOffsetArray21[0],
+                             2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
+                             sizeof(short), "reinit"));
+    ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->blurredOffsetArray12[1],
+                             2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
+                             sizeof(short), "reinit"));
+    ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->blurredOffsetArray21[1],
+                             2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
+                             sizeof(short), "reinit"));
+
     // Compile the kernels
     ERR_CHECK(cl_create_kernel(&ofc->calcDeltaSumsKernel, ofc->clContext, ofc->clDeviceId, "calcDeltaSumsKernel"));
     ERR_CHECK(cl_create_kernel(&ofc->determineLowestLayerKernel, ofc->clContext, ofc->clDeviceId,
@@ -966,7 +884,72 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     ERR_CHECK(cl_create_kernel(&ofc->tearingTestKernel, ofc->clContext, ofc->clDeviceId, "tearingTestKernel"));
 
     // Set kernel arguments
-    setKernelParameters(ofc);
+    err = clSetKernelArg(ofc->calcDeltaSumsKernel, 0, sizeof(cl_mem), &ofc->summedDeltaValuesArray);
+    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 3, sizeof(cl_mem), &ofc->offsetArray12);
+    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 4, sizeof(int), &ofc->directionIndexOffset);
+    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 5, sizeof(int), &ofc->frameHeight);
+    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 6, sizeof(int), &ofc->frameWidth);
+    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 7, sizeof(int), &ofc->opticalFlowFrameHeight);
+    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 8, sizeof(int), &ofc->opticalFlowFrameWidth);
+    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 10, sizeof(int), &ofc->opticalFlowSearchRadius);
+    err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 11, sizeof(int), &ofc->opticalFlowResScalar);
+    err |= clSetKernelArg(ofc->determineLowestLayerKernel, 0, sizeof(cl_mem), &ofc->summedDeltaValuesArray);
+    err |= clSetKernelArg(ofc->determineLowestLayerKernel, 1, sizeof(cl_mem), &ofc->lowestLayerArray);
+    err |= clSetKernelArg(ofc->determineLowestLayerKernel, 3, sizeof(int), &ofc->opticalFlowSearchRadius);
+    err |= clSetKernelArg(ofc->determineLowestLayerKernel, 4, sizeof(int), &ofc->opticalFlowFrameHeight);
+    err |= clSetKernelArg(ofc->determineLowestLayerKernel, 5, sizeof(int), &ofc->opticalFlowFrameWidth);
+    err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 0, sizeof(cl_mem), &ofc->offsetArray12);
+    err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 1, sizeof(cl_mem), &ofc->lowestLayerArray);
+    err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 3, sizeof(int), &ofc->directionIndexOffset);
+    err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 4, sizeof(int), &ofc->opticalFlowSearchRadius);
+    err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 5, sizeof(int), &ofc->opticalFlowFrameHeight);
+    err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 6, sizeof(int), &ofc->opticalFlowFrameWidth);
+    err |= clSetKernelArg(ofc->warpFrameKernel, 4, sizeof(int), &ofc->opticalFlowFrameWidth);
+    err |= clSetKernelArg(ofc->warpFrameKernel, 5, sizeof(int), &ofc->frameHeight);
+    err |= clSetKernelArg(ofc->warpFrameKernel, 6, sizeof(int), &ofc->frameWidth);
+    err |= clSetKernelArg(ofc->warpFrameKernel, 7, sizeof(int), &ofc->opticalFlowResScalar);
+    err |= clSetKernelArg(ofc->warpFrameKernel, 8, sizeof(int), &ofc->directionIndexOffset);
+    err |= clSetKernelArg(ofc->warpFrameKernel, 9, sizeof(int), &ofc->channelIndexOffset);
+    err |= clSetKernelArg(ofc->blendFrameKernel, 0, sizeof(cl_mem), &ofc->warpedFrameArray12);
+    err |= clSetKernelArg(ofc->blendFrameKernel, 1, sizeof(cl_mem), &ofc->warpedFrameArray21);
+    err |= clSetKernelArg(ofc->blendFrameKernel, 2, sizeof(cl_mem), &ofc->outputFrameArray);
+    err |= clSetKernelArg(ofc->blendFrameKernel, 5, sizeof(int), &ofc->frameHeight);
+    err |= clSetKernelArg(ofc->blendFrameKernel, 6, sizeof(int), &ofc->frameWidth);
+    err |= clSetKernelArg(ofc->blendFrameKernel, 7, sizeof(int), &ofc->channelIndexOffset);
+    err |= clSetKernelArg(ofc->sideBySide1Kernel, 1, sizeof(cl_mem), &ofc->outputFrameArray);
+    err |= clSetKernelArg(ofc->sideBySide1Kernel, 2, sizeof(int), &ofc->frameHeight);
+    err |= clSetKernelArg(ofc->sideBySide1Kernel, 3, sizeof(int), &ofc->frameWidth);
+    err |= clSetKernelArg(ofc->sideBySide1Kernel, 4, sizeof(int), &ofc->channelIndexOffset);
+    err |= clSetKernelArg(ofc->sideBySide2Kernel, 3, sizeof(cl_mem), &ofc->outputFrameArray);
+    err |= clSetKernelArg(ofc->sideBySide2Kernel, 6, sizeof(int), &ofc->frameHeight);
+    err |= clSetKernelArg(ofc->sideBySide2Kernel, 7, sizeof(int), &ofc->frameWidth);
+    int halfFrameHeight = ofc->frameHeight / 2;
+    int halfFrameWidth = ofc->frameWidth / 2;
+    err |= clSetKernelArg(ofc->sideBySide2Kernel, 8, sizeof(int), &halfFrameHeight);
+    err |= clSetKernelArg(ofc->sideBySide2Kernel, 9, sizeof(int), &halfFrameWidth);
+    err |= clSetKernelArg(ofc->sideBySide2Kernel, 10, sizeof(int), &ofc->channelIndexOffset);
+    err |= clSetKernelArg(ofc->visualizeFlowKernel, 1, sizeof(cl_mem), &ofc->outputFrameArray);
+    err |= clSetKernelArg(ofc->visualizeFlowKernel, 3, sizeof(int), &ofc->opticalFlowFrameHeight);
+    err |= clSetKernelArg(ofc->visualizeFlowKernel, 4, sizeof(int), &ofc->opticalFlowFrameWidth);
+    err |= clSetKernelArg(ofc->visualizeFlowKernel, 5, sizeof(int), &ofc->frameHeight);
+    err |= clSetKernelArg(ofc->visualizeFlowKernel, 6, sizeof(int), &ofc->frameWidth);
+    err |= clSetKernelArg(ofc->visualizeFlowKernel, 7, sizeof(int), &ofc->opticalFlowResScalar);
+    err |= clSetKernelArg(ofc->visualizeFlowKernel, 8, sizeof(int), &ofc->directionIndexOffset);
+    err |= clSetKernelArg(ofc->visualizeFlowKernel, 9, sizeof(int), &ofc->channelIndexOffset);
+    err |= clSetKernelArg(ofc->flipFlowKernel, 0, sizeof(cl_mem), &ofc->offsetArray12);
+    err |= clSetKernelArg(ofc->flipFlowKernel, 1, sizeof(cl_mem), &ofc->offsetArray21);
+    err |= clSetKernelArg(ofc->flipFlowKernel, 2, sizeof(int), &ofc->opticalFlowFrameHeight);
+    err |= clSetKernelArg(ofc->flipFlowKernel, 3, sizeof(int), &ofc->opticalFlowFrameWidth);
+    err |= clSetKernelArg(ofc->flipFlowKernel, 4, sizeof(int), &ofc->opticalFlowResScalar);
+    err |= clSetKernelArg(ofc->flipFlowKernel, 5, sizeof(int), &ofc->directionIndexOffset);
+    err |= clSetKernelArg(ofc->blurFlowKernel, 0, sizeof(cl_mem), &ofc->offsetArray12);
+    err |= clSetKernelArg(ofc->blurFlowKernel, 1, sizeof(cl_mem), &ofc->offsetArray21);
+    err |= clSetKernelArg(ofc->blurFlowKernel, 4, sizeof(int), &ofc->opticalFlowFrameHeight);
+    err |= clSetKernelArg(ofc->blurFlowKernel, 5, sizeof(int), &ofc->opticalFlowFrameWidth);
+    err |= clSetKernelArg(ofc->tearingTestKernel, 0, sizeof(cl_mem), &ofc->outputFrameArray);
+    err |= clSetKernelArg(ofc->tearingTestKernel, 1, sizeof(int), &ofc->frameHeight);
+    err |= clSetKernelArg(ofc->tearingTestKernel, 2, sizeof(int), &ofc->frameWidth);
+    ERR_MSG_CHECK(err, "setKernelParameters");
 
     return 0;
 }
