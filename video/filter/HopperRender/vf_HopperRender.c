@@ -178,32 +178,13 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv) {
         case 9:
             priv->frameOutputMode = TearingTest;
             break;
-        // **** Shaders ****
-        case 10:
-            priv->ofc->outputBlackLevel = 0.0f;
-            priv->ofc->outputWhiteLevel = 220.0f;
-            priv->ofc->outputBlackLevel *= 256.0f;
-            priv->ofc->outputWhiteLevel *= 256.0f;
-            break;
-        case 11:
-            priv->ofc->outputBlackLevel = 16.0f;
-            priv->ofc->outputWhiteLevel = 219.0f;
-            priv->ofc->outputBlackLevel *= 256.0f;
-            priv->ofc->outputWhiteLevel *= 256.0f;
-            break;
-        case 12:
-            priv->ofc->outputBlackLevel = 10.0f;
-            priv->ofc->outputWhiteLevel = 225.0f;
-            priv->ofc->outputBlackLevel *= 256.0f;
-            priv->ofc->outputWhiteLevel *= 256.0f;
-            break;
-        case 13:
-            priv->ofc->outputBlackLevel = 0.0f;
-            priv->ofc->outputWhiteLevel = 255.0f;
-            priv->ofc->outputBlackLevel *= 256.0f;
-            priv->ofc->outputWhiteLevel *= 256.0f;
-            break;
         default:
+            // Black and White Levels
+            if (code >= 100 && code <= 355) {
+                priv->ofc->outputBlackLevel = (float)((code - 100) * 256);
+            } else if (code >= 400 && code <= 655) {
+                priv->ofc->outputWhiteLevel = (float)((code - 400) * 256);
+            }
             break;
     }
 }
@@ -557,6 +538,11 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
         priv->interpolationState = NotNeeded;
         mp_pin_in_write(f->ppins[1], frame);
         return;
+    } else if (priv->interpolationState == NotNeeded) {
+        priv->interpolationState = Active;
+    } else if (priv->interpolationState != Active) {
+        mp_pin_in_write(f->ppins[1], frame);
+        return;
     }
 
     // Initialize the filter if needed
@@ -569,20 +555,17 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     // Update timestamps and source information
     priv->sourceFrameNum += 1;
     priv->currentSourcePTS = img->pts;
-    if (priv->sourceFrameNum <= 3 || priv->interpolationState != Active) {
+    if (priv->sourceFrameNum <= 3) {
         priv->currentOutputPTS =
             img->pts;  // The first three frames we take the original PTS (see output: 1.0, 2.0, 3.0, 3.1, ...)
     } else {
         priv->currentOutputPTS +=
             priv->targetFrameTime * priv->playbackSpeed;  // The rest of the frames we increase in 60fps steps
+        img->pts = priv->currentOutputPTS;
     }
-    img->pts = priv->currentOutputPTS;
-    if (priv->interpolationState == Active) {
-        priv->numIntFrames =
-            (int)floor((1.0 - priv->blendingScalar) / (priv->targetFrameTime / priv->sourceFrameTime)) + 1;
-    } else {
-        priv->numIntFrames = 1;
-    }
+
+    // Calculate the number of interpolated frames
+    priv->numIntFrames = (int)floor((1.0 - priv->blendingScalar) / (priv->targetFrameTime / priv->sourceFrameTime)) + 1;
 
     // Adjust the settings to process everything fast enough
     vf_HopperRender_auto_adjust_settings(f);
@@ -593,8 +576,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     ERR_CHECK(updateFrame(priv->ofc, img->planes), "updateFrame", f);
 
     // Calculate the optical flow
-    if (priv->interpolationState == Active && priv->sourceFrameNum >= 2 &&
-        priv->frameOutputMode != TearingTest) {
+    if (priv->sourceFrameNum >= 2 && priv->frameOutputMode != TearingTest) {
         bool needsFlipping = (priv->frameOutputMode == WarpedFrame21 || priv->frameOutputMode == BlendedFrame ||
                                 priv->frameOutputMode == SideBySide1 || priv->frameOutputMode == SideBySide2);
 
@@ -606,8 +588,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     priv->currTotalCalcDuration = (endTime.tv_sec - startTime.tv_sec) + ((endTime.tv_usec - startTime.tv_usec) / 1000000.0);
 
     // Interpolate the frames
-    if (priv->interpolationState == Active && (priv->sourceFrameNum >= 3 || priv->frameOutputMode == SideBySide2) &&
-        priv->numIntFrames > 1) {
+    if ((priv->sourceFrameNum >= 3 || priv->frameOutputMode == SideBySide2) && priv->numIntFrames > 1) {
         vf_HopperRender_interpolate_frame(f, img->planes);
         priv->interpolatedFrameNum = 1;
         mp_filter_internal_mark_progress(f);
@@ -661,14 +642,11 @@ static bool vf_HopperRender_command(struct mp_filter *f, struct mp_filter_comman
     // Speed change event
     if (cmd->type == MP_FILTER_COMMAND_TEXT && priv->playbackSpeed != cmd->speed) {
         priv->playbackSpeed = cmd->speed;
+        priv->blendingScalar = 0.0;
     }
 
-    // If the source is already at or above 60 FPS, we don't need interpolation
-    if (priv->sourceFrameTime <= priv->targetFrameTime) {
-        priv->interpolationState = NotNeeded;
-    } else if (priv->interpolationState != Deactivated) {
-        // Reset the state either because the fps/speed change now requires interpolation, or we could now be fast
-        // enough to interpolate
+    // Reset the state either because we could now be fast enough to interpolate
+    if (priv->interpolationState != Deactivated) {
         priv->interpolationState = Active;
     }
     return true;

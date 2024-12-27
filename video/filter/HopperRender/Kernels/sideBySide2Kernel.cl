@@ -19,7 +19,7 @@ __kernel void sideBySide2Kernel(__global const unsigned short* sourceFrame,
         cy >= (verticalOffset >> 1) && cy < ((verticalOffset >> 1) + (dimY >> 2)) && cx < halfDimX;
     const bool isInRightSideUV =
         cy >= (verticalOffset >> 1) && cy < ((verticalOffset >> 1) + (dimY >> 2)) && cx >= halfDimX && cx < dimX;
-    unsigned short blendedFrameValue;
+    float blendedFrameValue;
 
     // Early exit if thread indices are out of bounds
     if (cz > 1 || cy >= dimY || cx >= dimX || (cz == 1 && cy >= halfDimY)) return;
@@ -27,15 +27,13 @@ __kernel void sideBySide2Kernel(__global const unsigned short* sourceFrame,
     // --- Blending ---
     if (isYChannel && isInRightSideY) {
 		// Y Channel
-        blendedFrameValue =
-            (unsigned short)((float)(warpedFrame12[((cy - verticalOffset) << 1) * dimX + ((cx - halfDimX) << 1)]) *
+        blendedFrameValue = ((float)(warpedFrame12[((cy - verticalOffset) << 1) * dimX + ((cx - halfDimX) << 1)]) *
                                  frame1Scalar +
                              (float)(warpedFrame21[((cy - verticalOffset) << 1) * dimX + ((cx - halfDimX) << 1)]) *
                                  frame2Scalar);
     } else if (isUVChannel && isInRightSideUV) {
 		// U/V Channels
-        blendedFrameValue =
-            (unsigned short)((float)(warpedFrame12[channelIndexOffset + 2 * (cy - (verticalOffset >> 1)) * dimX +
+        blendedFrameValue = ((float)(warpedFrame12[channelIndexOffset + 2 * (cy - (verticalOffset >> 1)) * dimX +
                                                    ((cx - halfDimX) << 1) + isVChannel]) *
                                  frame1Scalar +
                              (float)(warpedFrame21[channelIndexOffset + 2 * (cy - (verticalOffset >> 1)) * dimX +
@@ -65,11 +63,12 @@ __kernel void sideBySide2Kernel(__global const unsigned short* sourceFrame,
     } else if (isUVChannel) {
         if (isInLeftSideUV) {
 			// UV Channels Left Side
-            outputFrame[dimY * dimX + cy * dimX + cx] =
-                sourceFrame[channelIndexOffset + ((cy - (verticalOffset >> 1)) << 1) * dimX + (cx << 1) + isVChannel];
+            outputFrame[dimY * dimX + cy * dimX + cx] = (unsigned short)fmax(
+            fmin(((float)sourceFrame[channelIndexOffset + ((cy - (verticalOffset >> 1)) << 1) * dimX + (cx << 1) + isVChannel] - 32768.0f) / outputWhiteLevel * 65535.0f + 32768.0f, 65535.0f), 0.0f);
         } else if (isInRightSideUV) {
 			// UV Channels Right Side
-            outputFrame[dimY * dimX + cy * dimX + cx] = blendedFrameValue;
+            outputFrame[dimY * dimX + cy * dimX + cx] = (unsigned short)fmax(
+            fmin((blendedFrameValue - 32768.0f) / outputWhiteLevel * 65535.0f + 32768.0f, 65535.0f), 0.0f);
         } else {
 			// UV Channels Black Frame
             outputFrame[dimY * dimX + cy * dimX + cx] = 32768;
