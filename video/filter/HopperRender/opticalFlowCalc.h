@@ -48,6 +48,7 @@ typedef struct OpticalFlowCalc
 
     // Queues
     cl_command_queue queueOFC;      // Queue used for the optical flow calculation
+    cl_command_queue queueWarp;     // Queue used for the frame warping
 
     // GPU Arrays
     cl_mem offsetArray12;           // Array containing x,y offsets for each pixel of frame1
