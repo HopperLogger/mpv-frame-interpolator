@@ -12,8 +12,8 @@
 #define AUTO_FRAME_SCALE 1          // Whether to automatically reduce/increase the calculation resolution depending on performance (0: Disabled, 1: Enabled)
 #define AUTO_SEARCH_RADIUS_ADJUST 1 // Whether to automatically reduce/increase the number of calculation steps and window size depending on performance (0: Disabled, 1: Enabled)
 
-#define UPPER_PERF_BUFFER 1.8 // The upper performance buffer, i.e. calc_time * upper_buffer > frame_time triggers quality reduction
-#define LOWER_PERF_BUFFER 2.0 // The lower performance buffer, i.e. calc_time * lower_buffer < frame_time triggers quality improvement
+#define UPPER_PERF_BUFFER 1.4 // The upper performance buffer, i.e. calc_time * upper_buffer > frame_time triggers quality reduction
+#define LOWER_PERF_BUFFER 1.6 // The lower performance buffer, i.e. calc_time * lower_buffer < frame_time triggers quality improvement
 
 // Debugging
 #define DUMP_IMAGES 0          // Whether or not to dump the warped frames to the 'dump' folder (0: Disabled, 1: Enabled)
