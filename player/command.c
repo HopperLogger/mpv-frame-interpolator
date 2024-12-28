@@ -449,7 +449,6 @@ static int mp_property_playback_speed(void *ctx, struct m_property *prop,
                                          false, false, action != M_PROPERTY_FIXED_LEN_PRINT);
         return M_PROPERTY_OK;
     }
-
     return mp_property_generic_option(mpctx, prop, action, arg);
 }
 
@@ -483,6 +482,7 @@ static int mp_property_av_speed_correction(void *ctx, struct m_property *prop,
                                          true, action != M_PROPERTY_FIXED_LEN_PRINT);
         return M_PROPERTY_OK;
     }
+
     return m_property_double_ro(action, arg, val);
 }
 
