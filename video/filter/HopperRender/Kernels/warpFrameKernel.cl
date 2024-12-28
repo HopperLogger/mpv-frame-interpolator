@@ -22,7 +22,7 @@ __kernel void warpFrameKernel(__global const unsigned short* sourceFrame, __glob
                 const int newCx = nx + offsetX;
                 const int newCy = ny + offsetY;
 
-                if (newCy >= 0 && newCy < dimY && newCx >= 0 && newCx < dimX && ny >= 0 && ny < dimY && nx >= 0 && nx < dimX) {
+                if (newCy >= 0 && newCy < dimY && newCx >= 0 && newCx < dimX && ny >= 2 && ny < dimY - 2 && nx >= 2 && nx < dimX - 2) {
                     warpedFrame[newCy * dimX + newCx] = sourceFrame[ny * dimX + nx];
                 }
             }
@@ -42,7 +42,7 @@ __kernel void warpFrameKernel(__global const unsigned short* sourceFrame, __glob
                 const int newCx = nx + offsetX;
                 const int newCy = ny + offsetY;
 
-                if (newCy >= 0 && newCy < (dimY >> 1) && newCx >= 0 && newCx < dimX && ny >= 0 && ny < (dimY >> 1) && nx >= 0 && nx < dimX) {
+                if (newCy >= 0 && newCy < (dimY >> 1) && newCx >= 0 && newCx < dimX && ny >= 1 && ny < (dimY >> 1) - 1 && nx >= 2 && nx < dimX - 2) {
                     if (!(cx & 1)) {
                         // U-Channel
                         warpedFrame[channelIndexOffset + newCy * dimX + (newCx & ~1)] =
