@@ -1,18 +1,17 @@
-project(
-    'mpv',
-    'c',
-    license: ['GPL2+', 'LGPL2.1+'],
-    version: files('./MPV_VERSION'),
-    meson_version: '>=1.3.0',
-    default_options: [
-        'backend_max_links=16',
-        'buildtype=debugoptimized',
-        'b_lundef=false',
-        'c_std=c11',
-        'cpp_std=c++20',
-        'cpp_eh=default',
-        'warning_level=2',
-    ]
+project('mpv',
+        'c',
+        license: ['GPL2+', 'LGPL2.1+'],
+        version: files('./MPV_VERSION'),
+        meson_version: '>=1.3.0',
+        default_options: [
+            'backend_max_links=16',
+            'buildtype=debugoptimized',
+            'b_lundef=false',
+            'c_std=c11',
+            'cpp_std=c++20',
+            'cpp_eh=default',
+            'warning_level=2',
+        ]
 )
 
 build_root = meson.project_build_root()
@@ -332,6 +331,9 @@ mswin_flags = ['-D_WIN32_WINNT=0x0A00', '-DWINVER=0x0A00', '-DUNICODE',
                '-D_CRT_DECLARE_NONSTDC_NAMES', '-D_CRT_NONSTDC_NO_WARNINGS',
                '-D_CRT_SECURE_NO_WARNINGS', '-DWINRT_NO_SOURCE_LOCATION']
 
+# https://developercommunity.visualstudio.com/t/NAN-is-no-longer-compile-time-constant-i/10688907
+mswin_flags += '-D_UCRT_NOISY_NAN'
+
 if host_machine.system() == 'windows'
     flags += [mswin_flags]
     flags_c += ['-U__STRICT_ANSI__']
@@ -424,7 +426,7 @@ endif
 
 if posix
     path_source = files('osdep/path-unix.c')
-    if cc.has_function('fork', prefix : '#include <unistd.h>')
+    if not get_option('fuzzers') and cc.has_function('fork', prefix : '#include <unistd.h>')
         sources += files('osdep/subprocess-posix.c')
     else
         sources += files('osdep/subprocess-dummy.c')
@@ -512,10 +514,14 @@ if features['win32-desktop']
                           cc.find_library('version')]
     dependencies += win32_desktop_libs
     path_source = files('osdep/path-win.c')
+    if not get_option('fuzzers')
+        sources += files('osdep/subprocess-win.c')
+    else
+        sources += files('osdep/subprocess-dummy.c')
+    endif
     sources += files('input/ipc-win.c',
                      'player/clipboard/clipboard-win.c',
                      'osdep/language-win.c',
-                     'osdep/subprocess-win.c',
                      'osdep/terminal-win.c',
                      'video/out/w32_common.c',
                      'video/out/win32/displayconfig.c',
