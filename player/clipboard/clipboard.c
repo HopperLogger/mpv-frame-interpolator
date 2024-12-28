@@ -42,11 +42,15 @@ const struct m_sub_options clipboard_conf = {
 
 // backend list
 extern const struct clipboard_backend clipboard_backend_win32;
+extern const struct clipboard_backend clipboard_backend_mac;
 extern const struct clipboard_backend clipboard_backend_vo;
 
 static const struct clipboard_backend *const clipboard_backend_list[] = {
 #if HAVE_WIN32_DESKTOP
     &clipboard_backend_win32,
+#endif
+#if HAVE_COCOA
+    &clipboard_backend_mac,
 #endif
     &clipboard_backend_vo,
 };
@@ -96,7 +100,7 @@ int mp_clipboard_get_data(struct clipboard_ctx *cl, struct clipboard_access_para
 {
     if (cl && cl->backend->get_data)
         return cl->backend->get_data(cl, params, out, talloc_ctx);
-    return CLIPBOARD_FAILED;
+    return CLIPBOARD_UNAVAILABLE;
 }
 
 int mp_clipboard_set_data(struct clipboard_ctx *cl, struct clipboard_access_params *params,
@@ -104,7 +108,7 @@ int mp_clipboard_set_data(struct clipboard_ctx *cl, struct clipboard_access_para
 {
     if (cl && cl->backend->set_data)
         return cl->backend->set_data(cl, params, data);
-    return CLIPBOARD_FAILED;
+    return CLIPBOARD_UNAVAILABLE;
 }
 
 void reinit_clipboard(struct MPContext *mpctx)

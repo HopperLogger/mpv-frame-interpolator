@@ -84,32 +84,48 @@ Key names
 ---------
 
 All mouse and keyboard input is to converted to mpv-specific key names. Key
-names are either special symbolic identifiers representing a physical key, or a
-text key names, which are unicode code points encoded as UTF-8. These are what
-keyboard input would normally produce, for example ``a`` for the A key. As a
-consequence, mpv uses input translated by the current OS keyboard layout, rather
-than physical scan codes.
+names are either special symbolic identifiers representing a physical key, or
+text key names, which are Unicode code points encoded as UTF-8. These are what
+keyboard input would normally produce, for example ``a`` for the A key.
+These are influenced by keyboard modifiers which affect produced text, such as
+shift and caps lock. As a consequence, mpv uses input translated by the current
+OS keyboard layout, rather than physical scan codes.
 
 Currently there is the hardcoded assumption that every text key can be
-represented as a single unicode code point (in NFKC form).
+represented as a single Unicode code point (in NFKC form).
 
 All key names can be combined with the modifiers ``Shift``, ``Ctrl``, ``Alt``,
 ``Meta``. They must be prefixed to the actual key name, where each modifier
 is followed by a ``+`` (for example ``ctrl+q``).
 
-The ``Shift`` modifier requires some attention. For instance ``Shift+2`` should
-usually be specified as key-name ``@`` at ``input.conf``, and similarly the
-combination ``Alt+Shift+2`` is usually ``Alt+@``, etc. Special key names like
-``Shift+LEFT`` work as expected. If in doubt - use ``--input-test`` to check
-how a key/combination is seen by mpv.
+.. note::
+
+    The ``Shift`` modifier requires some attention. In general, when the
+    ``Shift`` modifier is combined with a key which produces text, the actual
+    produced text key name when shift is pressed should be used.
+
+    For instance, on the US keyboard layout, ``Shift+2`` should usually be
+    specified as key-name ``@`` at ``input.conf``, and similarly the
+    combination ``Alt+Shift+2`` is usually ``Alt+@``, etc.
+
+    In general, the ``Shift`` modifier, when specified with text key names,
+    is ignored: for instance, mpv interprets ``Shift+2`` as ``2``.
+    The only exceptions are ASCII letters, which are normalized by mpv.
+    For example, ``Shift+a`` is interpreted as ``A``.
+
+    Special key names like ``Shift+LEFT`` work as expected.
+    If in doubt - use ``--input-test`` to check how a key/combination is seen
+    by mpv.
 
 Symbolic key names and modifier names are case-insensitive. Unicode key names
-are case-sensitive because input bindings typically respect the shift key.
+are case-sensitive just like how keyboard text input would produce.
 
-Another type of key names are hexadecimal key names, that serve as fallback
-for special keys that are neither unicode, nor have a special mpv defined name.
-They will break as soon as mpv adds proper names for them, but can enable you
-to use a key at all if that does not happen.
+Another type of key names are hexadecimal key names, which start with ``0x``,
+followed by the hexadecimal value of the key. The hexadecimal value can be
+either a Unicode code point value, or can serve as fallback for special keys
+that do not have a special mpv defined name. They will break as soon as mpv
+adds proper names for them, but can enable you to use a key at all if that
+does not happen.
 
 All symbolic names are listed by ``--input-keylist``. ``--input-test`` is a
 special mode that prints all input on the OSD.
@@ -2833,6 +2849,9 @@ Property list
 ``focused``
     Whether the window has focus. Might not be supported by all VOs.
 
+``ambient-light``
+    Ambient lighting condition in lux. (macOS only)
+
 ``display-names``
     Names of the displays that the mpv window covers. On X11, these
     are the xrandr names (LVDS1, HDMI1, DP1, VGA1, etc.). On Windows, these
@@ -3925,7 +3944,7 @@ Property list
     This has a number of sub-properties:
 
     ``clipboard/text`` (RW)
-        The text content in the clipboard (Windows and Wayland only).
+        The text content in the clipboard (Windows, Wayland and macOS only).
         Writing to this property sets the text clipboard content (Windows only).
 
     .. note::

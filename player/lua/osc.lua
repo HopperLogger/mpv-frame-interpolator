@@ -22,7 +22,8 @@ local user_opts = {
     hidetimeout = 500,          -- duration in ms until the OSC hides if no
                                 -- mouse movement. enforced non-negative for the
                                 -- user, but internally negative is "always-on".
-    fadeduration = 200,         -- duration of fade out in ms, 0 = no fade
+    fadeduration = 200,         -- duration of fade out (and fade in, if enabled) in ms, 0 = no fade
+    fadein = false,             -- whether to enable fade-in effect
     deadzonesize = 0.5,         -- size of deadzone
     minmousemove = 0,           -- minimum amount of pixels the mouse has to
                                 -- move between ticks to make the OSC show up
@@ -70,17 +71,17 @@ local user_opts = {
 
     -- luacheck: push ignore
     -- luacheck: max line length
-    title_mbtn_left_command = "script-binding stats/display-page-5",
-    title_mbtn_mid_command = "show-text ${filename}",
-    title_mbtn_right_command = "script-binding select/select-playlist; script-message-to osc osc-hide",
-
     playlist_prev_mbtn_left_command = "playlist-prev",
     playlist_prev_mbtn_mid_command = "show-text ${playlist} 3000",
-    playlist_prev_mbtn_right_command = "show-text ${playlist} 3000",
+    playlist_prev_mbtn_right_command = "script-binding select/select-playlist; script-message-to osc osc-hide",
 
     playlist_next_mbtn_left_command = "playlist-next",
     playlist_next_mbtn_mid_command = "show-text ${playlist} 3000",
-    playlist_next_mbtn_right_command = "show-text ${playlist} 3000",
+    playlist_next_mbtn_right_command = "script-binding select/select-playlist; script-message-to osc osc-hide",
+
+    title_mbtn_left_command = "script-binding stats/display-page-5",
+    title_mbtn_mid_command = "show-text ${filename}",
+    title_mbtn_right_command = "show-text ${path}",
 
     play_pause_mbtn_left_command = "cycle pause",
     play_pause_mbtn_mid_command = "",
@@ -1855,13 +1856,8 @@ local function osc_init()
 
     ne.enabled = audio_track_count > 0
     ne.content = function ()
-        local aid = mp.get_property("aid")
-        if aid == "no" or aid == "auto" then
-            aid = "-"
-        end
-
         return ("\238\132\134" .. osc_styles.smallButtonsLlabel .. " " ..
-               aid .. "/" .. audio_track_count)
+               mp.get_property_number("aid", "-") .. "/" .. audio_track_count)
     end
     bind_mouse_buttons("audio_track")
 
@@ -1870,13 +1866,8 @@ local function osc_init()
 
     ne.enabled = sub_track_count > 0
     ne.content = function ()
-        local sid = mp.get_property("sid")
-        if sid == "no" or sid == "auto" then
-            sid = "-"
-        end
-
         return ("\238\132\135" .. osc_styles.smallButtonsLlabel .. " " ..
-               sid .. "/" .. sub_track_count)
+               mp.get_property_number("sid", "-") .. "/" .. sub_track_count)
     end
     bind_mouse_buttons("sub_track")
 
@@ -2111,9 +2102,15 @@ local function show_osc()
     --remember last time of invocation (mouse move)
     state.showtime = mp.get_time()
 
-    osc_visible(true)
-
-    if user_opts.fadeduration > 0 then
+    if user_opts.fadeduration <= 0 then
+        osc_visible(true)
+    elseif user_opts.fadein then
+        if not state.osc_visible then
+            state.anitype = "in"
+            request_tick()
+        end
+    else
+        osc_visible(true)
         state.anitype = nil
     end
 end
@@ -2437,7 +2434,7 @@ local function render()
 
     -- submit
     set_osd(osc_param.playresy * osc_param.display_aspect,
-            osc_param.playresy, ass.text, 1000)
+            osc_param.playresy, ass.text, user_opts.layout == "box" and -1 or 1000)
 end
 
 -- called by mpv on every frame

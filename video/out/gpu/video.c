@@ -435,7 +435,7 @@ const struct m_sub_options gl_video_conf = {
             {"auto", 0}, {"yes", 1}, {"no", -1})},
         {"gamma-factor", OPT_FLOAT(gamma), M_RANGE(0.1, 2.0)},
         {"gamma-auto", OPT_BOOL(gamma_auto),
-            .deprecation_message = "no replacement"},
+            .deprecation_message = "replacement: gamma-auto.lua"},
         {"target-prim", OPT_CHOICE_C(target_prim, pl_csp_prim_names)},
         {"target-trc", OPT_CHOICE_C(target_trc, pl_csp_trc_names)},
         {"target-peak", OPT_CHOICE(target_peak, {"auto", 0}),
@@ -2618,7 +2618,7 @@ static void pass_scale_main(struct gl_video *p)
 // by previous passes (i.e. linear scaling)
 static void pass_colormanage(struct gl_video *p, struct pl_color_space src,
                              enum mp_csp_light src_light,
-                             struct pl_color_space fbo_csp, int flags, bool osd)
+                             const struct pl_color_space *fbo_csp, int flags, bool osd)
 {
     struct ra *ra = p->ra;
 
@@ -2628,16 +2628,16 @@ static void pass_colormanage(struct gl_video *p, struct pl_color_space src,
     // values are guesstimated later in this function.
     struct pl_color_space dst = {
         .transfer = p->opts.target_trc == PL_COLOR_TRC_UNKNOWN ?
-                        fbo_csp.transfer : p->opts.target_trc,
+                        fbo_csp->transfer : p->opts.target_trc,
         .primaries = p->opts.target_prim == PL_COLOR_PRIM_UNKNOWN ?
-                     fbo_csp.primaries : p->opts.target_prim,
+                     fbo_csp->primaries : p->opts.target_prim,
         .hdr.max_luma = !p->opts.target_peak ?
-                        fbo_csp.hdr.max_luma : p->opts.target_peak,
+                        fbo_csp->hdr.max_luma : p->opts.target_peak,
     };
 
     if (!p->colorspace_override_warned &&
-        ((fbo_csp.transfer && dst.transfer != fbo_csp.transfer) ||
-         (fbo_csp.primaries && dst.primaries != fbo_csp.primaries)))
+        ((fbo_csp->transfer && dst.transfer != fbo_csp->transfer) ||
+         (fbo_csp->primaries && dst.primaries != fbo_csp->primaries)))
     {
         MP_WARN(p, "One or more colorspace value is being overridden "
                    "by user while the FBO provides colorspace information: "
@@ -2645,9 +2645,9 @@ static void pass_colormanage(struct gl_video *p, struct pl_color_space src,
                    "primaries: (dst: %s, fbo: %s). "
                    "Rendering can lead to incorrect results!\n",
                 m_opt_choice_str(pl_csp_trc_names,  dst.transfer),
-                m_opt_choice_str(pl_csp_trc_names,  fbo_csp.transfer),
+                m_opt_choice_str(pl_csp_trc_names,  fbo_csp->transfer),
                 m_opt_choice_str(pl_csp_prim_names, dst.primaries),
-                m_opt_choice_str(pl_csp_prim_names, fbo_csp.primaries));
+                m_opt_choice_str(pl_csp_prim_names, fbo_csp->primaries));
         p->colorspace_override_warned = true;
     }
 
@@ -2783,7 +2783,7 @@ static void pass_colormanage(struct gl_video *p, struct pl_color_space src,
     }
 
     // Adapt from src to dst as necessary
-    pass_color_map(p->sc, p->use_linear && !osd, src, dst, src_light, dst_light, &tone_map);
+    pass_color_map(p->sc, p->use_linear && !osd, &src, &dst, src_light, dst_light, &tone_map);
 
     if (!osd) {
         struct mp_csp_params cparams = MP_CSP_PARAMS_DEFAULTS;
@@ -2996,7 +2996,7 @@ static void pass_draw_osd(struct gl_video *p, int osd_flags, int frame_flags,
                 .transfer = PL_COLOR_TRC_SRGB,
             };
 
-            pass_colormanage(p, csp_srgb, MP_CSP_LIGHT_DISPLAY, fbo->color_space,
+            pass_colormanage(p, csp_srgb, MP_CSP_LIGHT_DISPLAY, &fbo->color_space,
                              frame_flags, true);
         }
         mpgl_osd_draw_finish(p->osd, n, p->sc, fbo);
@@ -3150,7 +3150,7 @@ static void pass_draw_to_screen(struct gl_video *p, const struct ra_fbo *fbo, in
     }
 
     pass_colormanage(p, p->image_params.color, p->image_params.light,
-                     fbo->color_space, flags, false);
+                     &fbo->color_space, flags, false);
 
     // Since finish_pass_fbo doesn't work with compute shaders, and neither
     // does the checkerboard/dither code, we may need an indirection via
@@ -4271,11 +4271,11 @@ static int validate_error_diffusion_opt(struct mp_log *log, const m_option_t *op
     return r;
 }
 
-void gl_video_set_ambient_lux(struct gl_video *p, int lux)
+void gl_video_set_ambient_lux(struct gl_video *p, double lux)
 {
     if (p->opts.gamma_auto) {
         p->opts.gamma = gl_video_scale_ambient_lux(16.0, 256.0, 1.0, 1.2, lux);
-        MP_TRACE(p, "ambient light changed: %d lux (gamma: %f)\n", lux,
+        MP_TRACE(p, "ambient light changed: %f lux (gamma: %f)\n", lux,
                  p->opts.gamma);
     }
 }

@@ -58,8 +58,8 @@ class TitleBar: NSVisualEffectView {
         window.contentView?.addSubview(self, positioned: .above, relativeTo: nil)
         window.titlebarAppearsTransparent = true
         window.styleMask.insert(.fullSizeContentView)
-        set(appearance: Int(option.mac.macos_title_bar_appearance))
-        set(material: Int(option.mac.macos_title_bar_material))
+        set(appearance: option.mac.macos_title_bar_appearance)
+        set(material: option.mac.macos_title_bar_material)
         set(color: option.mac.macos_title_bar_color)
     }
 
@@ -91,34 +91,52 @@ class TitleBar: NSVisualEffectView {
         common.window?.isMoving = false
     }
 
-    func set(appearance: Any) {
-        if appearance is Int {
-            window?.appearance = appearanceFrom(string: String(appearance as? Int ?? 0))
-        } else {
-            window?.appearance = appearanceFrom(string: appearance as? String ?? "auto")
-        }
+    func set(appearance: Int32) {
+        window?.appearance = { switch Int(appearance) {
+            case MAC_APPEAR_AQUA: return NSAppearance(named: .aqua)
+            case MAC_APPEAR_DARK_AQUA: return NSAppearance(named: .darkAqua)
+            case MAC_APPEAR_VIBRANT_LIGHT: return NSAppearance(named: .vibrantLight)
+            case MAC_APPEAR_VIBRANT_DARK: return NSAppearance(named: .vibrantDark)
+            case MAC_APPEAR_AQUA_HC: return NSAppearance(named: .accessibilityHighContrastAqua)
+            case MAC_APPEAR_DARK_AQUA_HC: return NSAppearance(named: .accessibilityHighContrastDarkAqua)
+            case MAC_APPEAR_VIBRANT_LIGHT_HC: return NSAppearance(named: .accessibilityHighContrastVibrantLight)
+            case MAC_APPEAR_VIBRANT_DARK_HC: return NSAppearance(named: .accessibilityHighContrastVibrantDark)
+            case MAC_APPEAR_AUTO: return nil
+            default: return nil
+            }
+        }()
     }
 
-    func set(material: Any) {
-        if material is Int {
-            self.material = materialFrom(string: String(material as? Int ?? 0))
-        } else {
-            self.material = materialFrom(string: material as? String ?? "titlebar")
-        }
+    func set(material: Int32) {
+        self.material = { switch Int(material) {
+            case MAC_MAT_TITLEBAR: return .titlebar
+            case MAC_MAT_SELECTION: return .selection
+            case MAC_MAT_MENU: return .menu
+            case MAC_MAT_POPOVER: return .popover
+            case MAC_MAT_SIDEBAR: return .sidebar
+            case MAC_MAT_HEADER_VIEW: return .headerView
+            case MAC_MAT_SHEET: return .sheet
+            case MAC_MAT_WINDOW_BACKGROUND: return .windowBackground
+            case MAC_MAT_HUD_WINDOW: return .hudWindow
+            case MAC_MAT_FULL_SCREEN: return .fullScreenUI
+            case MAC_MAT_TOOL_TIP: return .toolTip
+            case MAC_MAT_CONTENT_BACKGROUND: return .contentBackground
+            case MAC_MAT_UNDER_WINDOW_BACKGROUND: return .underWindowBackground
+            case MAC_MAT_UNDER_PAGE_BACKGROUND: return .underPageBackground
+            case MAC_MAT_DARK: return .dark
+            case MAC_MAT_LIGHT: return .light
+            case MAC_MAT_MEDIUM_LIGHT: return .mediumLight
+            case MAC_MAT_ULTRA_DARK: return .ultraDark
+            default: return .titlebar
+            }
+        }()
     }
 
-    func set(color: Any) {
-        if color is String {
-            layer?.backgroundColor = NSColor(hex: color as? String ?? "#00000000").cgColor
-        } else {
-            let col = color as? m_color ?? m_color(r: 0, g: 0, b: 0, a: 0)
-            let red   = CGFloat(col.r)/255
-            let green = CGFloat(col.g)/255
-            let blue  = CGFloat(col.b)/255
-            let alpha = CGFloat(col.a)/255
-            layer?.backgroundColor = NSColor(calibratedRed: red, green: green,
-                                             blue: blue, alpha: alpha).cgColor
-        }
+    func set(color: m_color) {
+        layer?.backgroundColor = NSColor(calibratedRed: CGFloat(color.r)/255,
+                                         green: CGFloat(color.g)/255,
+                                         blue: CGFloat(color.b)/255,
+                                         alpha: CGFloat(color.a)/255).cgColor
     }
 
     func show() {
@@ -165,54 +183,5 @@ class TitleBar: NSVisualEffectView {
                                                  selector: #selector(hide),
                                                    object: nil)
         perform(#selector(hide), with: nil, afterDelay: 0.5)
-    }
-
-    func appearanceFrom(string: String) -> NSAppearance? {
-        switch string {
-        case "1", "aqua":
-            return NSAppearance(named: .aqua)
-        case "2", "darkAqua":
-            return NSAppearance(named: .darkAqua)
-        case "3", "vibrantLight":
-            return NSAppearance(named: .vibrantLight)
-        case "4", "vibrantDark":
-            return NSAppearance(named: .vibrantDark)
-        case "5", "aquaHighContrast":
-            return NSAppearance(named: .accessibilityHighContrastAqua)
-        case "6", "darkAquaHighContrast":
-            return NSAppearance(named: .accessibilityHighContrastDarkAqua)
-        case "7", "vibrantLightHighContrast":
-            return NSAppearance(named: .accessibilityHighContrastVibrantLight)
-        case "8", "vibrantDarkHighContrast":
-            return NSAppearance(named: .accessibilityHighContrastVibrantDark)
-        case "0", "auto":
-            return nil
-        default:
-            return nil
-        }
-    }
-
-    func materialFrom(string: String) -> NSVisualEffectView.Material {
-        switch string {
-        case "0", "titlebar":               return .titlebar
-        case "1", "selection":              return .selection
-        case "2", "menu":                   return .menu
-        case "3", "popover":                return .popover
-        case "4", "sidebar":                return .sidebar
-        case "5", "headerView":             return .headerView
-        case "6", "sheet":                  return .sheet
-        case "7", "windowBackground":       return .windowBackground
-        case "8", "hudWindow":              return .hudWindow
-        case "9", "fullScreen":             return .fullScreenUI
-        case "10", "toolTip":               return .toolTip
-        case "11", "contentBackground":     return .contentBackground
-        case "12", "underWindowBackground": return .underWindowBackground
-        case "13", "underPageBackground":   return .underPageBackground
-        case "14", "dark":                  return .dark
-        case "15", "light":                 return .light
-        case "16", "mediumLight":           return .mediumLight
-        case "17", "ultraDark":             return .ultraDark
-        default:                            return .titlebar
-        }
     }
 }

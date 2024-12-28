@@ -66,7 +66,7 @@ Ctrl+LEFT and Ctrl+RIGHT
     might not always work; see ``sub-seek`` command.
 
 Ctrl+Shift+LEFT and Ctrl+Shift+RIGHT
-    Adjust subtitle delay so that the next or previous subtitle is displayed
+    Adjust subtitle delay so that the previous or next subtitle is displayed
     now. This is especially useful to sync subtitles to audio.
 
 [ and ]
@@ -161,7 +161,7 @@ j and J
     Cycle through the available subtitles.
 
 z and Z
-    Adjust subtitle delay by +/- 0.1 seconds. The ``x`` key does the same as
+    Adjust subtitle delay by -/+ 0.1 seconds. The ``x`` key does the same as
     ``Z`` currently, but use is discouraged.
 
 l
@@ -176,7 +176,7 @@ Ctrl++ and Ctrl+-
 Ctrl+KP_ADD and Ctrl+KP_SUBTRACT
     Adjust audio delay (A/V sync) by +/- 0.1 seconds.
 
-Shift+g and Shift+f
+G and F
     Adjust subtitle font size by +/- 10%.
 
 u
@@ -241,6 +241,11 @@ F8
 
 F9
     Show the list of audio and subtitle streams.
+
+Ctrl+v
+    Append the file or URL in the clipboard to the playlist. If nothing is
+    currently playing, it is played immediately. Only works on platforms that
+    support the ``clipboard`` property.
 
 i and I
     Show/toggle an overlay displaying statistics about the currently playing

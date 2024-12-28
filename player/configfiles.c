@@ -215,7 +215,9 @@ static char *mp_get_playback_resume_config_filename(struct MPContext *mpctx,
     char *res = NULL;
     void *tmp = talloc_new(NULL);
     const char *path = NULL;
-    if (opts->ignore_path_in_watch_later_config && !mp_is_url(bstr0(path))) {
+    if (mp_is_url(bstr0(fname))) {
+        path = fname;
+    } else if (opts->ignore_path_in_watch_later_config) {
         path = mp_basename(fname);
     } else {
         path = mp_normalize_path(tmp, fname);
@@ -400,10 +402,11 @@ void mp_delete_watch_later_conf(struct MPContext *mpctx, const char *file)
         goto exit;
 
     char *fname = mp_get_playback_resume_config_filename(mpctx, path);
-    if (fname) {
-        unlink(fname);
-        talloc_free(fname);
-    }
+    if (!fname)
+        goto exit;
+
+    unlink(fname);
+    talloc_free(fname);
 
     if (mp_is_url(bstr0(path)) || mpctx->opts->ignore_path_in_watch_later_config)
         goto exit;
@@ -413,10 +416,10 @@ void mp_delete_watch_later_conf(struct MPContext *mpctx, const char *file)
         path[dir.len] = '\0';
         mp_path_strip_trailing_separator(path);
         fname = mp_get_playback_resume_config_filename(mpctx, path);
-        if (fname) {
-            unlink(fname);
-            talloc_free(fname);
-        }
+        if (!fname)
+            break;
+        unlink(fname);
+        talloc_free(fname);
         dir = mp_dirname(path);
     }
 

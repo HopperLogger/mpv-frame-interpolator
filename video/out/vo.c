@@ -134,6 +134,7 @@ struct vo_internal {
     bool want_redraw;               // redraw request from VO to player
     bool send_reset;                // send VOCTRL_RESET
     bool paused;
+    bool visible;
     bool wakeup_on_done;
     int queued_events;              // event mask for the user
     int internal_events;            // event mask for us
@@ -489,11 +490,14 @@ static void update_vsync_timing_after_swap(struct vo *vo,
     }
 
     in->num_successive_vsyncs++;
-    if (in->num_successive_vsyncs <= DELAY_VSYNC_SAMPLES)
+    if (in->num_successive_vsyncs <= DELAY_VSYNC_SAMPLES) {
+        in->base_vsync = vsync_time;
         return;
+    }
 
     if (vsync_time <= 0 || vsync_time <= prev_vsync) {
         in->prev_vsync = 0;
+        in->base_vsync = 0;
         return;
     }
 
@@ -760,6 +764,21 @@ static int64_t get_current_frame_end(struct vo *vo)
     return in->current_frame->pts + MPMAX(in->current_frame->duration, 0);
 }
 
+static int64_t get_display_synced_frame_end(struct vo *vo)
+{
+    struct vo_internal *in = vo->in;
+    assert(!in->frame_queued);
+    int64_t res = 0;
+    if (in->base_vsync && in->vsync_interval > 1 && in->current_frame) {
+        res = in->base_vsync;
+        int extra = !!in->rendering;
+        res += (in->current_frame->num_vsyncs + extra) * in->vsync_interval;
+        if (!in->current_frame->display_synced)
+            res = 0;
+    }
+    return res;
+}
+
 static bool still_displaying(struct vo *vo)
 {
     struct vo_internal *in = vo->in;
@@ -767,7 +786,13 @@ static bool still_displaying(struct vo *vo)
     if (working)
         goto done;
 
-    int64_t frame_end = get_current_frame_end(vo);
+    int64_t frame_end = get_display_synced_frame_end(vo);
+    if (frame_end > 0) {
+        working = frame_end > in->base_vsync;
+        goto done;
+    }
+
+    frame_end = get_current_frame_end(vo);
     if (frame_end < 0)
         goto done;
     working = mp_time_ns() < frame_end;
@@ -831,6 +856,16 @@ bool vo_is_ready_for_frame(struct vo *vo, int64_t next_pts)
                 wakeup_locked(vo);
         }
     }
+    mp_mutex_unlock(&in->lock);
+    return r;
+}
+
+// Check if the VO reports that the mpv window is visible.
+bool vo_is_visible(struct vo *vo)
+{
+    struct vo_internal *in = vo->in;
+    mp_mutex_lock(&in->lock);
+    bool r = in->visible;
     mp_mutex_unlock(&in->lock);
     return r;
 }
@@ -972,7 +1007,7 @@ static bool render_frame(struct vo *vo)
 
         stats_time_start(in->stats, "video-draw");
 
-        vo->driver->draw_frame(vo, frame);
+        in->visible = vo->driver->draw_frame(vo, frame);
 
         stats_time_end(in->stats, "video-draw");
 
@@ -1340,15 +1375,7 @@ double vo_get_delay(struct vo *vo)
 {
     struct vo_internal *in = vo->in;
     mp_mutex_lock(&in->lock);
-    assert (!in->frame_queued);
-    int64_t res = 0;
-    if (in->base_vsync && in->vsync_interval > 1 && in->current_frame) {
-        res = in->base_vsync;
-        int extra = !!in->rendering;
-        res += (in->current_frame->num_vsyncs + extra) * in->vsync_interval;
-        if (!in->current_frame->display_synced)
-            res = 0;
-    }
+    int64_t res = get_display_synced_frame_end(vo);
     mp_mutex_unlock(&in->lock);
     return res ? MP_TIME_NS_TO_S(res - mp_time_ns()) : 0;
 }

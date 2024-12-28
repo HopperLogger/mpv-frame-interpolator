@@ -32,6 +32,8 @@ local opts = {
     font = "",
     font_size = 24,
     border_size = 1.65,
+    margin_x = -1,
+    margin_y = -1,
     scale_with_window = "auto",
     case_sensitive = platform ~= 'windows' and true or false,
     history_dedup = true,
@@ -53,9 +55,11 @@ local styles = {
     fatal = '{\\1c&H5791f9&}',
     suggestion = '{\\1c&Hcc99cc&}',
     selected_suggestion = '{\\1c&H2fbdfa&\\b1}',
-    default_item = '{\\1c&H2fbdfa&}',
     disabled = '{\\1c&Hcccccc&}',
 }
+for key, style in pairs(styles) do
+    styles[key] = style .. '{\\3c&H111111&}'
+end
 
 local terminal_styles = {
     debug = '\027[90m',
@@ -126,6 +130,15 @@ local function get_font()
     end
 
     return 'monospace'
+end
+
+local function get_margin_x()
+    return opts.margin_x > -1 and opts.margin_x or mp.get_property_native('osd-margin-x')
+end
+
+
+local function get_margin_y()
+    return opts.margin_y > -1 and opts.margin_y or mp.get_property_native('osd-margin-y')
 end
 
 
@@ -276,11 +289,16 @@ local function calculate_max_log_lines()
 
     return math.floor((select(2, get_scaled_osd_dimensions())
                        * (1 - global_margins.t - global_margins.b)
-                       - mp.get_property_native('osd-margin-y'))
+                       - get_margin_y())
                       / opts.font_size
                       -- Subtract 1 for the input line and 0.5 for the empty
                       -- line between the log and the input line.
                       - 1.5)
+end
+
+local function should_highlight_completion(i)
+    return i == selected_suggestion_index or
+           (i == 1 and selected_suggestion_index == 0 and input_caller == nil)
 end
 
 -- Takes a list of strings, a max width in characters and
@@ -364,10 +382,9 @@ local function format_table(list, width_max, rows_max)
                                   or '%-' .. math.min(column_widths[column], 99) .. 's'
             columns[column] = ass_escape(string.format(format_string, list[i]))
 
-            if i == selected_suggestion_index or
-               (i == 1 and selected_suggestion_index == 0) then
+            if should_highlight_completion(i) then
                 columns[column] = styles.selected_suggestion .. columns[column]
-                                  .. '{\\b0}'.. styles.suggestion
+                                  .. '{\\b}' .. styles.suggestion
             end
         end
         -- first row is at the bottom
@@ -435,16 +452,18 @@ local function populate_log_with_matches()
         local style = ''
         local terminal_style = ''
 
-        if matches[i].index == default_item then
-            style = styles.default_item
-            terminal_style = terminal_styles.default_item
-        end
-        if i == selected_match then
+        if i == selected_match or matches[i].index == default_item then
             local color, alpha = mpv_color_to_ass(mp.get_property('osd-selected-color'))
             local outline_color, outline_alpha =
                 mpv_color_to_ass(mp.get_property('osd-selected-outline-color'))
-            style = style .. "{\\b1\\1c&H" .. color .. "&\\1a&H" .. alpha ..
-                             "&\\3c&H" .. outline_color .. "&\\3a&H" .. outline_alpha .. "&}"
+            style = '{\\1c&H' .. color .. '&\\1a&H' .. alpha ..
+                    '&\\3c&H' .. outline_color .. '&\\3a&H' .. outline_alpha .. '&}'
+        end
+        if matches[i].index == default_item then
+            terminal_style = terminal_styles.default_item
+        end
+        if i == selected_match then
+            style = style .. '{\\b1}'
             terminal_style = terminal_style .. terminal_styles.selected_suggestion
         end
 
@@ -476,8 +495,7 @@ local function print_to_terminal()
 
     local suggestions = ''
     for i, suggestion in ipairs(suggestion_buffer) do
-        if i == selected_suggestion_index or
-           (i == 1 and selected_suggestion_index == 0) then
+        if should_highlight_completion(i) then
             suggestions = suggestions .. terminal_styles.selected_suggestion ..
                           suggestion .. '\027[0m'
         else
@@ -522,19 +540,18 @@ local function update()
         return
     end
 
-    local screenx, screeny = get_scaled_osd_dimensions()
+    local osd_w, osd_h = get_scaled_osd_dimensions()
 
-    local marginx = mp.get_property_native('osd-margin-x')
-    local marginy = mp.get_property_native('osd-margin-y')
+    local margin_x = get_margin_x()
+    local margin_y = get_margin_y()
 
-    local coordinate_top = math.floor(global_margins.t * screeny + 0.5)
+    local coordinate_top = math.floor(global_margins.t * osd_h + 0.5)
     local clipping_coordinates = '0,' .. coordinate_top .. ',' ..
-                                 screenx .. ',' .. screeny
+                                 osd_w .. ',' .. osd_h
     local ass = assdraw.ass_new()
     local has_shadow = mp.get_property('osd-border-style'):find('box$') == nil
     local font = get_font()
     local style = '{\\r' ..
-                  '\\1a&H00&\\3a&H00&\\1c&Heeeeee&\\3c&H111111&' ..
                   (has_shadow and '\\4a&H99&\\4c&H000000&\\xshad0\\yshad1' or '') ..
                   (font and '\\fn' .. font or '') ..
                   '\\fs' .. opts.font_size ..
@@ -567,8 +584,9 @@ local function update()
         -- Even with bottom-left anchoring,
         -- libass/ass_render.c:ass_render_event() subtracts --osd-margin-x from
         -- the maximum text width twice.
-        local width_max = math.floor((screenx - marginx - marginx * 2 / scale_factor())
-                                     / opts.font_size * get_font_hw_ratio())
+        local width_max = math.floor(
+            (osd_w - margin_x - mp.get_property_native('osd-margin-x') * 2 / scale_factor())
+            / opts.font_size * get_font_hw_ratio())
 
         local suggestions, rows = format_table(suggestion_buffer, width_max, lines_max)
         lines_max = lines_max - rows
@@ -591,7 +609,7 @@ local function update()
 
     ass:new_event()
     ass:an(1)
-    ass:pos(marginx, screeny - marginy - global_margins.b * screeny)
+    ass:pos(margin_x, osd_h - margin_y - global_margins.b * osd_h)
     ass:append(log_ass .. '\\N')
     ass:append(suggestion_ass)
     ass:append(style .. ass_escape(prompt) .. ' ' .. before_cur)
@@ -602,12 +620,12 @@ local function update()
     -- cursor appear in front of the text.
     ass:new_event()
     ass:an(1)
-    ass:pos(marginx, screeny - marginy - global_margins.b * screeny)
+    ass:pos(margin_x, osd_h - margin_y - global_margins.b * osd_h)
     ass:append(style .. '{\\alpha&HFF&}' .. ass_escape(prompt) .. ' ' .. before_cur)
     ass:append(cglyph)
     ass:append(style .. '{\\alpha&HFF&}' .. after_cur)
 
-    mp.set_osd_ass(screenx, screeny, ass.text)
+    mp.set_osd_ass(osd_w, osd_h, ass.text)
 end
 
 local update_timer = nil
@@ -854,7 +872,7 @@ local function determine_hovered_item()
     local height = select(2, get_scaled_osd_dimensions())
     local y = mp.get_property_native('mouse-pos').y / scale_factor()
     local log_bottom_pos = height * (1 - global_margins.b)
-                           - mp.get_property_native('osd-margin-y')
+                           - get_margin_y()
                            - 1.5 * opts.font_size
 
     if y > log_bottom_pos then
@@ -1003,20 +1021,15 @@ local function search_history()
     end
 
     searching_history = true
+    suggestion_buffer = {}
     selectable_items = {}
-    matches = {}
-    selected_match = 1
     first_match_to_print = 1
 
     for i = 1, #history do
         selectable_items[i] = history[#history + 1 - i]
     end
 
-    for i, match in ipairs(fuzzy_find(line, selectable_items)) do
-        matches[i] = { index = match, text = selectable_items[match] }
-    end
-
-    update()
+    handle_edit()
     bind_mouse()
 end
 
@@ -1129,16 +1142,8 @@ local function get_clipboard(clip)
         if not res.error then
             return res.stdout
         end
-    elseif platform == 'windows' then
+    elseif platform == 'windows' or platform == 'darwin' then
         return mp.get_property('clipboard/text', '')
-    elseif platform == 'darwin' then
-        local res = utils.subprocess({
-            args = { 'pbpaste' },
-            playback_only = false,
-        })
-        if not res.error then
-            return res.stdout
-        end
     end
     return ''
 end
@@ -1176,6 +1181,10 @@ local function property_list()
 
     for _, sub_property in pairs({'video', 'audio', 'sub', 'sub2'}) do
         properties[#properties + 1] = 'current-tracks/' .. sub_property
+    end
+
+    for _, sub_property in pairs({'text'}) do
+        properties[#properties + 1] = 'clipboard/' .. sub_property
     end
 
     return properties
@@ -1811,8 +1820,7 @@ mp.register_script_message('get-input', function (script_name, args)
         for i, item in ipairs(args.items) do
             selectable_items[i] = item:gsub("[\r\n].*", "⋯"):sub(1, 300)
         end
-
-        matches = {}
+        handle_edit()
         selected_match = args.default_item or 1
         default_item = args.default_item
 
@@ -1822,9 +1830,6 @@ mp.register_script_message('get-input', function (script_name, args)
             first_match_to_print = math.max(1, #selectable_items - max_lines + 1)
         end
 
-        for i, item in ipairs(selectable_items) do
-            matches[i] = { index = i, text = item }
-        end
         bind_mouse()
     end
 

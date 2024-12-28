@@ -2217,7 +2217,7 @@ static char *print_geometry(const m_option_t *opt, const void *val)
 // scrw,scrh: width and height of the current screen
 // The input parameters should be set to a centered window (default fallbacks).
 void m_geometry_apply(int *xpos, int *ypos, int *widw, int *widh,
-                      int scrw, int scrh, struct m_geometry *gm)
+                      int scrw, int scrh, bool center, struct m_geometry *gm)
 {
     if (gm->wh_valid) {
         int prew = *widw, preh = *widh;
@@ -2231,6 +2231,10 @@ void m_geometry_apply(int *xpos, int *ypos, int *widw, int *widh,
             *widh = *widw / asp;
         } else if (!(gm->w > 0) && gm->h > 0) {
             *widw = *widh * asp;
+        }
+        if (center) {
+            *xpos += prew / 2 - *widw / 2;
+            *ypos += preh / 2 - *widh / 2;
         }
     }
 
@@ -2341,7 +2345,7 @@ void m_rect_apply(struct mp_rect *rc, int w, int h, struct m_geometry *gm)
     *rc = (struct mp_rect){0, 0, w, h};
     if (!w || !h)
         return;
-    m_geometry_apply(&rc->x0, &rc->y0, &rc->x1, &rc->y1, w, h, gm);
+    m_geometry_apply(&rc->x0, &rc->y0, &rc->x1, &rc->y1, w, h, true, gm);
     if (!gm->xy_valid && gm->wh_valid && rc->x1 == 0 && rc->y1 == 0)
         return;
     if (!gm->wh_valid || rc->x1 == 0 || rc->x1 == INT_MIN)
@@ -2582,6 +2586,7 @@ static int parse_channels(struct mp_log *log, const m_option_t *opt,
     }
 
     if (dst) {
+        opt->type->free(dst);
         *(struct m_channels *)dst = res;
     } else {
         talloc_free(res.chmaps);

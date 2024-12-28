@@ -714,7 +714,7 @@ static void parse_trackvideo(struct demuxer *demuxer, struct mkv_track *track,
     }
     if (video->n_colour_space && video->colour_space.len == 4) {
         uint8_t *d = (uint8_t *)&video->colour_space.start[0];
-        track->colorspace = d[0] | (d[1] << 8) | (d[2] << 16) | (d[3] << 24);
+        track->colorspace = d[0] | ((uint32_t)d[1] << 8) | ((uint32_t)d[2] << 16) | ((uint32_t)d[3] << 24);
         MP_DBG(demuxer, "|   + Colorspace: %#"PRIx32"\n", track->colorspace);
     }
     if (video->n_stereo_mode) {
@@ -1559,6 +1559,11 @@ static const char *const mkv_video_tags[][2] = {
     {0}
 };
 
+static void avcodec_par_destructor(void *p)
+{
+    avcodec_parameters_free(p);
+}
+
 static int demux_mkv_open_video(demuxer_t *demuxer, mkv_track_t *track)
 {
     unsigned char *extradata = NULL;
@@ -1692,7 +1697,9 @@ static int demux_mkv_open_video(demuxer_t *demuxer, mkv_track_t *track)
     // this gets called in all lavc decoders through `mp_set_avctx_codec_headers`
     // and its failure causes decoding failure. Thus if this call fails here, it is
     // likely that decoding of this track would also lead to an error.
-    sh_v->lav_codecpar = mp_codec_params_to_av(sh_v);
+    struct AVCodecParameters **lavp = talloc_ptrtype(track, lavp);
+    talloc_set_destructor(lavp, avcodec_par_destructor);
+    *lavp = sh_v->lav_codecpar = mp_codec_params_to_av(sh_v);
     if (!sh_v->lav_codecpar) {
         MP_ERR(demuxer, "Failed to create codec parameters for track %d!",
                track->tnum);
@@ -2077,11 +2084,6 @@ static const char *const mkv_sub_tag[][2] = {
     { "S_ARIBSUB",          "arib_caption"},
     {0}
 };
-
-static void avcodec_par_destructor(void *p)
-{
-    avcodec_parameters_free(p);
-}
 
 static int demux_mkv_open_sub(demuxer_t *demuxer, mkv_track_t *track)
 {

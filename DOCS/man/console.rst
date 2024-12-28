@@ -130,7 +130,6 @@ Commands
 Known issues
 ------------
 
-- Pasting text is slow on Windows
 - Non-ASCII keyboard input has restrictions
 - The cursor keys move between Unicode code-points, not grapheme clusters
 
@@ -168,6 +167,16 @@ Configurable Options
     Default: 1.65
 
     Set the font border size used for the REPL and the console.
+
+``margin_x``
+    Default: same as ``--osd-margin-x``
+
+    The margin from the left of the window.
+
+``margin_y``
+    Default: same as ``--osd-margin-y``
+
+    The margin from the bottom of the window.
 
 ``scale_with_window``
     Default: ``auto``

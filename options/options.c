@@ -454,26 +454,30 @@ const struct m_sub_options filter_conf = {
 
 static const m_option_t mp_opts[] = {
     // handled in command line pre-parser (parse_commandline.c)
-    {"v", &m_option_type_dummy_flag, CONF_NOCFG | M_OPT_NOPROP,
+    {"v", &m_option_type_dummy_flag, M_OPT_NOCFG | M_OPT_NOPROP,
      .offset = -1},
-    {"playlist", CONF_TYPE_STRING, CONF_NOCFG | M_OPT_FILE, .offset = -1},
-    {"{", &m_option_type_dummy_flag, CONF_NOCFG | M_OPT_NOPROP,
+#ifndef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+    {"playlist", CONF_TYPE_STRING, M_OPT_NOCFG | M_OPT_FILE, .offset = -1},
+#endif
+    {"{", &m_option_type_dummy_flag, M_OPT_NOCFG | M_OPT_NOPROP,
      .offset = -1},
-    {"}", &m_option_type_dummy_flag, CONF_NOCFG | M_OPT_NOPROP,
+    {"}", &m_option_type_dummy_flag, M_OPT_NOCFG | M_OPT_NOPROP,
      .offset = -1},
 
     // handled in m_config.c
+#ifndef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
     {"include", CONF_TYPE_STRING, M_OPT_FILE, .offset = -1},
+#endif
     {"profile", CONF_TYPE_STRING_LIST, 0, .offset = -1},
-    {"show-profile", CONF_TYPE_STRING, CONF_NOCFG | M_OPT_NOPROP |
+    {"show-profile", CONF_TYPE_STRING, M_OPT_NOCFG | M_OPT_NOPROP |
         M_OPT_OPTIONAL_PARAM,  .offset = -1},
-    {"list-options", &m_option_type_dummy_flag, CONF_NOCFG | M_OPT_NOPROP,
+    {"list-options", &m_option_type_dummy_flag, M_OPT_NOCFG | M_OPT_NOPROP,
         .offset = -1},
     {"list-properties", OPT_BOOL(property_print_help),
-     .flags = CONF_NOCFG | M_OPT_NOPROP},
-    {"help", CONF_TYPE_STRING, CONF_NOCFG | M_OPT_NOPROP | M_OPT_OPTIONAL_PARAM,
+     .flags = M_OPT_NOCFG | M_OPT_NOPROP},
+    {"help", CONF_TYPE_STRING, M_OPT_NOCFG | M_OPT_NOPROP | M_OPT_OPTIONAL_PARAM,
         .offset = -1},
-    {"h", CONF_TYPE_STRING, CONF_NOCFG | M_OPT_NOPROP | M_OPT_OPTIONAL_PARAM,
+    {"h", CONF_TYPE_STRING, M_OPT_NOCFG | M_OPT_NOPROP | M_OPT_OPTIONAL_PARAM,
         .offset = -1},
 
     {"list-protocols", OPT_PRINT(stream_print_proto_list)},
@@ -489,16 +493,16 @@ static const m_option_t mp_opts[] = {
 // ------------------------- common options --------------------
     {"quiet", OPT_BOOL(quiet)},
     {"really-quiet", OPT_BOOL(msg_really_quiet),
-        .flags = CONF_PRE_PARSE | UPDATE_TERM},
-    {"terminal", OPT_BOOL(use_terminal), .flags = CONF_PRE_PARSE | UPDATE_TERM},
+        .flags = M_OPT_PRE_PARSE | UPDATE_TERM},
+    {"terminal", OPT_BOOL(use_terminal), .flags = M_OPT_PRE_PARSE | UPDATE_TERM},
     {"msg-level", OPT_MSGLEVELS(msg_levels),
-        .flags = CONF_PRE_PARSE | UPDATE_TERM},
+        .flags = M_OPT_PRE_PARSE | UPDATE_TERM},
     {"dump-stats", OPT_STRING(dump_stats),
-        .flags = UPDATE_TERM | CONF_PRE_PARSE | M_OPT_FILE},
-    {"msg-color", OPT_BOOL(msg_color), .flags = CONF_PRE_PARSE | UPDATE_TERM},
+        .flags = UPDATE_TERM | M_OPT_PRE_PARSE | M_OPT_FILE},
+    {"msg-color", OPT_BOOL(msg_color), .flags = M_OPT_PRE_PARSE | UPDATE_TERM},
 #ifndef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
     {"log-file", OPT_STRING(log_file),
-        .flags = CONF_PRE_PARSE | M_OPT_FILE | UPDATE_TERM},
+        .flags = M_OPT_PRE_PARSE | M_OPT_FILE | UPDATE_TERM},
 #endif
     {"msg-module", OPT_BOOL(msg_module), .flags = UPDATE_TERM},
     {"msg-time", OPT_BOOL(msg_time), .flags = UPDATE_TERM},
@@ -515,9 +519,9 @@ static const m_option_t mp_opts[] = {
 #endif
     {"media-controls", OPT_CHOICE(media_controls,
         {"no", 0}, {"player", 1}, {"yes", 2})},
-    {"config", OPT_BOOL(load_config), .flags = CONF_PRE_PARSE},
+    {"config", OPT_BOOL(load_config), .flags = M_OPT_PRE_PARSE},
     {"config-dir", OPT_STRING(force_configdir),
-        .flags = CONF_NOCFG | CONF_PRE_PARSE | M_OPT_FILE},
+        .flags = M_OPT_NOCFG | M_OPT_PRE_PARSE | M_OPT_FILE},
     {"reset-on-next-file", OPT_STRINGLIST(reset_options)},
 
 #if HAVE_LUA || HAVE_JAVASCRIPT || HAVE_CPLUGINS
@@ -700,6 +704,8 @@ static const m_option_t mp_opts[] = {
     {"cover-art-auto-exts", OPT_ALIAS("image-exts")},
     {"cover-art-whitelist", OPT_STRINGLIST(coverart_whitelist)},
     {"video-exts", OPT_STRINGLIST(video_exts)},
+    {"archive-exts", OPT_STRINGLIST(archive_exts)},
+    {"playlist-exts", OPT_STRINGLIST(playlist_exts)},
 
     {"", OPT_SUBSTRUCT(subs_rend, mp_subtitle_sub_opts)},
     {"", OPT_SUBSTRUCT(subs_shared, mp_subtitle_shared_sub_opts)},
@@ -1030,8 +1036,14 @@ static const struct MPOpts mp_default_opts = {
         "mp3", "oga", "ogg", "ogm", "opus", "thd", "wav", "wav", "wma", "wv", NULL
     },
     .image_exts = (char *[]){
-        "avif", "bmp", "gif", "j2k", "jp2", "jpeg", "jpg", "jxl", "png",
-        "qoi", "svg", "tga", "tif", "tiff", "webp", NULL
+        "avif", "bmp", "gif", "heic", "heif", "j2k", "jp2", "jpeg", "jpg",
+        "jxl", "png", "qoi", "svg", "tga", "tif", "tiff", "webp", NULL
+    },
+    .archive_exts = (char *[]){
+        "zip", "rar", "7z", "cbz", "cbr", NULL
+    },
+    .playlist_exts = (char *[]){
+        "m3u", "m3u8", "pls", "edl", NULL
     },
 
     .sub_auto_exts = (char *[]){
