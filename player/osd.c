@@ -207,8 +207,16 @@ static char *get_term_status_msg(struct MPContext *mpctx)
     sadd_percentage(&line, get_current_pos_ratio(mpctx, false));
 
     // other
-    if (opts->playback_speed != 1)
+    if (opts->playback_speed != 1) {
         saddf(&line, " x%4.2f", opts->playback_speed);
+
+        // Inform HopperRender about the speed change
+        struct mp_filter_command data = {
+                .type = MP_FILTER_COMMAND_TEXT,
+                .speed = mpctx->opts->playback_speed
+            };
+        mp_output_chain_command(mpctx->vo_chain->filter, "all", &data);
+    }
 
     // A-V sync
     if (mpctx->ao_chain && mpctx->vo_chain && !mpctx->vo_chain->is_sparse) {
