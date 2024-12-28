@@ -414,6 +414,12 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
     }
 }
 
+// Helper function to truncate a double to a certain number of decimal places
+static double truncate_to_floor(double value, int decimal_places) {
+    double multiplier = pow(10.0, decimal_places);
+    return floor(value * multiplier) / multiplier;
+}
+
 /*
  * Delivers the intermediate frames to the output pin.
  *
@@ -430,7 +436,7 @@ static void vf_HopperRender_process_intermediate_frame(struct mp_filter *f) {
     vf_HopperRender_interpolate_frame(f, img->planes);
 
     // Update playback timestamp
-    priv->currentOutputPTS += priv->targetFrameTime * priv->playbackSpeed;
+    priv->currentOutputPTS += truncate_to_floor(priv->targetFrameTime * priv->playbackSpeed, 3);
     img->pts = priv->currentOutputPTS;
 
     // Determine if we need to process the next intermediate frame
@@ -491,8 +497,8 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
         priv->currentOutputPTS =
             img->pts;  // The first three frames we take the original PTS (see output: 1.0, 2.0, 3.0, 3.1, ...)
     } else {
-        priv->currentOutputPTS +=
-            priv->targetFrameTime * priv->playbackSpeed;  // The rest of the frames we increase in 60fps steps
+        // The rest of the frames we increase in 60fps steps
+        priv->currentOutputPTS += truncate_to_floor(priv->targetFrameTime * priv->playbackSpeed, 3);  
         img->pts = priv->currentOutputPTS;
     }
 
