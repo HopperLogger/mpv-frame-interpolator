@@ -287,11 +287,11 @@ void *vf_HopperRender_launch_AppIndicator_script(void *arg) {
  */
 static void vf_HopperRender_uninit(struct mp_filter *f) {
     struct priv *priv = f->priv;
-    mp_image_pool_clear(priv->imagePool);
     if (priv->isFilterInitialized) {
-        mp_image_unrefp(&priv->referenceImage);
         freeOFC(priv->ofc);
+        mp_image_unrefp(&priv->referenceImage);
     }
+    mp_image_pool_clear(priv->imagePool);
     free(priv->ofc);
     talloc_free(priv->opts);
 #if INC_APP_IND
@@ -459,8 +459,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
 
     // Detect if the frame is an end of frame
     if (mp_frame_is_signaling(frame)) {
-        mp_pin_in_write(f->ppins[1], frame);
-        return;
+        goto output;
     }
 
     // Retrieve the source frame time
@@ -472,13 +471,11 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     // If the source is already at or above 60 FPS, we don't need interpolation
     if (priv->sourceFrameTime <= priv->targetFrameTime) {
         priv->interpolationState = NotNeeded;
-        mp_pin_in_write(f->ppins[1], frame);
-        return;
+        goto output;
     } else if (priv->interpolationState == NotNeeded) {
         priv->interpolationState = Active;
     } else if (priv->interpolationState != Active) {
-        mp_pin_in_write(f->ppins[1], frame);
-        return;
+        goto output;
     }
 
     // Initialize the filter if needed
@@ -535,8 +532,8 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
         ERR_CHECK(downloadFrame(priv->ofc, priv->ofc->inputFrameArray[1], img->planes), "processFrame", f);
     }
 
-    // Deliver the source frame
-    mp_pin_in_write(f->ppins[1], MAKE_FRAME(MP_FRAME_VIDEO, img));
+output:
+    mp_pin_in_write(f->ppins[1], frame);
 }
 
 /*

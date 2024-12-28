@@ -586,6 +586,10 @@ bool adjustSearchRadius(struct OpticalFlowCalc* ofc, int newSearchRadius) {
  * @param ofc: Pointer to the optical flow calculator
  */
 void freeOFC(struct OpticalFlowCalc* ofc) {
+    // Wait for all commands to finish
+    clFinish(ofc->queueOFC);
+    clFinish(ofc->queueWarp);
+    
     // Free the GPU arrays
     clReleaseMemObject(ofc->inputFrameArray[0]);
     clReleaseMemObject(ofc->inputFrameArray[1]);
