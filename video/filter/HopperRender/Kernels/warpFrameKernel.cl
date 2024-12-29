@@ -1,3 +1,5 @@
+#define KERNEL_RADIUS 2
+
 // Kernel that warps a frame according to the offset array
 __kernel void warpFrameKernel(__global const unsigned short* sourceFrame, __global const short* offsetArray,
                               __global unsigned short* warpedFrame, const float frameScalar, const int lowDimX,
@@ -16,9 +18,9 @@ __kernel void warpFrameKernel(__global const unsigned short* sourceFrame, __glob
         const int offsetY =
             (int)round((float)(offsetArray[directionIndexOffset + scaledCy * lowDimX + scaledCx]) * frameScalar);
 
-        // Move a 5x5 neighborhood of the current pixel to mask the holes
-        for (int nx = cx - 2; nx <= cx + 2; nx++) {
-            for (int ny = cy - 2; ny <= cy + 2; ny++) {
+        // Move a block of pixels to mask the holes
+        for (int nx = cx - KERNEL_RADIUS; nx < cx + KERNEL_RADIUS; nx++) {
+            for (int ny = cy - KERNEL_RADIUS; ny < cy + KERNEL_RADIUS; ny++) {
                 const int newCx = nx + offsetX;
                 const int newCy = ny + offsetY;
 
@@ -36,9 +38,9 @@ __kernel void warpFrameKernel(__global const unsigned short* sourceFrame, __glob
         const int offsetY =
             (int)round((float)(offsetArray[directionIndexOffset + scaledCy * lowDimX + scaledCx]) * frameScalar * 0.5);
 
-        // Move a 5x3 neighborhood of the current pixel to mask the holes
-        for (int nx = cx - 2; nx <= cx + 2; nx+=2) {
-            for (int ny = cy - 1; ny <= cy + 1; ny++) {
+        // Move a block of pixels to mask the holes
+        for (int nx = cx - KERNEL_RADIUS; nx < cx + KERNEL_RADIUS; nx+=2) {
+            for (int ny = cy - KERNEL_RADIUS / 2; ny < cy + KERNEL_RADIUS / 2; ny++) {
                 const int newCx = nx + offsetX;
                 const int newCy = ny + offsetY;
 
