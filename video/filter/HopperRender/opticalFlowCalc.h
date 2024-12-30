@@ -4,6 +4,7 @@
 #define CL_TARGET_OPENCL_VERSION 300
 #include <CL/cl.h>
 #include <stdbool.h>
+#include <sys/time.h>
 
 #include "config.h"
 
@@ -23,6 +24,8 @@ typedef struct OpticalFlowCalc
     int opticalFlowSearchRadius;                  // Search radius used for the optical flow calculation
     int directionIndexOffset;                     // opticalFlowFrameHeight * opticalFlowFrameWidth
     int channelIndexOffset;                       // frameHeight * frameWidth
+    struct timeval ofcStartTime;                  // The time when the optical flow calculation started
+    double ofcCalcTime;                           // The time it took to calculate the optical flow
 
     // OpenCL variables
     cl_device_id clDeviceId;

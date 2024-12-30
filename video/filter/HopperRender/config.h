@@ -16,4 +16,3 @@
 #define DUMP_IMAGES 0          // Whether or not to dump the warped frames to the 'dump' folder (0: Disabled, 1: Enabled)
 #define INC_APP_IND 1          // Whether or not to include the AppIndicator (0: Disabled, 1: Enabled)
 #define SAVE_STATS 0           // Whether or not to save the ofc Calc Times to a log file (0: Disabled, 1: Enabled)
-#define FLOW_BLUR_ENABLED 1    // Whether or not to blur the flow arrays (0: Disabled, 1: Enabled)

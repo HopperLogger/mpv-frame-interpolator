@@ -15,9 +15,6 @@ int mirrorCoordinate(int pos, int dim) {
 __kernel void blurFlowKernel(__global const short* offsetArray12, __global const short* offsetArray21,
                              __global short* blurredOffsetArray12, __global short* blurredOffsetArray21, const int dimY,
                              const int dimX) {
-    // Shared memory for the tile, including halos for the blur
-    __local short localTile[BLOCK_SIZE + 2 * KERNEL_RADIUS][BLOCK_SIZE + 2 * KERNEL_RADIUS];
-
     // Thread and global indices
     int tx = get_local_id(0);   // Local thread x index
     int ty = get_local_id(1);   // Local thread y index
@@ -28,6 +25,15 @@ __kernel void blurFlowKernel(__global const short* offsetArray12, __global const
     if (!is12) gz -= 2;
     __global const short* input = is12 ? offsetArray12 : offsetArray21;
     __global short* output = is12 ? blurredOffsetArray12 : blurredOffsetArray21;
+
+    // If the kernel radius is 0, just copy the value
+    if (KERNEL_RADIUS < 1) {
+        output[gz * dimX * dimY + gy * dimX + gx] = input[gz * dimX * dimY + gy * dimX + gx];
+        return;
+    }
+
+    // Shared memory for the tile, including halos for the blur
+    __local short localTile[BLOCK_SIZE + 2 * KERNEL_RADIUS][BLOCK_SIZE + 2 * KERNEL_RADIUS];
 
     // dimX of the shared memory
     int localSizeX = get_local_size(0);
