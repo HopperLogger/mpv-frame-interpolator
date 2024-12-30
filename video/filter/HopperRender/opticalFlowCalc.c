@@ -21,17 +21,6 @@
         return 1;                                                                             \
     }
 
-// Callback function which will be called when the last kernel of the ofc calculation has finished
-static void CL_CALLBACK ofc_finished_callback(cl_event event, cl_int event_command_status, void *user_data) {
-    if (event_command_status == CL_COMPLETE) {
-        struct OpticalFlowCalc* ofc = (struct OpticalFlowCalc*)user_data;
-        struct timeval ofcEndTime;
-        gettimeofday(&ofcEndTime, NULL);
-        ofc->ofcCalcTime = (ofcEndTime.tv_sec - ofc->ofcStartTime.tv_sec) +
-                           ((ofcEndTime.tv_usec - ofc->ofcStartTime.tv_usec) / 1000000.0);
-    }
-}
-
 // Function to launch an OpenCL kernel and check for errors
 static bool cl_enqueue_kernel(cl_command_queue queue, cl_kernel kernel, cl_uint workDim, const size_t* globalWorkSize,
                               const size_t* localWorkSize, const char* functionName) {
@@ -213,8 +202,6 @@ bool downloadFrame(struct OpticalFlowCalc* ofc, const cl_mem sourceBuffer, unsig
 }
 
 bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
-    gettimeofday(&ofc->ofcStartTime, NULL);
-
     // We set the initial window size to the next larger power of 2
     int windowSize = 1;
     int maxDim = max(ofc->opticalFlowFrameWidth, ofc->opticalFlowFrameHeight);
@@ -238,9 +225,14 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
     ERR_CHECK(adjustSearchRadius(ofc, ofc->opticalFlowSearchRadius));
 
     // Prepare the initial offset array
-    ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->offsetArray12,
-                             2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
-                             sizeof(short), "calculateOpticalFlow"));
+    cl_event ofc_started_event;
+    cl_short zero = 0;
+    cl_int err = clEnqueueFillBuffer(ofc->queueOFC, ofc->offsetArray12, &zero, sizeof(short), 0, 
+                                     2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short), 0, NULL, &ofc_started_event);
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "Error zeroing buffer in function: calculateOpticalFlow - %d\n", err);
+        return 1;
+    }
 
     // We calculate the ideal offset array for each window size
     for (int iter = 0; iter < ofc->opticalFlowIterations; iter++) {
@@ -251,7 +243,7 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
                                      sizeof(unsigned int), "calculateOpticalFlow"));
 
             // 1. Calculate the image delta and sum up the deltas of each window
-            cl_int err = clSetKernelArg(ofc->calcDeltaSumsKernel, 1, sizeof(cl_mem), &ofc->inputFrameArray[1]);
+            err = clSetKernelArg(ofc->calcDeltaSumsKernel, 1, sizeof(cl_mem), &ofc->inputFrameArray[1]);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 2, sizeof(cl_mem), &ofc->inputFrameArray[2]);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 9, sizeof(int), &windowSize);
             int isFirstIteration = (int)(iter <= 3);
@@ -280,16 +272,28 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
     ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->flipFlowKernel, 3, ofc->lowGrid16x16x2, ofc->threads16x16x1, "calculateOpticalFlow"));
 
     // Blur the flow arrays
-    cl_int err = clSetKernelArg(ofc->blurFlowKernel, 2, sizeof(cl_mem), &ofc->blurredOffsetArray12[1]);
+    err = clSetKernelArg(ofc->blurFlowKernel, 2, sizeof(cl_mem), &ofc->blurredOffsetArray12[1]);
     err |= clSetKernelArg(ofc->blurFlowKernel, 3, sizeof(cl_mem), &ofc->blurredOffsetArray21[1]);
     ERR_MSG_CHECK(err, "blurFlowArrays");
     cl_event ofc_finished_event;
     err = clEnqueueNDRangeKernel(ofc->queueOFC, ofc->blurFlowKernel, 3, NULL, ofc->lowGrid16x16x4, ofc->threads16x16x1, 0, NULL, &ofc_finished_event);
-    err |= clSetEventCallback(ofc_finished_event, CL_COMPLETE, ofc_finished_callback, (void*)ofc);
     if (err != CL_SUCCESS) {
         fprintf(stderr, "Error enqueuing kernel in function: calculateOpticalFlow - %d\n", err);
         return 1;
     }
+
+    // Evaluate how long the calculation took
+    clWaitForEvents(1, &ofc_started_event);
+    clWaitForEvents(1, &ofc_finished_event);
+    cl_ulong start_time, end_time;
+    err = clGetEventProfilingInfo(ofc_started_event, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start_time, NULL);
+    err |= clGetEventProfilingInfo(ofc_finished_event, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end_time, NULL);
+    if (err != CL_SUCCESS) {
+        fprintf(stderr, "Error getting profiling info in function: calculateOpticalFlow - %d\n", err);
+        return 1;
+    }
+    ofc->ofcCalcTime = (double)(end_time - start_time) / 1e9;
+
     return 0;
 }
 
@@ -661,7 +665,10 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     }
 
     // Create the command queues
-    ofc->queueOFC = clCreateCommandQueueWithProperties(ofc->clContext, ofc->clDeviceId, NULL, &err);
+    cl_queue_properties properties[] = {
+        CL_QUEUE_PROPERTIES, CL_QUEUE_PROFILING_ENABLE, 0
+    };
+    ofc->queueOFC = clCreateCommandQueueWithProperties(ofc->clContext, ofc->clDeviceId, properties, &err);
     if (err != CL_SUCCESS) {
         fprintf(stderr, "Error: Unable to create command queue\n");
         return 1;
