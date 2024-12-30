@@ -1,7 +1,6 @@
 #include <fcntl.h>
 #include <pthread.h>
 #include <sys/stat.h>
-#include <sys/time.h>
 #include <sys/wait.h>
 
 #include "config.h"
@@ -196,12 +195,15 @@ static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv) {
     int offset =
         snprintf(buffer2, sizeof(buffer2),
                  "Search Radius: %d\nCalc Res: %dx%d\nTarget Time: %06.2f ms (%.1f fps)\nFrame Time: "
-                 "%06.2f ms (%.3f fps | %.2fx)\nOFC Time: %06.2f ms (%.0f fps > %.3f fps)\nWarp Time: %06.2f ms (%.0f fps > %.3f fps)",
+                 "%06.2f ms (%.3f fps | %.2fx)\nTotal Time: %06.2f ms (%.0f fps > %.3f fps)\n"
+                 "OFC Time: %06.2f ms (%.0f fps > %.3f fps)\nWarp Time: %06.2f ms (%.0f fps > %.3f fps)",
                  priv->ofc->opticalFlowSearchRadius,
                  priv->ofc->frameWidth >> priv->ofc->opticalFlowResScalar,
                  priv->ofc->frameHeight >> priv->ofc->opticalFlowResScalar, priv->targetFrameTime * 1000.0,
                  1.0 / priv->targetFrameTime, priv->sourceFrameTime * 1000.0, 1.0 / priv->sourceFrameTime,
-                 priv->playbackSpeed, priv->ofc->ofcCalcTime * 1000.0, 1.0 / priv->ofc->ofcCalcTime, 1.0 / priv->sourceFrameTime,
+                 priv->playbackSpeed, 
+                 (priv->ofc->ofcCalcTime + priv->totalWarpDuration) * 1000.0, 1.0 / (priv->ofc->ofcCalcTime + priv->totalWarpDuration), 1.0 / priv->sourceFrameTime,
+                 priv->ofc->ofcCalcTime * 1000.0, 1.0 / priv->ofc->ofcCalcTime, 1.0 / priv->sourceFrameTime,
                  priv->totalWarpDuration * 1000.0, 1.0 / priv->totalWarpDuration, 1.0 / priv->sourceFrameTime);
 
     for (int i = 0; i < 10; i++) {
@@ -364,9 +366,6 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f) {
 static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char **outputPlanes) {
     struct priv *priv = f->priv;
 
-    struct timeval startTime, endTime;
-    gettimeofday(&startTime, NULL);
-
     // Warp frames
     if (priv->frameOutputMode != HSVFlow && priv->frameOutputMode != GreyFlow && priv->frameOutputMode != TearingTest) {
         ERR_CHECK(
@@ -408,13 +407,11 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 #endif
 
     // Download the result to the output buffer (this is a blocking call and waits for the warping to complete)
-    ERR_CHECK(downloadFrame(priv->ofc, priv->ofc->outputFrameArray, outputPlanes), "downloadFrame", f);
+    ERR_CHECK(downloadFrame(priv->ofc, outputPlanes), "downloadFrame", f);
 
-    // Evaluate how long the warp calculation took
-    gettimeofday(&endTime, NULL);
-    if (priv->interpolatedFrameNum < 10) priv->warpCalcDurations[priv->interpolatedFrameNum] =
-        (endTime.tv_sec - startTime.tv_sec) + ((endTime.tv_usec - startTime.tv_usec) / 1000000.0);
-    priv->totalWarpDuration += (endTime.tv_sec - startTime.tv_sec) + ((endTime.tv_usec - startTime.tv_usec) / 1000000.0);
+    // Retrieve how long the warp calculation took
+    if (priv->interpolatedFrameNum < 10) priv->warpCalcDurations[priv->interpolatedFrameNum] = priv->ofc->warpCalcTime;
+    priv->totalWarpDuration += priv->ofc->warpCalcTime;
 
     // Increase the blending scalar
     priv->blendingScalar += priv->targetFrameTime / priv->sourceFrameTime;
@@ -510,7 +507,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
 
     // Update timestamps and source information
     priv->sourceFrameNum += 1;
-    if (priv->sourceFrameNum <= 3 || priv->resync) {
+    if (priv->sourceFrameNum <= 2 || priv->resync) {
         priv->currentOutputPTS =
             img->pts;  // The first three frames we take the original PTS (see output: 1.0, 2.0, 3.0, 3.1, ...)
     } else {
@@ -534,16 +531,12 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     }
 
     // Interpolate the frames
-    if (priv->sourceFrameNum >= 3 || priv->frameOutputMode == SideBySide2) {
+    if (priv->sourceFrameNum >= 2 || priv->frameOutputMode == SideBySide2) {
         vf_HopperRender_interpolate_frame(f, img->planes);
         if (priv->numIntFrames > 1) {
             priv->interpolatedFrameNum = 1;
             mp_filter_internal_mark_progress(f);
         }
-    } else if (priv->sourceFrameNum >= 2) {
-        // First frame is directly output, therefore we don't change the output buffer
-        // After the first frame, we always output the previous frame
-        ERR_CHECK(downloadFrame(priv->ofc, priv->ofc->inputFrameArray[1], img->planes), "processFrame", f);
     }
 
 output:

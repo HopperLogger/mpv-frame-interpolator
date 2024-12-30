@@ -24,6 +24,7 @@ typedef struct OpticalFlowCalc
     int directionIndexOffset;                     // opticalFlowFrameHeight * opticalFlowFrameWidth
     int channelIndexOffset;                       // frameHeight * frameWidth
     double ofcCalcTime;                           // The time it took to calculate the optical flow
+    double warpCalcTime;                          // The time it took to warp the frames
 
     // OpenCL variables
     cl_device_id clDeviceId;
@@ -44,19 +45,21 @@ typedef struct OpticalFlowCalc
     size_t threads8x8x1[3];
 
     // Queues
-    cl_command_queue queueOFC;      // Queue used for the optical flow calculation
-    cl_command_queue queueWarp;     // Queue used for the frame warping
+    cl_command_queue queue;         // Queue used for the optical flow calculation
+
+    // Events
+    cl_event warpStartedEvent;      // Event marking the start of the interpolation
 
     // GPU Arrays
     cl_mem offsetArray12;           // Array containing x,y offsets for each pixel of frame1
     cl_mem offsetArray21;           // Array containing x,y offsets for each pixel of frame2
-    cl_mem blurredOffsetArray12[2]; // Array containing x,y offsets for each pixel of frame1
-    cl_mem blurredOffsetArray21[2]; // Array containing x,y offsets for each pixel of frame2
+    cl_mem blurredOffsetArray12;    // Array containing x,y offsets for each pixel of frame1
+    cl_mem blurredOffsetArray21;    // Array containing x,y offsets for each pixel of frame2
     cl_mem summedDeltaValuesArray;  // Array containing the summed up delta values of each window
     cl_mem lowestLayerArray;        // Array containing the comparison results of the two normalized delta arrays (true if the
                                     // new value decreased)
     cl_mem outputFrameArray;        // Array containing the output frame
-    cl_mem inputFrameArray[3];      // Array containing the last three frames
+    cl_mem inputFrameArray[2];      // Array containing the last three frames
     cl_mem warpedFrameArray12;      // Array containing the warped frame (frame 1 to frame 2)
     cl_mem warpedFrameArray21;      // Array containing the warped frame (frame 2 to frame 1)
 #if DUMP_IMAGES
@@ -109,12 +112,11 @@ bool updateFrame(struct OpticalFlowCalc *ofc, unsigned char **inputPlanes);
  * Downloads the output frame from the GPU to the CPU
  *
  * @param ofc: Pointer to the optical flow calculator
- * @param sourceBuffer: The buffer to download the frame from
  * @param outputPlanes: Pointer to the output planes where the frame should be stored
  *
  * @return: Whether or not the frame was downloaded successfully
  */
-bool downloadFrame(struct OpticalFlowCalc *ofc, const cl_mem sourceBuffer, unsigned char **outputPlanes);
+bool downloadFrame(struct OpticalFlowCalc *ofc, unsigned char **outputPlanes);
 
 /*
  * Calculates the optical flow between frame1 and frame2
