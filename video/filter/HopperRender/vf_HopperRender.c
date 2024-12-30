@@ -83,8 +83,8 @@ struct priv {
     // Performance and activation status
     InterpolationState
         interpolationState;         // The state of the filter (0: Deactivated, 1: Not Needed, 2: Active, 3: Too Slow)
-    double warpCalcDurations[10];  // The durations of the warp calculations
-    double currTotalCalcDuration;   // The total duration of the current frame calculation
+    double warpCalcDurations[10];   // The durations of the warp calculations
+    double totalWarpDuration;       // The total duration of the current frame warp
 };
 
 #define max(a, b) ((a) > (b) ? (a) : (b))
@@ -196,12 +196,13 @@ static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv) {
     int offset =
         snprintf(buffer2, sizeof(buffer2),
                  "Search Radius: %d\nCalc Res: %dx%d\nTarget Time: %06.2f ms (%.1f fps)\nFrame Time: "
-                 "%06.2f ms (%.3f fps | %.2fx)\nCalc Time: %06.2f ms (%.0f fps > %.3f fps)",
+                 "%06.2f ms (%.3f fps | %.2fx)\nOFC Time: %06.2f ms (%.0f fps > %.3f fps)\nWarp Time: %06.2f ms (%.0f fps > %.3f fps)",
                  priv->ofc->opticalFlowSearchRadius,
                  priv->ofc->frameWidth >> priv->ofc->opticalFlowResScalar,
                  priv->ofc->frameHeight >> priv->ofc->opticalFlowResScalar, priv->targetFrameTime * 1000.0,
                  1.0 / priv->targetFrameTime, priv->sourceFrameTime * 1000.0, 1.0 / priv->sourceFrameTime,
-                 priv->playbackSpeed, priv->currTotalCalcDuration * 1000.0, 1.0 / priv->currTotalCalcDuration, 1.0 / priv->sourceFrameTime);
+                 priv->playbackSpeed, priv->ofc->ofcCalcTime * 1000.0, 1.0 / priv->ofc->ofcCalcTime, 1.0 / priv->sourceFrameTime,
+                 priv->totalWarpDuration * 1000.0, 1.0 / priv->totalWarpDuration, 1.0 / priv->sourceFrameTime);
 
     for (int i = 0; i < 10; i++) {
         if (i < min(priv->numIntFrames, 10)) {
@@ -328,8 +329,10 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f) {
 #endif
 
 #if !DUMP_IMAGES && AUTO_SEARCH_RADIUS_ADJUST
+    double currMaxCalcDuration = max(priv->ofc->ofcCalcTime, priv->totalWarpDuration);
+
     // Check if we were too slow or have leftover capacity
-    if ((priv->currTotalCalcDuration * UPPER_PERF_BUFFER) > priv->sourceFrameTime) {
+    if ((currMaxCalcDuration * UPPER_PERF_BUFFER) > priv->sourceFrameTime) {
         if (priv->ofc->opticalFlowSearchRadius > MIN_SEARCH_RADIUS) {
             // Decrease the number of steps to reduce calculation time
             priv->ofc->opticalFlowSearchRadius--;
@@ -339,7 +342,7 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f) {
             priv->interpolationState = TooSlow;
         }
 
-    } else if ((priv->currTotalCalcDuration * LOWER_PERF_BUFFER) < priv->sourceFrameTime) {
+    } else if ((currMaxCalcDuration * LOWER_PERF_BUFFER) < priv->sourceFrameTime) {
         // Increase the frame scalar if we have enough leftover capacity
         if (priv->ofc->opticalFlowSearchRadius < MAX_SEARCH_RADIUS) {
             priv->ofc->opticalFlowSearchRadius++;
@@ -347,6 +350,9 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f) {
         }
     }
 #endif
+
+    // Reset the warp duration for the next frame
+    priv->totalWarpDuration = 0.0;
 }
 
 /*
@@ -406,7 +412,7 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
     gettimeofday(&endTime, NULL);
     if (priv->interpolatedFrameNum < 10) priv->warpCalcDurations[priv->interpolatedFrameNum] =
         (endTime.tv_sec - startTime.tv_sec) + ((endTime.tv_usec - startTime.tv_usec) / 1000000.0);
-    priv->currTotalCalcDuration += (endTime.tv_sec - startTime.tv_sec) + ((endTime.tv_usec - startTime.tv_usec) / 1000000.0);
+    priv->totalWarpDuration += (endTime.tv_sec - startTime.tv_sec) + ((endTime.tv_usec - startTime.tv_usec) / 1000000.0);
 
     priv->blendingScalar += priv->targetFrameTime / priv->sourceFrameTime;
     if (priv->blendingScalar >= 1.0) {
@@ -523,16 +529,12 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     vf_HopperRender_auto_adjust_settings(f);
 
     // Upload the source frame to the GPU buffers
-    struct timeval startTime, endTime;
-    gettimeofday(&startTime, NULL);
     ERR_CHECK(updateFrame(priv->ofc, img->planes), "updateFrame", f);
 
     // Calculate the optical flow
     if (priv->sourceFrameNum >= 2 && priv->frameOutputMode != TearingTest) {
         ERR_CHECK(calculateOpticalFlow(priv->ofc), "OFC failed", f);
     }
-    gettimeofday(&endTime, NULL);
-    priv->currTotalCalcDuration = (endTime.tv_sec - startTime.tv_sec) + ((endTime.tv_usec - startTime.tv_usec) / 1000000.0);
 
     // Interpolate the frames
     if ((priv->sourceFrameNum >= 3 || priv->frameOutputMode == SideBySide2)) {
@@ -750,7 +752,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 
     // Performance and activation status
     priv->interpolationState = Active;
-    priv->currTotalCalcDuration = 0.0;
+    priv->totalWarpDuration = 0.0;
 
     // Optical Flow calculator
     priv->ofc = calloc(1, sizeof(struct OpticalFlowCalc));
