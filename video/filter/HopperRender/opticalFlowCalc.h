@@ -76,23 +76,136 @@ typedef struct OpticalFlowCalc
     cl_kernel tearingTestKernel;
 } OpticalFlowCalc;
 
+/*
+ * Initializes the optical flow calculator
+ *
+ * @param ofc: Pointer to the optical flow calculator to be initialized
+ * @param frameHeight: The height of the video frame
+ * @param frameWidth: The width of the video frame
+ *
+ * @return: Whether or not the optical flow calculator was initialized successfully
+ */
 bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int frameHeight, const int frameWidth);
+
+/*
+ * Frees the memory of the optical flow calculator
+ *
+ * @param ofc: Pointer to the optical flow calculator
+ */
 void freeOFC(struct OpticalFlowCalc *ofc);
-bool adjustSearchRadius(struct OpticalFlowCalc *ofc, int newSearchRadius);
+
+/*
+ * Updates the frame arrays and blurs them if necessary
+ *
+ * @param ofc: Pointer to the optical flow calculator
+ * @param inputPlanes: Pointer to the input planes of the new source frame
+ *
+ * @return: Whether or not the frame arrays were updated successfully
+ */
 bool updateFrame(struct OpticalFlowCalc *ofc, unsigned char **inputPlanes);
+
+/*
+ * Downloads the output frame from the GPU to the CPU
+ *
+ * @param ofc: Pointer to the optical flow calculator
+ * @param sourceBuffer: The buffer to download the frame from
+ * @param outputPlanes: Pointer to the output planes where the frame should be stored
+ *
+ * @return: Whether or not the frame was downloaded successfully
+ */
 bool downloadFrame(struct OpticalFlowCalc *ofc, const cl_mem sourceBuffer, unsigned char **outputPlanes);
+
+/*
+ * Calculates the optical flow between frame1 and frame2
+ *
+ * @param ofc: Pointer to the optical flow calculator
+ *
+ * @return: Whether or not the optical flow was calculated successfully
+ */
 bool calculateOpticalFlow(struct OpticalFlowCalc *ofc);
-bool flipFlow(struct OpticalFlowCalc *ofc);
-bool blurFlowArrays(struct OpticalFlowCalc *ofc);
-bool warpFrames(struct OpticalFlowCalc *ofc, const float blendingScalar, const int frameOutputMode,
-                const int isNewFrame);
+
+/*
+ * Warps the frames according to the calculated optical flow
+ *
+ * @param ofc: Pointer to the optical flow calculator
+ * @param blendingScalar: The scalar to blend the frames with (i.e. the progress between frame1 and frame2)
+ * @param frameOutputMode: The mode to output the frames in (0: WarpedFrame12, 1: WarpedFrame21, 2: Both)
+ * @param isNewFrame: Whether or not this is the first call for a new source frame
+ *
+ * @return: Whether or not the frames were warped successfully
+ */
+bool warpFrames(struct OpticalFlowCalc *ofc, const float blendingScalar, const int frameOutputMode, const int isNewFrame);
+
+/*
+ * Blends warpedFrame1 and warpedFrame2 according to the blending scalar
+ *
+ * @param ofc: Pointer to the optical flow calculator
+ * @param blendingScalar: The scalar to blend the frames with (i.e. the progress between frame1 and frame2)
+ *
+ * @return: Whether or not the frames were blended successfully
+ */
 bool blendFrames(struct OpticalFlowCalc *ofc, const float blendingScalar);
+
+/*
+ * Places the left half of inputFrameArray[0] over the outputFrame
+ *
+ * @param ofc: Pointer to the optical flow calculator
+ *
+ * @return: Whether or not the frame was inserted successfully
+ */
 bool sideBySide1(struct OpticalFlowCalc *ofc);
+
+/*
+ * Produces a side by side comparison where the current source frame is on the left and the interpolated result is on
+ * the right
+ *
+ * @param ofc: Pointer to the optical flow calculator
+ * @param blendingScalar: The scalar to blend the frames with (i.e. the progress between frame1 and frame2)
+ * @param sourceFrameNum: The current source frame number
+ *
+ * @return: Whether or not the frames were blended successfully
+ */
 bool sideBySide2(struct OpticalFlowCalc *ofc, const float blendingScalar, const int sourceFrameNum);
+
+/*
+ * Draws the offsetArray12 as an RGB image visualizing the flow
+ *
+ * @param ofc: Pointer to the optical flow calculator
+ * @param doBWOutput: Whether to output the flow as a black and white image
+ *
+ * @return: Whether or not the flow was drawn successfully
+ */
 bool visualizeFlow(struct OpticalFlowCalc *ofc, const int doBWOutput);
+
+/*
+ * Draws a white vertical bar on the screen that can be used to detect tearing
+ *
+ * @param ofc: Pointer to the optical flow calculator
+ *
+ * @return: Whether or not the bar was drawn successfully
+ */
 bool tearingTest(struct OpticalFlowCalc *ofc);
+
 #if DUMP_IMAGES
+/*
+ * Saves the outputFrameArray in binary form to ~/dump
+ *
+ * @param ofc: Pointer to the optical flow calculator
+ * @param filePath: Path to the image file
+ *
+ * @return: Whether or not the image was saved successfully
+ */
 bool saveImage(struct OpticalFlowCalc *ofc, const char *filePath);
 #endif
+
+/*
+ * Adjusts the search radius of the optical flow calculation
+ *
+ * @param ofc: Pointer to the optical flow calculator
+ * @param newSearchRadius: The new search radius
+ *
+ * @return: Whether or not the search radius was adjusted successfully
+ */
+bool adjustSearchRadius(struct OpticalFlowCalc *ofc, int newSearchRadius);
 
 #endif // OPTICALFLOWCALC_H
