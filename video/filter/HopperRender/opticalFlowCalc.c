@@ -168,14 +168,6 @@ static bool cl_create_kernel(cl_kernel* kernel, cl_context context, cl_device_id
     return 0;
 }
 
-/*
- * Updates the frame arrays and blurs them if necessary
- *
- * @param ofc: Pointer to the optical flow calculator
- * @param inputPlanes: Pointer to the input planes of the new source frame
- *
- * @return: Whether or not the frame arrays were updated successfully
- */
 bool updateFrame(struct OpticalFlowCalc* ofc, unsigned char** inputPlanes) {
     ERR_CHECK(cl_upload_buffer(ofc->queueOFC, inputPlanes[0], ofc->inputFrameArray[0], 0,
                                ofc->frameHeight * ofc->frameWidth * sizeof(unsigned short), "updateFrame"));
@@ -200,15 +192,6 @@ bool updateFrame(struct OpticalFlowCalc* ofc, unsigned char** inputPlanes) {
     return 0;
 }
 
-/*
- * Downloads the output frame from the GPU to the CPU
- *
- * @param ofc: Pointer to the optical flow calculator
- * @param sourceBuffer: The buffer to download the frame from
- * @param outputPlanes: Pointer to the output planes where the frame should be stored
- *
- * @return: Whether or not the frame was downloaded successfully
- */
 bool downloadFrame(struct OpticalFlowCalc* ofc, const cl_mem sourceBuffer, unsigned char** outputPlanes) {
     ERR_CHECK(cl_download_buffer(ofc->queueWarp, sourceBuffer, outputPlanes[0], 0,
                                  ofc->frameHeight * ofc->frameWidth * sizeof(unsigned short), "downloadFrame"));
@@ -218,13 +201,6 @@ bool downloadFrame(struct OpticalFlowCalc* ofc, const cl_mem sourceBuffer, unsig
     return 0;
 }
 
-/*
- * Calculates the optical flow between frame1 and frame2
- *
- * @param ofc: Pointer to the optical flow calculator
- *
- * @return: Whether or not the optical flow was calculated successfully
- */
 bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
     // We set the initial window size to the next larger power of 2
     int windowSize = 1;
@@ -258,8 +234,7 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
         for (int step = 0; step < 2; step++) {
             // Reset the summed up delta array
             ERR_CHECK(cl_zero_buffer(ofc->queueOFC, ofc->summedDeltaValuesArray,
-                                     currSearchRadius * ofc->opticalFlowFrameHeight *
-                                         ofc->opticalFlowFrameWidth * sizeof(unsigned int),
+                                     currSearchRadius * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(unsigned int),
                                      sizeof(unsigned int), "calculateOpticalFlow"));
 
             // 1. Calculate the image delta and sum up the deltas of each window
@@ -270,86 +245,44 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 12, sizeof(int), &isFirstIteration);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 13, sizeof(int), &step);
             ERR_MSG_CHECK(err, "calculateOpticalFlow");
-            ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->calcDeltaSumsKernel, 3, ofc->lowGrid8x8xL,
-                                        ofc->threads8x8x1, "calculateOpticalFlow"));
+            ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->calcDeltaSumsKernel, 3, ofc->lowGrid8x8xL, ofc->threads8x8x1, "calculateOpticalFlow"));
 
             // 2. Find the layer with the lowest delta sum
             err = clSetKernelArg(ofc->determineLowestLayerKernel, 2, sizeof(int), &windowSize);
             ERR_MSG_CHECK(err, "calculateOpticalFlow");
-            ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->determineLowestLayerKernel, 2, ofc->lowGrid16x16x1,
-                                        ofc->threads16x16x1, "calculateOpticalFlow"));
+            ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->determineLowestLayerKernel, 2, ofc->lowGrid16x16x1, ofc->threads16x16x1, "calculateOpticalFlow"));
 
             // 3. Adjust the offset array based on the comparison results
             err = clSetKernelArg(ofc->adjustOffsetArrayKernel, 2, sizeof(int), &windowSize);
             err = clSetKernelArg(ofc->adjustOffsetArrayKernel, 7, sizeof(int), &step);
             ERR_MSG_CHECK(err, "calculateOpticalFlow");
-            ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->adjustOffsetArrayKernel, 2, ofc->lowGrid16x16x1,
-                                        ofc->threads16x16x1, "calculateOpticalFlow"));
+            ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->adjustOffsetArrayKernel, 2, ofc->lowGrid16x16x1, ofc->threads16x16x1, "calculateOpticalFlow"));
         }
 
         // 4. Adjust variables for the next iteration
         windowSize = max(windowSize >> 1, (int)1);
-/*         if (iter != ofc->opticalFlowIterations - 1) {
-            currSearchRadius = max(ofc->opticalFlowSearchRadius - iter, 4);
-            ERR_CHECK(adjustSearchRadius(ofc, currSearchRadius));
-        } */
     }
-    return 0;
-}
 
-/*
- * Translates a flow array from frame 1 to frame 2 into a flow array from frame 2 to frame 1
- *
- * @param ofc: Pointer to the optical flow calculator
- *
- * @return: Whether or not the flow was flipped successfully
- */
-bool flipFlow(struct OpticalFlowCalc* ofc) {
-    // Launch kernel
-    ERR_CHECK(
-        cl_enqueue_kernel(ofc->queueOFC, ofc->flipFlowKernel, 3, ofc->lowGrid16x16x2, ofc->threads16x16x1, "flipFlow"));
-    return 0;
-}
+    // Flip the flow
+    ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->flipFlowKernel, 3, ofc->lowGrid16x16x2, ofc->threads16x16x1, "flipFlow"));
 
-/*
- * Blurs the offset arrays
- *
- * @param ofc: Pointer to the optical flow calculator
- *
- * @return: Whether or not the offset arrays were blurred successfully
- */
-bool blurFlowArrays(struct OpticalFlowCalc* ofc) {
-    // No need to blur the flow
+    // Simply copy the flow to the output buffers if no blur is enabled
     if (!FLOW_BLUR_ENABLED) {
         ERR_CHECK(cl_copy_buffer(ofc->queueOFC, ofc->offsetArray12, 0, ofc->blurredOffsetArray12[1], 0,
-                                 2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
-                                 "blurFlowArrays"));
+                                 2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short), "blurFlowArrays"));
         ERR_CHECK(cl_copy_buffer(ofc->queueOFC, ofc->offsetArray21, 0, ofc->blurredOffsetArray21[1], 0,
-                                 2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
-                                 "blurFlowArrays"));
+                                 2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short), "blurFlowArrays"));
         return 0;
     }
 
-    // Launch kernels
+    // Blur the flow arrays
     cl_int err = clSetKernelArg(ofc->blurFlowKernel, 2, sizeof(cl_mem), &ofc->blurredOffsetArray12[1]);
     err |= clSetKernelArg(ofc->blurFlowKernel, 3, sizeof(cl_mem), &ofc->blurredOffsetArray21[1]);
     ERR_MSG_CHECK(err, "blurFlowArrays");
-    ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->blurFlowKernel, 3, ofc->lowGrid16x16x4, ofc->threads16x16x1,
-                                "blurFlowArrays"));
-
+    ERR_CHECK(cl_enqueue_kernel(ofc->queueOFC, ofc->blurFlowKernel, 3, ofc->lowGrid16x16x4, ofc->threads16x16x1, "blurFlowArrays"));
     return 0;
 }
 
-/*
- * Warps the frames according to the calculated optical flow
- *
- * @param ofc: Pointer to the optical flow calculator
- * @param blendingScalar: The scalar to blend the frames with (i.e. the progress between frame1 and frame2)
- * @param frameOutputMode: The mode to output the frames in (0: WarpedFrame12, 1: WarpedFrame21, 2: Both)
- * @param isNewFrame: Whether or not this is the first call for a new source frame
- *
- * @return: Whether or not the frames were warped successfully
- */
 bool warpFrames(struct OpticalFlowCalc* ofc, const float blendingScalar, const int frameOutputMode,
                 const int isNewFrame) {
     // Check if the blending scalar is valid
@@ -382,37 +315,25 @@ bool warpFrames(struct OpticalFlowCalc* ofc, const float blendingScalar, const i
     if (frameOutputMode != 1) {
         cl_int err = clSetKernelArg(ofc->warpFrameKernel, 0, sizeof(cl_mem), &ofc->inputFrameArray[0]);
         err |= clSetKernelArg(ofc->warpFrameKernel, 1, sizeof(cl_mem), &ofc->blurredOffsetArray12[0]);
-        err |= clSetKernelArg(ofc->warpFrameKernel, 2, sizeof(cl_mem),
-                              (frameOutputMode < 2) ? &ofc->outputFrameArray : &ofc->warpedFrameArray12);
+        err |= clSetKernelArg(ofc->warpFrameKernel, 2, sizeof(cl_mem), (frameOutputMode < 2) ? &ofc->outputFrameArray : &ofc->warpedFrameArray12);
         err |= clSetKernelArg(ofc->warpFrameKernel, 3, sizeof(float), &frameScalar12);
         ERR_MSG_CHECK(err, "warpFrames3");
-        ERR_CHECK(cl_enqueue_kernel(ofc->queueWarp, ofc->warpFrameKernel, 3, ofc->grid16x16x2, ofc->threads16x16x1,
-                                    "warpFrames4"));
+        ERR_CHECK(cl_enqueue_kernel(ofc->queueWarp, ofc->warpFrameKernel, 3, ofc->grid16x16x2, ofc->threads16x16x1, "warpFrames4"));
     }
 
     // Warp Frame 2 to Frame 1
     if (frameOutputMode != 0) {
         cl_int err = clSetKernelArg(ofc->warpFrameKernel, 0, sizeof(cl_mem), &ofc->inputFrameArray[1]);
         err |= clSetKernelArg(ofc->warpFrameKernel, 1, sizeof(cl_mem), &ofc->blurredOffsetArray21[0]);
-        err |= clSetKernelArg(ofc->warpFrameKernel, 2, sizeof(cl_mem),
-                              (frameOutputMode < 2) ? &ofc->outputFrameArray : &ofc->warpedFrameArray21);
+        err |= clSetKernelArg(ofc->warpFrameKernel, 2, sizeof(cl_mem), (frameOutputMode < 2) ? &ofc->outputFrameArray : &ofc->warpedFrameArray21);
         err |= clSetKernelArg(ofc->warpFrameKernel, 3, sizeof(float), &frameScalar21);
         ERR_MSG_CHECK(err, "warpFrames5");
-        ERR_CHECK(cl_enqueue_kernel(ofc->queueWarp, ofc->warpFrameKernel, 3, ofc->grid16x16x2, ofc->threads16x16x1,
-                                    "warpFrames6"));
+        ERR_CHECK(cl_enqueue_kernel(ofc->queueWarp, ofc->warpFrameKernel, 3, ofc->grid16x16x2, ofc->threads16x16x1, "warpFrames6"));
     }
 
     return 0;
 }
 
-/*
- * Blends warpedFrame1 and warpedFrame2 according to the blending scalar
- *
- * @param ofc: Pointer to the optical flow calculator
- * @param blendingScalar: The scalar to blend the frames with (i.e. the progress between frame1 and frame2)
- *
- * @return: Whether or not the frames were blended successfully
- */
 bool blendFrames(struct OpticalFlowCalc* ofc, const float blendingScalar) {
     // Calculate the blend scalar
     const float frame1Scalar = 1.0f - blendingScalar;
@@ -424,38 +345,19 @@ bool blendFrames(struct OpticalFlowCalc* ofc, const float blendingScalar) {
     err |= clSetKernelArg(ofc->blendFrameKernel, 8, sizeof(float), &ofc->outputBlackLevel);
     err |= clSetKernelArg(ofc->blendFrameKernel, 9, sizeof(float), &ofc->outputWhiteLevel);
     ERR_MSG_CHECK(err, "blendFrames");
-    ERR_CHECK(cl_enqueue_kernel(ofc->queueWarp, ofc->blendFrameKernel, 3, ofc->grid16x16x2, ofc->threads16x16x1,
-                                "blendFrames"));
+    ERR_CHECK(cl_enqueue_kernel(ofc->queueWarp, ofc->blendFrameKernel, 3, ofc->grid16x16x2, ofc->threads16x16x1, "blendFrames"));
     return 0;
 }
 
-/*
- * Places the left half of inputFrameArray[0] over the outputFrame
- *
- * @param ofc: Pointer to the optical flow calculator
- *
- * @return: Whether or not the frame was inserted successfully
- */
 bool sideBySide1(struct OpticalFlowCalc* ofc) {
     cl_int err = clSetKernelArg(ofc->sideBySide1Kernel, 0, sizeof(cl_mem), &ofc->inputFrameArray[0]);
     err |= clSetKernelArg(ofc->sideBySide1Kernel, 5, sizeof(float), &ofc->outputBlackLevel);
     err |= clSetKernelArg(ofc->sideBySide1Kernel, 6, sizeof(float), &ofc->outputWhiteLevel);
     ERR_MSG_CHECK(err, "sideBySide1");
-    ERR_CHECK(cl_enqueue_kernel(ofc->queueWarp, ofc->sideBySide1Kernel, 3, ofc->halfGrid16x16x2,
-                                ofc->threads16x16x1, "sideBySide1"));
+    ERR_CHECK(cl_enqueue_kernel(ofc->queueWarp, ofc->sideBySide1Kernel, 3, ofc->halfGrid16x16x2, ofc->threads16x16x1, "sideBySide1"));
     return 0;
 }
 
-/*
- * Produces a side by side comparison where the current source frame is on the left and the interpolated result is on
- * the right
- *
- * @param ofc: Pointer to the optical flow calculator
- * @param blendingScalar: The scalar to blend the frames with (i.e. the progress between frame1 and frame2)
- * @param sourceFrameNum: The current source frame number
- *
- * @return: Whether or not the frames were blended successfully
- */
 bool sideBySide2(struct OpticalFlowCalc* ofc, const float blendingScalar, const int sourceFrameNum) {
     // Calculate the blend scalar
     const float frame1Scalar = 1.0f - blendingScalar;
@@ -484,56 +386,30 @@ bool sideBySide2(struct OpticalFlowCalc* ofc, const float blendingScalar, const 
     err |= clSetKernelArg(ofc->sideBySide2Kernel, 11, sizeof(float), &ofc->outputBlackLevel);
     err |= clSetKernelArg(ofc->sideBySide2Kernel, 12, sizeof(float), &ofc->outputWhiteLevel);
     ERR_MSG_CHECK(err, "sideBySide2");
-    ERR_CHECK(cl_enqueue_kernel(ofc->queueWarp, ofc->sideBySide2Kernel, 3, ofc->grid16x16x2, ofc->threads16x16x1,
-                                "sideBySide2"));
+    ERR_CHECK(cl_enqueue_kernel(ofc->queueWarp, ofc->sideBySide2Kernel, 3, ofc->grid16x16x2, ofc->threads16x16x1, "sideBySide2"));
     return 0;
 }
 
-/*
- * Draws the offsetArray12 as an RGB image visualizing the flow
- *
- * @param ofc: Pointer to the optical flow calculator
- * @param doBWOutput: Whether to output the flow as a black and white image
- *
- * @return: Whether or not the flow was drawn successfully
- */
 bool visualizeFlow(struct OpticalFlowCalc* ofc, const int doBWOutput) {
     cl_int err = clSetKernelArg(ofc->visualizeFlowKernel, 0, sizeof(cl_mem), &ofc->blurredOffsetArray12[0]);
     err |= clSetKernelArg(ofc->visualizeFlowKernel, 2, sizeof(cl_mem), &ofc->inputFrameArray[1]);
     err |= clSetKernelArg(ofc->visualizeFlowKernel, 10, sizeof(int), &doBWOutput);
     ERR_MSG_CHECK(err, "visualizeFlow");
-    ERR_CHECK(cl_enqueue_kernel(ofc->queueWarp, ofc->visualizeFlowKernel, 3, ofc->grid16x16x2, ofc->threads16x16x1,
-                                "visualizeFlow"));
+    ERR_CHECK(cl_enqueue_kernel(ofc->queueWarp, ofc->visualizeFlowKernel, 3, ofc->grid16x16x2, ofc->threads16x16x1, "visualizeFlow"));
     return 0;
 }
 
-/*
- * Draws a white vertical bar on the screen that can be used to detect tearing
- *
- * @param ofc: Pointer to the optical flow calculator
- *
- * @return: Whether or not the bar was drawn successfully
- */
 static int counter = 0;
 bool tearingTest(struct OpticalFlowCalc* ofc) {
     const int pos_x = counter % ofc->frameWidth;
     cl_int err = clSetKernelArg(ofc->tearingTestKernel, 3, sizeof(int), &pos_x);
     ERR_MSG_CHECK(err, "tearingTest");
-    ERR_CHECK(cl_enqueue_kernel(ofc->queueWarp, ofc->tearingTestKernel, 3, ofc->grid16x16x2, ofc->threads16x16x1,
-                                "tearingTest"));
+    ERR_CHECK(cl_enqueue_kernel(ofc->queueWarp, ofc->tearingTestKernel, 3, ofc->grid16x16x2, ofc->threads16x16x1, "tearingTest"));
     counter++;
     return 0;
 }
 
 #if DUMP_IMAGES
-/*
- * Saves the outputFrameArray in binary form to ~/dump
- *
- * @param ofc: Pointer to the optical flow calculator
- * @param filePath: Path to the image file
- *
- * @return: Whether or not the image was saved successfully
- */
 bool saveImage(struct OpticalFlowCalc* ofc, const char* filePath) {
     // Copy the image array to the CPU
     size_t dataSize = 1.5 * ofc->frameHeight * ofc->frameWidth;
@@ -562,14 +438,6 @@ bool saveImage(struct OpticalFlowCalc* ofc, const char* filePath) {
 }
 #endif
 
-/*
- * Adjusts the search radius of the optical flow calculation
- *
- * @param ofc: Pointer to the optical flow calculator
- * @param newSearchRadius: The new search radius
- *
- * @return: Whether or not the search radius was adjusted successfully
- */
 bool adjustSearchRadius(struct OpticalFlowCalc* ofc, int newSearchRadius) {
     ofc->lowGrid16x16xL[2] = newSearchRadius;
     ofc->lowGrid8x8xL[2] = newSearchRadius;
@@ -580,11 +448,6 @@ bool adjustSearchRadius(struct OpticalFlowCalc* ofc, int newSearchRadius) {
     return 0;
 }
 
-/*
- * Frees the memory of the optical flow calculator
- *
- * @param ofc: Pointer to the optical flow calculator
- */
 void freeOFC(struct OpticalFlowCalc* ofc) {
     // Wait for all commands to finish
     clFinish(ofc->queueOFC);
@@ -709,15 +572,6 @@ static bool detectDevices(struct OpticalFlowCalc* ofc) {
     return 1;
 }
 
-/*
- * Initializes the optical flow calculator
- *
- * @param ofc: Pointer to the optical flow calculator to be initialized
- * @param frameHeight: The height of the video frame
- * @param frameWidth: The width of the video frame
- *
- * @return: Whether or not the optical flow calculator was initialized successfully
- */
 bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, const int frameWidth) {
     // Video properties
     ofc->frameWidth = frameWidth;
@@ -808,41 +662,33 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     }
 
     // Allocate the GPU Arrays
-    ERR_CHECK(cl_create_buffer(&ofc->inputFrameArray[0], ofc->clContext, CL_MEM_READ_ONLY, 3 * frameHeight * frameWidth,
-                               "frame[0]"));
-    ERR_CHECK(cl_create_buffer(&ofc->inputFrameArray[1], ofc->clContext, CL_MEM_READ_ONLY, 3 * frameHeight * frameWidth,
-                               "frame[1]"));
-    ERR_CHECK(cl_create_buffer(&ofc->inputFrameArray[2], ofc->clContext, CL_MEM_READ_ONLY, 3 * frameHeight * frameWidth,
-                               "frame[2]"));
+    ERR_CHECK(cl_create_buffer(&ofc->inputFrameArray[0], ofc->clContext, CL_MEM_READ_ONLY, 
+                               3 * frameHeight * frameWidth, "frame[0]"));
+    ERR_CHECK(cl_create_buffer(&ofc->inputFrameArray[1], ofc->clContext, CL_MEM_READ_ONLY, 
+                               3 * frameHeight * frameWidth, "frame[1]"));
+    ERR_CHECK(cl_create_buffer(&ofc->inputFrameArray[2], ofc->clContext, CL_MEM_READ_ONLY, 
+                               3 * frameHeight * frameWidth, "frame[2]"));
     ERR_CHECK(cl_create_buffer(&ofc->warpedFrameArray12, ofc->clContext, CL_MEM_READ_WRITE,
                                3 * frameHeight * frameWidth, "warpedFrame12"));
     ERR_CHECK(cl_create_buffer(&ofc->warpedFrameArray21, ofc->clContext, CL_MEM_READ_WRITE,
                                3 * frameHeight * frameWidth, "warpedFrame21"));
-    ERR_CHECK(cl_create_buffer(&ofc->outputFrameArray, ofc->clContext, CL_MEM_WRITE_ONLY, 3 * frameHeight * frameWidth,
-                               "outputFrame"));
+    ERR_CHECK(cl_create_buffer(&ofc->outputFrameArray, ofc->clContext, CL_MEM_WRITE_ONLY, 
+                               3 * frameHeight * frameWidth, "outputFrame"));
     ERR_CHECK(cl_create_buffer(&ofc->offsetArray12, ofc->clContext, CL_MEM_READ_WRITE,
-                               2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
-                               "offsetArray12"));
+                               2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short), "offsetArray12"));
     ERR_CHECK(cl_create_buffer(&ofc->offsetArray21, ofc->clContext, CL_MEM_READ_WRITE,
-                               2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
-                               "offsetArray21"));
+                               2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short), "offsetArray21"));
     ERR_CHECK(cl_create_buffer(&ofc->blurredOffsetArray12[0], ofc->clContext, CL_MEM_READ_WRITE,
-                               2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
-                               "blurredOffsetArray12[0]"));
+                               2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short), "blurredOffsetArray12[0]"));
     ERR_CHECK(cl_create_buffer(&ofc->blurredOffsetArray21[0], ofc->clContext, CL_MEM_READ_WRITE,
-                               2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
-                               "blurredOffsetArray21[0]"));
+                               2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short), "blurredOffsetArray21[0]"));
     ERR_CHECK(cl_create_buffer(&ofc->blurredOffsetArray12[1], ofc->clContext, CL_MEM_READ_WRITE,
-                               2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
-                               "blurredOffsetArray12[1]"));
+                               2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short), "blurredOffsetArray12[1]"));
     ERR_CHECK(cl_create_buffer(&ofc->blurredOffsetArray21[1], ofc->clContext, CL_MEM_READ_WRITE,
-                               2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short),
-                               "blurredOffsetArray21[1]"));
+                               2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short), "blurredOffsetArray21[1]"));
     ERR_CHECK(cl_create_buffer(&ofc->summedDeltaValuesArray, ofc->clContext, CL_MEM_READ_WRITE,
-                               MAX_SEARCH_RADIUS * ofc->opticalFlowFrameHeight *
-                                   ofc->opticalFlowFrameWidth * sizeof(unsigned int),
-                               "summedUpDeltaArray"));
-    ERR_CHECK(cl_create_buffer(&ofc->lowestLayerArray, ofc->clContext, CL_MEM_READ_WRITE,
+                               MAX_SEARCH_RADIUS * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(unsigned int), "summedUpDeltaArray"));
+    ERR_CHECK(cl_create_buffer(&ofc->lowestLayerArray, ofc->clContext, CL_MEM_READ_WRITE, 
                                ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth, "lowestLayerArray"));
 #if DUMP_IMAGES
     ofc->imageDumpArray = (unsigned short*)malloc(3 * frameHeight * frameWidth);
@@ -874,10 +720,8 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
 
     // Compile the kernels
     ERR_CHECK(cl_create_kernel(&ofc->calcDeltaSumsKernel, ofc->clContext, ofc->clDeviceId, "calcDeltaSumsKernel"));
-    ERR_CHECK(cl_create_kernel(&ofc->determineLowestLayerKernel, ofc->clContext, ofc->clDeviceId,
-                               "determineLowestLayerKernel"));
-    ERR_CHECK(
-        cl_create_kernel(&ofc->adjustOffsetArrayKernel, ofc->clContext, ofc->clDeviceId, "adjustOffsetArrayKernel"));
+    ERR_CHECK(cl_create_kernel(&ofc->determineLowestLayerKernel, ofc->clContext, ofc->clDeviceId, "determineLowestLayerKernel"));
+    ERR_CHECK(cl_create_kernel(&ofc->adjustOffsetArrayKernel, ofc->clContext, ofc->clDeviceId, "adjustOffsetArrayKernel"));
     ERR_CHECK(cl_create_kernel(&ofc->flipFlowKernel, ofc->clContext, ofc->clDeviceId, "flipFlowKernel"));
     ERR_CHECK(cl_create_kernel(&ofc->blurFlowKernel, ofc->clContext, ofc->clDeviceId, "blurFlowKernel"));
     ERR_CHECK(cl_create_kernel(&ofc->warpFrameKernel, ofc->clContext, ofc->clDeviceId, "warpFrameKernel"));
@@ -954,6 +798,5 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     err |= clSetKernelArg(ofc->tearingTestKernel, 1, sizeof(int), &ofc->frameHeight);
     err |= clSetKernelArg(ofc->tearingTestKernel, 2, sizeof(int), &ofc->frameWidth);
     ERR_MSG_CHECK(err, "setKernelParameters");
-
     return 0;
 }

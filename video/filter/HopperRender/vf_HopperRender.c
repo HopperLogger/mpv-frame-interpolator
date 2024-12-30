@@ -529,12 +529,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
 
     // Calculate the optical flow
     if (priv->sourceFrameNum >= 2 && priv->frameOutputMode != TearingTest) {
-        bool needsFlipping = (priv->frameOutputMode == WarpedFrame21 || priv->frameOutputMode == BlendedFrame ||
-                                priv->frameOutputMode == SideBySide1 || priv->frameOutputMode == SideBySide2);
-
-        ERR_CHECK(calculateOpticalFlow(priv->ofc) || 
-                 (needsFlipping && flipFlow(priv->ofc)) ||
-                  blurFlowArrays(priv->ofc), "OFC failed", f);
+        ERR_CHECK(calculateOpticalFlow(priv->ofc), "OFC failed", f);
     }
     gettimeofday(&endTime, NULL);
     priv->currTotalCalcDuration = (endTime.tv_sec - startTime.tv_sec) + ((endTime.tv_usec - startTime.tv_usec) / 1000000.0);
