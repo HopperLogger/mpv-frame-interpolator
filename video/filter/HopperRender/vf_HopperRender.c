@@ -329,7 +329,7 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f) {
 #endif
 
 #if !DUMP_IMAGES && AUTO_SEARCH_RADIUS_ADJUST
-    double currMaxCalcDuration = max(priv->ofc->ofcCalcTime, priv->totalWarpDuration);
+    double currMaxCalcDuration = priv->ofc->ofcCalcTime + priv->totalWarpDuration;
 
     // Check if we were too slow or have leftover capacity
     if ((currMaxCalcDuration * UPPER_PERF_BUFFER) > priv->sourceFrameTime) {
@@ -368,7 +368,7 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
     gettimeofday(&startTime, NULL);
 
     // Warp frames
-    if (priv->frameOutputMode != HSVFlow) {
+    if (priv->frameOutputMode != HSVFlow && priv->frameOutputMode != GreyFlow && priv->frameOutputMode != TearingTest) {
         ERR_CHECK(
             warpFrames(priv->ofc, priv->blendingScalar, priv->frameOutputMode, (int)(priv->interpolatedFrameNum == 0)),
             "warpFrames", f);
