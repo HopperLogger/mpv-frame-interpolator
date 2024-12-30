@@ -423,12 +423,6 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
     }
 }
 
-// Helper function to truncate a double to a certain number of decimal places
-static double truncate_to_floor(double value, int decimal_places) {
-    double multiplier = pow(10.0, decimal_places);
-    return floor(value * multiplier) / multiplier;
-}
-
 /*
  * Delivers the intermediate frames to the output pin.
  *
@@ -446,7 +440,7 @@ static void vf_HopperRender_process_intermediate_frame(struct mp_filter *f) {
 
     // Update playback timestamp
     priv->currentOutputPTS += priv->targetFrameTime * priv->playbackSpeed;
-    img->pts = truncate_to_floor(priv->currentOutputPTS, 3);
+    img->pts = priv->currentOutputPTS;
 
     // Determine if we need to process the next intermediate frame
     if (priv->interpolatedFrameNum < priv->numIntFrames - 1) {
@@ -522,7 +516,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     } else {
         // The rest of the frames we increase in 60fps steps
         priv->currentOutputPTS += priv->targetFrameTime * priv->playbackSpeed;
-        img->pts = truncate_to_floor(priv->currentOutputPTS, 3);
+        img->pts = priv->currentOutputPTS;
     }
 
     // Calculate the number of interpolated frames
@@ -540,7 +534,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     }
 
     // Interpolate the frames
-    if ((priv->sourceFrameNum >= 3 || priv->frameOutputMode == SideBySide2)) {
+    if (priv->sourceFrameNum >= 3 || priv->frameOutputMode == SideBySide2) {
         vf_HopperRender_interpolate_frame(f, img->planes);
         if (priv->numIntFrames > 1) {
             priv->interpolatedFrameNum = 1;
