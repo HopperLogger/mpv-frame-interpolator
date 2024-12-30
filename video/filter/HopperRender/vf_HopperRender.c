@@ -407,13 +407,16 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
     ERR_CHECK(saveImage(priv->ofc, path), "saveImage", f);
 #endif
 
-    // Download the result to the output buffer
+    // Download the result to the output buffer (this is a blocking call and waits for the warping to complete)
     ERR_CHECK(downloadFrame(priv->ofc, priv->ofc->outputFrameArray, outputPlanes), "downloadFrame", f);
+
+    // Evaluate how long the warp calculation took
     gettimeofday(&endTime, NULL);
     if (priv->interpolatedFrameNum < 10) priv->warpCalcDurations[priv->interpolatedFrameNum] =
         (endTime.tv_sec - startTime.tv_sec) + ((endTime.tv_usec - startTime.tv_usec) / 1000000.0);
     priv->totalWarpDuration += (endTime.tv_sec - startTime.tv_sec) + ((endTime.tv_usec - startTime.tv_usec) / 1000000.0);
 
+    // Increase the blending scalar
     priv->blendingScalar += priv->targetFrameTime / priv->sourceFrameTime;
     if (priv->blendingScalar >= 1.0) {
         priv->blendingScalar -= 1.0;
