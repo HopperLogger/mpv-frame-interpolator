@@ -89,12 +89,12 @@ struct priv {
 #define max(a, b) ((a) > (b) ? (a) : (b))
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
-#define ERR_CHECK(cond, func, f)           \
-    if (cond) {                            \
-        MP_ERR(f, "Error in %s\n", func);  \
-        vf_HopperRender_uninit(f);         \
-        mp_filter_internal_mark_failed(f); \
-        return;                            \
+#define ERR_CHECK(cond, f)                    \
+    if (cond) {                               \
+        MP_ERR(f, "Error in %s\n", __func__); \
+        vf_HopperRender_uninit(f);            \
+        mp_filter_internal_mark_failed(f);    \
+        return;                               \
     }
 
 // Prototypes
@@ -369,26 +369,25 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
     // Warp frames
     if (priv->frameOutputMode != HSVFlow && priv->frameOutputMode != GreyFlow && priv->frameOutputMode != TearingTest) {
         ERR_CHECK(
-            warpFrames(priv->ofc, priv->blendingScalar, priv->frameOutputMode, (int)(priv->interpolatedFrameNum == 0)),
-            "warpFrames", f);
+            warpFrames(priv->ofc, priv->blendingScalar, priv->frameOutputMode, (int)(priv->interpolatedFrameNum == 0)), f);
     }
 
     // Blend the frames together
     if (priv->frameOutputMode == BlendedFrame || priv->frameOutputMode == SideBySide1) {
-        ERR_CHECK(blendFrames(priv->ofc, priv->blendingScalar), "blendFrames", f);
+        ERR_CHECK(blendFrames(priv->ofc, priv->blendingScalar), f);
     }
 
     // Special output modes
     if (priv->frameOutputMode == HSVFlow) {
-        ERR_CHECK(visualizeFlow(priv->ofc, 0), "visualizeFlow", f);
+        ERR_CHECK(visualizeFlow(priv->ofc, 0), f);
     } else if (priv->frameOutputMode == GreyFlow) {
-        ERR_CHECK(visualizeFlow(priv->ofc, 1), "visualizeFlowGrey", f);
+        ERR_CHECK(visualizeFlow(priv->ofc, 1), f);
     } else if (priv->frameOutputMode == SideBySide1) {
-        ERR_CHECK(sideBySide1(priv->ofc), "sideBySide1", f);
+        ERR_CHECK(sideBySide1(priv->ofc), f);
     } else if (priv->frameOutputMode == SideBySide2) {
-        ERR_CHECK(sideBySide2(priv->ofc, priv->blendingScalar, priv->sourceFrameNum), "sideBySide2", f);
+        ERR_CHECK(sideBySide2(priv->ofc, priv->blendingScalar, priv->sourceFrameNum), f);
     } else if (priv->frameOutputMode == TearingTest) {
-        ERR_CHECK(tearingTest(priv->ofc), "tearingTest", f);
+        ERR_CHECK(tearingTest(priv->ofc), f);
     }
 
 // Save the result to a file
@@ -403,11 +402,11 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
     char path[32];
     snprintf(path, sizeof(path), "%s/dump/%d.bin", home, dump_iter);
     dump_iter++;
-    ERR_CHECK(saveImage(priv->ofc, path), "saveImage", f);
+    ERR_CHECK(saveImage(priv->ofc, path), f);
 #endif
 
     // Download the result to the output buffer (this is a blocking call and waits for the warping to complete)
-    ERR_CHECK(downloadFrame(priv->ofc, outputPlanes), "downloadFrame", f);
+    ERR_CHECK(downloadFrame(priv->ofc, outputPlanes), f);
 
     // Retrieve how long the warp calculation took
     if (priv->interpolatedFrameNum < 10) priv->warpCalcDurations[priv->interpolatedFrameNum] = priv->ofc->warpCalcTime;
@@ -487,7 +486,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     // Initialize the filter if needed
     if (!priv->isFilterInitialized) {
         priv->referenceImage = mp_image_new_ref(img);
-        ERR_CHECK(initOpticalFlowCalc(priv->ofc, img->h, img->w), "initOpticalFlowCalc", f);
+        ERR_CHECK(initOpticalFlowCalc(priv->ofc, img->h, img->w), f);
         priv->isFilterInitialized = true;
     }
 
@@ -523,11 +522,11 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     vf_HopperRender_auto_adjust_settings(f);
 
     // Upload the source frame to the GPU buffers
-    ERR_CHECK(updateFrame(priv->ofc, img->planes), "updateFrame", f);
+    ERR_CHECK(updateFrame(priv->ofc, img->planes), f);
 
     // Calculate the optical flow
     if (priv->sourceFrameNum >= 2 && priv->frameOutputMode != TearingTest) {
-        ERR_CHECK(calculateOpticalFlow(priv->ofc), "OFC failed", f);
+        ERR_CHECK(calculateOpticalFlow(priv->ofc), f);
     }
 
     // Interpolate the frames
@@ -586,7 +585,7 @@ static bool vf_HopperRender_command(struct mp_filter *f, struct mp_filter_comman
         priv->resync = true;
     }
 
-    // Reset the state either because we could now be fast enough to interpolate
+    // Reset the state because we could now need interpolation
     if (priv->interpolationState != Deactivated) {
         priv->interpolationState = Active;
     }
