@@ -491,6 +491,20 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
         priv->isFilterInitialized = true;
     }
 
+    /* unsigned short* buffer = (unsigned short*)malloc(priv->ofc->frameHeight * priv->ofc->frameWidth * sizeof(unsigned short));
+    memcpy(buffer, img->planes[0], priv->ofc->frameHeight * priv->ofc->frameWidth * sizeof(unsigned short));
+
+    unsigned short maxValue = 0;
+    for(int y = 0; y < priv->ofc->frameHeight; y++) {
+        for(int x = 0; x < priv->ofc->frameWidth; x++) {
+            if (buffer[y * priv->ofc->frameWidth + x] > maxValue) {
+                maxValue = (unsigned short)buffer[y * priv->ofc->frameWidth + x];
+            }
+        }
+    }
+    priv->ofc->outputWhiteLevel = (float)maxValue;
+    printf("Max value: %d\n", maxValue); */
+
     // Update timestamps and source information
     priv->sourceFrameNum += 1;
     if (priv->sourceFrameNum <= 3 || priv->resync) {

@@ -95,7 +95,11 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     }
 
     // Calculate the offset bias
-    offsetBias = abs(offsetX) + abs(offsetY);
+    if (!step) {
+        offsetBias = abs(offsetX);
+    } else {
+        offsetBias = abs(offsetY);
+    }
     offsetBias = pow((float)offsetBias, 1.2f);
 
     // Calculate the neighbor biases
@@ -118,11 +122,18 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
             int neighborIndexY = cy + neighborOffsets[i][1];
 
             // Get the offset values of the current neighbor
-            neighborOffsetX = getNeighborOffset(offsetArray, neighborIndexX, neighborIndexY, lowDimX, lowDimY, 0);
-            neighborOffsetY = getNeighborOffset(offsetArray, neighborIndexX, neighborIndexY, lowDimX, lowDimY, directionIndexOffset);
+            if (!step) {
+                neighborOffsetX = getNeighborOffset(offsetArray, neighborIndexX, neighborIndexY, lowDimX, lowDimY, 0);
+            } else {
+                neighborOffsetY = getNeighborOffset(offsetArray, neighborIndexX, neighborIndexY, lowDimX, lowDimY, directionIndexOffset);
+            }
 
             // Calculate the difference between the proposed offset and the neighbor's offset
-            diffToNeighbor = abs_diff(neighborOffsetX, offsetX) + abs_diff(neighborOffsetY, offsetY);
+            if (!step) {
+                diffToNeighbor = abs_diff(neighborOffsetX, offsetX);
+            } else {
+                diffToNeighbor = abs_diff(neighborOffsetY, offsetY);
+            }
 
             // Sum differences into appropriate groups
             if (i < 4) {
