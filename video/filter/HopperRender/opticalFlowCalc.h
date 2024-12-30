@@ -48,6 +48,7 @@ typedef struct OpticalFlowCalc
     cl_command_queue queue;         // Queue used for the optical flow calculation
 
     // Events
+    cl_event ofcStartedEvent;       // Event marking the start of the optical flow calculation
     cl_event warpStartedEvent;      // Event marking the start of the interpolation
 
     // GPU Arrays

@@ -431,12 +431,12 @@ static void vf_HopperRender_process_intermediate_frame(struct mp_filter *f) {
         mp_image_pool_get(priv->imagePool, IMGFMT_P010, priv->ofc->frameWidth, priv->ofc->frameHeight);
     mp_image_copy_attributes(img, priv->referenceImage);
 
-    // Generate the interpolated frame
-    vf_HopperRender_interpolate_frame(f, img->planes);
-
     // Update playback timestamp
     priv->currentOutputPTS += priv->targetFrameTime * priv->playbackSpeed;
     img->pts = priv->currentOutputPTS;
+
+    // Generate the interpolated frame
+    vf_HopperRender_interpolate_frame(f, img->planes);
 
     // Determine if we need to process the next intermediate frame
     if (priv->interpolatedFrameNum < priv->numIntFrames - 1) {
@@ -509,6 +509,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     if (priv->sourceFrameNum <= 2 || priv->resync) {
         priv->currentOutputPTS =
             img->pts;  // The first three frames we take the original PTS (see output: 1.0, 2.0, 3.0, 3.1, ...)
+        priv->resync = false;
     } else {
         // The rest of the frames we increase in 60fps steps
         priv->currentOutputPTS += priv->targetFrameTime * priv->playbackSpeed;
