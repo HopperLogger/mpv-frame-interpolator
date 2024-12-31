@@ -1,6 +1,6 @@
 // Kernel that creates an HSV flow image from the offset array
-__kernel void visualizeFlowKernel(__global const short* offsetArray, __global unsigned short* outputFrame,
-                                  __global const unsigned short* inputFrame, const int lowDimY, const int lowDimX,
+__kernel void visualizeFlowKernel(__global const short* offsetArray, __global unsigned char* outputFrame,
+                                  __global const unsigned char* inputFrame, const int lowDimY, const int lowDimX,
                                   const int dimY, const int dimX, const int resolutionScalar,
                                   const int directionIndexOffset, const int channelIndexOffset, const int doBWOutput) {
     // Current entry to be computed by the thread
@@ -30,7 +30,7 @@ __kernel void visualizeFlowKernel(__global const short* offsetArray, __global un
     struct RGB rgb;
 
     // Used for black and white output
-    const unsigned short normFlow = min((abs(x) + abs(y)) << 10, 65535);
+    const unsigned short normFlow = min((abs(x) + abs(y)) << 2, 255);
 
     // Color Output
     if (!doBWOutput) {
@@ -110,31 +110,15 @@ __kernel void visualizeFlowKernel(__global const short* offsetArray, __global un
         }
     }
 
-    // Y Channel
-    if (cz == 0 && cy < dimY && cx < dimX) {
-        outputFrame[cy * dimX + cx] =
-            doBWOutput
-                ? normFlow
-                : ((unsigned short)((fmax(fmin(rgb.r * 0.299f + rgb.g * 0.587f + rgb.b * 0.114f, 255.0f), 0.0f)) *
-                                    blendScalar)
-                   << 8) +
-                      inputFrame[cy * dimX + cx] * (1.0f - blendScalar);
+    // Convert the RGB flow to YUV and write it to the output frame
+    if (cz == 0 && cy < dimY && cx < dimX) { // Y Channel
+        outputFrame[cy * dimX + cx] = doBWOutput ? normFlow : fmax(fmin(rgb.r * 0.299f + rgb.g * 0.587f + rgb.b * 0.114f, 255.0f), 0.0f) * blendScalar +
+                                                              inputFrame[cy * dimX + cx] * (1.0f - blendScalar);
     } else if (cz == 1 && cy < (dimY >> 1) && cx < dimX) {
-		// U/V Channels
-        if ((cx & 1) == 0) {
-			// U Channel
-            outputFrame[channelIndexOffset + cy * dimX + (cx & ~1)] =
-                doBWOutput ? 32768
-                           : (unsigned short)(fmax(
-                                 fmin(rgb.r * -0.168736f + rgb.g * -0.331264f + rgb.b * 0.5f + 128.0f, 255.0f), 0.0f))
-                                 << 8;
-        } else {
-			// V Channel
-            outputFrame[channelIndexOffset + cy * dimX + (cx & ~1) + 1] =
-                doBWOutput ? 32768
-                           : (unsigned short)(fmax(
-                                 fmin(rgb.r * 0.5f + rgb.g * -0.418688f + rgb.b * -0.081312f + 128.0f, 255.0f), 0.0f))
-                                 << 8;
+        if ((cx & 1) == 0) { // U Channel
+            outputFrame[channelIndexOffset + cy * dimX + (cx & ~1)] = doBWOutput ? 128 : fmax(fmin(rgb.r * -0.168736f + rgb.g * -0.331264f + rgb.b * 0.5f + 128.0f, 255.0f), 0.0f);
+        } else { // V Channel
+            outputFrame[channelIndexOffset + cy * dimX + (cx & ~1) + 1] = doBWOutput ? 128 : fmax(fmin(rgb.r * 0.5f + rgb.g * -0.418688f + rgb.b * -0.081312f + 128.0f, 255.0f), 0.0f);
         }
     }
 }

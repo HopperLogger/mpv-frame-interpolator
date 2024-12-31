@@ -31,8 +31,8 @@ void warpReduce2x2(volatile __local unsigned int* partialSums, int tIdx) {
 }
 
 // Kernel that sums up all the pixel deltas of each window
-__kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __global const unsigned short* frame1,
-                                  __global const unsigned short* frame2, __global const short* offsetArray,
+__kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __global const unsigned char* frame1,
+                                  __global const unsigned char* frame2, __global const short* offsetArray,
                                   const int directionIndexOffset, const int dimY, const int dimX, const int lowDimY,
                                   const int lowDimX, const int windowSize, const int searchWindowSize,
                                   const int resolutionScalar, const int isFirstIteration, const int step) {
@@ -102,7 +102,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     } else {
         offsetBias = abs(relOffsetAdjustmentY);
     }
-    offsetBias = pow((float)offsetBias, 1.2f);
+    offsetBias = pow((float)offsetBias, 1.2f) * 0.05f;
 
     // Calculate the neighbor biases
     if (!isFirstIteration) {
@@ -146,8 +146,8 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
         }
 
         // Scale biases
-        neighborBias1 <<= 4;
-        neighborBias2 <<= 4;
+        neighborBias1 >>= 2;
+        neighborBias2 >>= 2;
     }
     
     if (windowSize == 1) {

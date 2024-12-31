@@ -1,6 +1,6 @@
 // Kernel that blends warpedFrame1 to warpedFrame2
-__kernel void blendFrameKernel(__global const unsigned short* warpedFrameArray12,
-                               __global const unsigned short* warpedFrameArray21, __global unsigned short* outputFrame,
+__kernel void blendFrameKernel(__global const unsigned char* warpedFrameArray12,
+                               __global const unsigned char* warpedFrameArray21, __global unsigned char* outputFrame,
                                const float frame1Scalar, const float frame2Scalar, const int dimY, const int dimX,
                                const int channelIndexOffset, const float outputBlackLevel,
                                const float outputWhiteLevel) {
@@ -14,13 +14,11 @@ __kernel void blendFrameKernel(__global const unsigned short* warpedFrameArray12
 		// Y Channel
         pixelValue = (float)warpedFrameArray12[cy * dimX + cx] * frame1Scalar +
                      (float)warpedFrameArray21[cy * dimX + cx] * frame2Scalar;
-        outputFrame[cy * dimX + cx] = (unsigned short)fmax(
-            fmin((pixelValue - outputBlackLevel) / (outputWhiteLevel - outputBlackLevel) * 65535.0f, 65535.0f), 0.0f);
+        outputFrame[cy * dimX + cx] = fmax(fmin((pixelValue - outputBlackLevel) / (outputWhiteLevel - outputBlackLevel) * 255.0f, 255.0f), 0.0f);
     } else if (cz == 1 && cy < (dimY >> 1) && cx < dimX) {
 		// U/V Channels
         pixelValue = (float)warpedFrameArray12[channelIndexOffset + cy * dimX + cx] * frame1Scalar +
                      (float)warpedFrameArray21[channelIndexOffset + cy * dimX + cx] * frame2Scalar;
-        outputFrame[channelIndexOffset + cy * dimX + cx] = (unsigned short)fmax(
-            fmin((pixelValue - 32768.0f) / outputWhiteLevel * 65535.0f + 32768.0f, 65535.0f), 0.0f);
+        outputFrame[channelIndexOffset + cy * dimX + cx] = fmax(fmin((pixelValue - 128.0f) / outputWhiteLevel * 255.0f + 128.0f, 255.0f), 0.0f);
     }
 }

@@ -98,9 +98,9 @@ static bool cl_create_kernel(cl_kernel* kernel, cl_context context, cl_device_id
 }
 
 bool updateFrame(struct OpticalFlowCalc* ofc, unsigned char** inputPlanes) {
-    CHECK_ERROR(clEnqueueWriteBuffer(ofc->queue, ofc->inputFrameArray[0], CL_TRUE, 0, ofc->frameHeight * ofc->frameWidth * sizeof(unsigned short), inputPlanes[0], 0, NULL, &ofc->ofcStartedEvent));
-    CHECK_ERROR(clEnqueueWriteBuffer(ofc->queue, ofc->inputFrameArray[0], CL_TRUE, ofc->frameHeight * ofc->frameWidth * sizeof(unsigned short),
-                                     (ofc->frameHeight / 2) * ofc->frameWidth * sizeof(unsigned short), inputPlanes[1], 0, NULL, NULL));
+    CHECK_ERROR(clEnqueueWriteBuffer(ofc->queue, ofc->inputFrameArray[0], CL_TRUE, 0, ofc->frameHeight * ofc->frameWidth, inputPlanes[0], 0, NULL, &ofc->ofcStartedEvent));
+    CHECK_ERROR(clEnqueueWriteBuffer(ofc->queue, ofc->inputFrameArray[0], CL_TRUE, ofc->frameHeight * ofc->frameWidth,
+                                     (ofc->frameHeight / 2) * ofc->frameWidth, inputPlanes[1], 0, NULL, NULL));
 
     // Swap the frame buffers
     cl_mem temp0 = ofc->inputFrameArray[0];
@@ -112,9 +112,9 @@ bool updateFrame(struct OpticalFlowCalc* ofc, unsigned char** inputPlanes) {
 
 bool downloadFrame(struct OpticalFlowCalc* ofc, unsigned char** outputPlanes) {
     cl_event warpEndEvent;
-    CHECK_ERROR(clEnqueueReadBuffer(ofc->queue, ofc->outputFrameArray, CL_TRUE, 0, ofc->frameHeight * ofc->frameWidth * sizeof(unsigned short), outputPlanes[0], 0, NULL, NULL));
-    CHECK_ERROR(clEnqueueReadBuffer(ofc->queue, ofc->outputFrameArray, CL_TRUE, ofc->frameHeight * ofc->frameWidth * sizeof(unsigned short),
-                                    (ofc->frameHeight / 2) * ofc->frameWidth * sizeof(unsigned short), outputPlanes[1], 0, NULL, &warpEndEvent));
+    CHECK_ERROR(clEnqueueReadBuffer(ofc->queue, ofc->outputFrameArray, CL_TRUE, 0, ofc->frameHeight * ofc->frameWidth, outputPlanes[0], 0, NULL, NULL));
+    CHECK_ERROR(clEnqueueReadBuffer(ofc->queue, ofc->outputFrameArray, CL_TRUE, ofc->frameHeight * ofc->frameWidth,
+                                    (ofc->frameHeight / 2) * ofc->frameWidth, outputPlanes[1], 0, NULL, &warpEndEvent));
 
     // Evaluate how long the interpolation took
     CHECK_ERROR(clWaitForEvents(1, &ofc->warpStartedEvent));
@@ -224,12 +224,12 @@ bool warpFrames(struct OpticalFlowCalc* ofc, const float blendingScalar, const i
     // Flush the warped frame buffers to avoid artifacts from previous frames
     if (isNewFrame) {
         if (frameOutputMode == 0) {
-            CHECK_ERROR(clEnqueueCopyBuffer(ofc->queue, ofc->inputFrameArray[0], ofc->outputFrameArray, 0, 0, 3 * ofc->frameHeight * ofc->frameWidth, 0, NULL, NULL));
+            CHECK_ERROR(clEnqueueCopyBuffer(ofc->queue, ofc->inputFrameArray[0], ofc->outputFrameArray, 0, 0, 1.5 * ofc->frameHeight * ofc->frameWidth, 0, NULL, NULL));
         } else if (frameOutputMode == 1) {
-            CHECK_ERROR(clEnqueueCopyBuffer(ofc->queue, ofc->inputFrameArray[1], ofc->outputFrameArray, 0, 0, 3 * ofc->frameHeight * ofc->frameWidth, 0, NULL, NULL));
+            CHECK_ERROR(clEnqueueCopyBuffer(ofc->queue, ofc->inputFrameArray[1], ofc->outputFrameArray, 0, 0, 1.5 * ofc->frameHeight * ofc->frameWidth, 0, NULL, NULL));
         } else {
-            CHECK_ERROR(clEnqueueCopyBuffer(ofc->queue, ofc->inputFrameArray[0], ofc->warpedFrameArray12, 0, 0, 3 * ofc->frameHeight * ofc->frameWidth, 0, NULL, NULL));
-            CHECK_ERROR(clEnqueueCopyBuffer(ofc->queue, ofc->inputFrameArray[1], ofc->warpedFrameArray21, 0, 0, 3 * ofc->frameHeight * ofc->frameWidth, 0, NULL, NULL));
+            CHECK_ERROR(clEnqueueCopyBuffer(ofc->queue, ofc->inputFrameArray[0], ofc->warpedFrameArray12, 0, 0, 1.5 * ofc->frameHeight * ofc->frameWidth, 0, NULL, NULL));
+            CHECK_ERROR(clEnqueueCopyBuffer(ofc->queue, ofc->inputFrameArray[1], ofc->warpedFrameArray21, 0, 0, 1.5 * ofc->frameHeight * ofc->frameWidth, 0, NULL, NULL));
         }
     }
 
@@ -330,7 +330,7 @@ bool tearingTest(struct OpticalFlowCalc* ofc) {
 bool saveImage(struct OpticalFlowCalc* ofc, const char* filePath) {
     // Copy the image array to the CPU
     size_t dataSize = 1.5 * ofc->frameHeight * ofc->frameWidth;
-    CHECK_ERROR(clEnqueueReadBuffer(ofc->queue, ofc->outputFrameArray, CL_TRUE, 0, dataSize * sizeof(unsigned short), ofc->imageDumpArray, 0, NULL, NULL));
+    CHECK_ERROR(clEnqueueReadBuffer(ofc->queue, ofc->outputFrameArray, CL_TRUE, 0, dataSize, ofc->imageDumpArray, 0, NULL, NULL));
 
     // Open file in binary write mode
     FILE* file = fopen(filePath, "wb");
@@ -340,7 +340,7 @@ bool saveImage(struct OpticalFlowCalc* ofc, const char* filePath) {
     }
 
     // Write the array to the file
-    size_t written = fwrite(ofc->imageDumpArray, sizeof(unsigned short), dataSize, file);
+    size_t written = fwrite(ofc->imageDumpArray, sizeof(unsigned char), dataSize, file);
     if (written != dataSize) {
         perror("Error writing to file");
         fclose(file);
@@ -410,7 +410,7 @@ void freeOFC(struct OpticalFlowCalc* ofc) {
 static bool detectDevices(struct OpticalFlowCalc* ofc) {
     // Capabilities we are going to check for
     cl_ulong availableVRAM;
-    const cl_ulong requiredVRAM = 15lu * ofc->frameHeight * ofc->frameWidth + 17lu * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth +
+    const cl_ulong requiredVRAM = 7.5 * ofc->frameHeight * ofc->frameWidth + 17lu * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth +
                                   MAX_SEARCH_RADIUS * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(unsigned int);
     size_t maxWorkGroupSizes[3];
     const size_t requiredWorkGroupSizes[3] = {16, 16, 1};
@@ -477,7 +477,7 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     ofc->frameWidth = frameWidth;
     ofc->frameHeight = frameHeight;
     ofc->outputBlackLevel = 0.0f;
-    ofc->outputWhiteLevel = 65535.0f;
+    ofc->outputWhiteLevel = 255.0f;
 
     // Optical flow calculation
     ofc->opticalFlowIterations = NUM_ITERATIONS;
@@ -554,11 +554,11 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     CHECK_ERROR(err);
 
     // Allocate the buffers
-    ofc->inputFrameArray[0] = clCreateBuffer(ofc->clContext, CL_MEM_READ_ONLY, 3 * frameHeight * frameWidth, NULL, &err);
-    ofc->inputFrameArray[1] = clCreateBuffer(ofc->clContext, CL_MEM_READ_ONLY, 3 * frameHeight * frameWidth, NULL, &err);
-    ofc->warpedFrameArray12 = clCreateBuffer(ofc->clContext, CL_MEM_READ_WRITE, 3 * frameHeight * frameWidth, NULL, &err);
-    ofc->warpedFrameArray21 = clCreateBuffer(ofc->clContext, CL_MEM_READ_WRITE, 3 * frameHeight * frameWidth, NULL, &err);
-    ofc->outputFrameArray = clCreateBuffer(ofc->clContext, CL_MEM_WRITE_ONLY, 3 * frameHeight * frameWidth, NULL, &err);
+    ofc->inputFrameArray[0] = clCreateBuffer(ofc->clContext, CL_MEM_READ_ONLY, 1.5 * frameHeight * frameWidth, NULL, &err);
+    ofc->inputFrameArray[1] = clCreateBuffer(ofc->clContext, CL_MEM_READ_ONLY, 1.5 * frameHeight * frameWidth, NULL, &err);
+    ofc->warpedFrameArray12 = clCreateBuffer(ofc->clContext, CL_MEM_READ_WRITE, 1.5 * frameHeight * frameWidth, NULL, &err);
+    ofc->warpedFrameArray21 = clCreateBuffer(ofc->clContext, CL_MEM_READ_WRITE, 1.5 * frameHeight * frameWidth, NULL, &err);
+    ofc->outputFrameArray = clCreateBuffer(ofc->clContext, CL_MEM_WRITE_ONLY, 1.5 * frameHeight * frameWidth, NULL, &err);
     ofc->offsetArray12 = clCreateBuffer(ofc->clContext, CL_MEM_READ_WRITE, 2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short), NULL, &err);
     ofc->offsetArray21 = clCreateBuffer(ofc->clContext, CL_MEM_READ_WRITE, 2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short), NULL, &err);
     ofc->blurredOffsetArray12 = clCreateBuffer(ofc->clContext, CL_MEM_READ_WRITE, 2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short), NULL, &err);
