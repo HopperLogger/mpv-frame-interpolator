@@ -7,24 +7,23 @@
 
 #include "config.h"
 
-typedef struct OpticalFlowCalc
-{
+typedef struct OpticalFlowCalc {
     // Video properties
-    int frameWidth;         // Width of the frame
-    int frameHeight;        // Height of the frame
-    float outputBlackLevel; // The black level used for the output frame
-    float outputWhiteLevel; // The white level used for the output frame
+    int frameWidth;          // Width of the frame
+    int frameHeight;         // Height of the frame
+    float outputBlackLevel;  // The black level used for the output frame
+    float outputWhiteLevel;  // The white level used for the output frame
 
     // Optical flow calculation
-    int opticalFlowIterations;                    // Number of iterations to use in the optical flow calculation (0: As many as possible)
-    int opticalFlowResScalar;                     // Determines which resolution scalar will be used for the optical flow calculation
-    int opticalFlowFrameWidth;                    // Width of the frame used by the optical flow calculation
-    int opticalFlowFrameHeight;                   // Height of the frame used by the optical flow calculation
-    int opticalFlowSearchRadius;                  // Search radius used for the optical flow calculation
-    int directionIndexOffset;                     // opticalFlowFrameHeight * opticalFlowFrameWidth
-    int channelIndexOffset;                       // frameHeight * frameWidth
-    double ofcCalcTime;                           // The time it took to calculate the optical flow
-    double warpCalcTime;                          // The time it took to warp the frames
+    int opticalFlowIterations;    // Number of iterations to use in the optical flow calculation (0: As many as possible)
+    int opticalFlowResScalar;     // Determines which resolution scalar will be used for the optical flow calculation
+    int opticalFlowFrameWidth;    // Width of the frame used by the optical flow calculation
+    int opticalFlowFrameHeight;   // Height of the frame used by the optical flow calculation
+    int opticalFlowSearchRadius;  // Search radius used for the optical flow calculation
+    int directionIndexOffset;     // opticalFlowFrameHeight * opticalFlowFrameWidth
+    int channelIndexOffset;       // frameHeight * frameWidth
+    double ofcCalcTime;           // The time it took to calculate the optical flow
+    double warpCalcTime;          // The time it took to warp the frames
 
     // OpenCL variables
     cl_device_id clDeviceId;
@@ -45,11 +44,11 @@ typedef struct OpticalFlowCalc
     size_t threads8x8x1[3];
 
     // Queues
-    cl_command_queue queue;         // Queue used for the optical flow calculation
+    cl_command_queue queue;  // Queue used for the optical flow calculation
 
     // Events
-    cl_event ofcStartedEvent;       // Event marking the start of the optical flow calculation
-    cl_event warpStartedEvent;      // Event marking the start of the interpolation
+    cl_event ofcStartedEvent;   // Event marking the start of the optical flow calculation
+    cl_event warpStartedEvent;  // Event marking the start of the interpolation
 
     // GPU Arrays
     cl_mem offsetArray12;           // Array containing x,y offsets for each pixel of frame1
@@ -64,7 +63,7 @@ typedef struct OpticalFlowCalc
     cl_mem warpedFrameArray12;      // Array containing the warped frame (frame 1 to frame 2)
     cl_mem warpedFrameArray21;      // Array containing the warped frame (frame 2 to frame 1)
 #if DUMP_IMAGES
-    unsigned short *imageDumpArray; // Array containing the image data
+    unsigned short *imageDumpArray;  // Array containing the image data
 #endif
 
     // Kernels
@@ -212,4 +211,4 @@ bool saveImage(struct OpticalFlowCalc *ofc, const char *filePath);
  */
 bool adjustSearchRadius(struct OpticalFlowCalc *ofc, int newSearchRadius);
 
-#endif // OPTICALFLOWCALC_H
+#endif  // OPTICALFLOWCALC_H
