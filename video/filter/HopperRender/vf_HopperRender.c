@@ -307,7 +307,7 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f) {
     }
     char buffer[512];
     memset(buffer, 0, sizeof(buffer));
-    sprintf(buffer, "%f\n", priv->currTotalCalcDuration);
+    sprintf(buffer, "%f\n", priv->ofc->ofcCalcTime + priv->totalWarpDuration);
     fprintf(file, "%s", buffer);
     fclose(file);
 #endif
@@ -408,7 +408,7 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 static void vf_HopperRender_process_intermediate_frame(struct mp_filter *f) {
     struct priv *priv = f->priv;
 
-    struct mp_image *img = mp_image_pool_get(priv->imagePool, IMGFMT_P010, priv->ofc->frameWidth, priv->ofc->frameHeight);
+    struct mp_image *img = mp_image_pool_get(priv->imagePool, IMGFMT_NV12, priv->ofc->frameWidth, priv->ofc->frameHeight);
     mp_image_copy_attributes(img, priv->referenceImage);
 
     // Update playback timestamp
@@ -682,7 +682,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
         talloc_free(options);
         return NULL;
     }
-    mp_autoconvert_add_imgfmt(priv->conv, IMGFMT_P010, 0);
+    mp_autoconvert_add_imgfmt(priv->conv, IMGFMT_NV12, 0);
 
     // Thread data
     priv->m_ptOFCThreadID = 0;
