@@ -6,6 +6,16 @@ unsigned char apply_levelsUV(float value, float white_level) {
     return fmax(fmin((value - 128.0f) / white_level * 255.0f + 128.0f, 255.0f), 0.0f);
 }
 
+// Helper function to mirror the coordinate if it is outside the bounds
+int mirrorCoordinate(int pos, int dim) {
+    if (pos >= dim - 1) {
+        return (dim - 1) - (pos - dim + 2);
+    } else if (pos < 1) {
+        return -pos + 1;
+    }
+    return pos;
+}
+
 // Kernel that warps a frame according to the offset array
 __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __global const unsigned char* sourceFrame21,
                               __global const short* offsetArray12, __global const short* offsetArray21,
@@ -54,10 +64,10 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
         const int offsetY21 = (int)round((float)(offsetArray21[directionIndexOffset + scaledCy * lowDimX + scaledCx]) * frameScalar21);
 
         // Get the new pixel position
-        const int newCx12 = max(min(adjCx + offsetX12, dimX - 1), 0);
-        const int newCy12 = max(min(adjCy + offsetY12, dimY - 1), 0);
-        const int newCx21 = max(min(adjCx + offsetX21, dimX - 1), 0);
-        const int newCy21 = max(min(adjCy + offsetY21, dimY - 1), 0);
+        const int newCx12 = mirrorCoordinate(adjCx + offsetX12, dimX);
+        const int newCy12 = mirrorCoordinate(adjCy + offsetY12, dimY);
+        const int newCx21 = mirrorCoordinate(adjCx + offsetX21, dimX);
+        const int newCy21 = mirrorCoordinate(adjCy + offsetY21, dimY);
 
         // Move the origin pixel to the new position
         if (frameOutputMode == 0) { // WarpedFrame12
@@ -103,10 +113,10 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
         const int offsetY21 = (int)round((float)(offsetArray21[directionIndexOffset + scaledCy * lowDimX + scaledCx]) * frameScalar21 * 0.5f);
 
         // Get the new pixel position
-        const int newCx12 = max(min(adjCx + offsetX12, dimX - 1), 0);
-        const int newCy12 = max(min(adjCy + offsetY12, (dimY >> 1) - 1), 0);
-        const int newCx21 = max(min(adjCx + offsetX21, dimX - 1), 0);
-        const int newCy21 = max(min(adjCy + offsetY21, (dimY >> 1) - 1), 0);
+        const int newCx12 = mirrorCoordinate(adjCx + offsetX12, dimX);
+        const int newCy12 = mirrorCoordinate(adjCy + offsetY12, (dimY >> 1));
+        const int newCx21 = mirrorCoordinate(adjCx + offsetX21, dimX);
+        const int newCy21 = mirrorCoordinate(adjCy + offsetY21, (dimY >> 1));
 
         // Move the origin pixel to the new position
         if (frameOutputMode == 0) { // WarpedFrame12
