@@ -64,11 +64,13 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     short relOffsetAdjustmentY = 0;
     if (!(step & 1)) {
         relOffsetAdjustmentX = (cz % searchWindowSize) - (searchWindowSize / 2);
+        relOffsetAdjustmentX = (relOffsetAdjustmentX * relOffsetAdjustmentX * (relOffsetAdjustmentX > 0 ? 1 : -1));
     } else {
         relOffsetAdjustmentY = (cz % searchWindowSize) - (searchWindowSize / 2);
+        relOffsetAdjustmentY = (relOffsetAdjustmentY * relOffsetAdjustmentY * (relOffsetAdjustmentY > 0 ? 1 : -1));
     }
-    const short offsetX = idealOffsetX + (relOffsetAdjustmentX * relOffsetAdjustmentX * (relOffsetAdjustmentX > 0 ? 1 : -1));
-    const short offsetY = idealOffsetY + (relOffsetAdjustmentY * relOffsetAdjustmentY * (relOffsetAdjustmentY > 0 ? 1 : -1));
+    const short offsetX = idealOffsetX + relOffsetAdjustmentX;
+    const short offsetY = idealOffsetY + relOffsetAdjustmentY;
     int newCx = scaledCx + offsetX;
     int newCy = scaledCy + offsetY;
 
@@ -96,9 +98,9 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
 
     // Calculate the offset bias
     if (!step) {
-        offsetBias = abs(offsetX);
+        offsetBias = abs(relOffsetAdjustmentX);
     } else {
-        offsetBias = abs(offsetY);
+        offsetBias = abs(relOffsetAdjustmentY);
     }
     offsetBias = pow((float)offsetBias, 1.2f);
 

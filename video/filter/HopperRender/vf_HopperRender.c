@@ -21,16 +21,7 @@ typedef struct {
 static int dump_iter = 0;
 #endif
 
-typedef enum FrameOutput {
-    WarpedFrame12,
-    WarpedFrame21,
-    BlendedFrame,
-    HSVFlow,
-    GreyFlow,
-    SideBySide1,
-    SideBySide2,
-    TearingTest
-} FrameOutput;
+typedef enum FrameOutput { WarpedFrame12, WarpedFrame21, BlendedFrame, HSVFlow, GreyFlow, SideBySide1, SideBySide2, TearingTest } FrameOutput;
 
 typedef enum InterpolationState { Deactivated, NotNeeded, Active, TooSlow } InterpolationState;
 
@@ -47,9 +38,8 @@ struct priv {
 
     // Thread data
 #if INC_APP_IND
-    ThreadData
-        m_tdAppIndicatorThreadData;  // Data for the AppIndicator thread used to communicate with the status widget
-    int m_iAppIndicatorFileDesc;     // The file descriptor for the AppIndicator status widget
+    ThreadData m_tdAppIndicatorThreadData;  // Data for the AppIndicator thread used to communicate with the status widget
+    int m_iAppIndicatorFileDesc;            // The file descriptor for the AppIndicator status widget
 #endif
     pthread_t m_ptOFCThreadID;  // The thread ID of the optical flow calculation thread
 
@@ -69,21 +59,19 @@ struct priv {
     bool resync;              // Whether or not the filter should resync
 
     // Optical flow calculation
-    struct OpticalFlowCalc *ofc;     // Optical flow calculator struct
-    double blendingScalar;           // The scalar used to determine the position between frame1 and frame2
+    struct OpticalFlowCalc *ofc;  // Optical flow calculator struct
+    double blendingScalar;        // The scalar used to determine the position between frame1 and frame2
 
     // Frame output
     struct mp_image_pool *imagePool;  // The software image pool used to store the source frames
     int interpolatedFrameNum;         // The current interpolated frame number
-    int sourceFrameNum;  // Frame counter (relative! i.e. number of source frames received since last seek or playback
-                         // start)
-    int numIntFrames;    // Number of interpolated frames for every source frame
+    int sourceFrameNum;               // Frame counter (relative! i.e. number of source frames received since last seek or playback start)
+    int numIntFrames;                 // Number of interpolated frames for every source frame
 
     // Performance and activation status
-    InterpolationState
-        interpolationState;         // The state of the filter (0: Deactivated, 1: Not Needed, 2: Active, 3: Too Slow)
-    double warpCalcDurations[10];   // The durations of the warp calculations
-    double totalWarpDuration;       // The total duration of the current frame warp
+    InterpolationState interpolationState;  // The state of the filter (0: Deactivated, 1: Not Needed, 2: Active, 3: Too Slow)
+    double warpCalcDurations[10];           // The durations of the warp calculations
+    double totalWarpDuration;               // The total duration of the current frame warp
 };
 
 #define max(a, b) ((a) > (b) ? (a) : (b))
@@ -197,19 +185,14 @@ static void vf_HopperRender_update_AppIndicator_widget(struct priv *priv) {
                  "Search Radius: %d\nCalc Res: %dx%d\nTarget Time: %06.2f ms (%.1f fps)\nFrame Time: "
                  "%06.2f ms (%.3f fps | %.2fx)\nTotal Time: %06.2f ms (%.0f fps > %.3f fps)\n"
                  "OFC Time: %06.2f ms (%.0f fps > %.3f fps)\nWarp Time: %06.2f ms (%.0f fps > %.3f fps)",
-                 priv->ofc->opticalFlowSearchRadius,
-                 priv->ofc->frameWidth >> priv->ofc->opticalFlowResScalar,
-                 priv->ofc->frameHeight >> priv->ofc->opticalFlowResScalar, priv->targetFrameTime * 1000.0,
-                 1.0 / priv->targetFrameTime, priv->sourceFrameTime * 1000.0, 1.0 / priv->sourceFrameTime,
-                 priv->playbackSpeed, 
-                 (priv->ofc->ofcCalcTime + priv->totalWarpDuration) * 1000.0, 1.0 / (priv->ofc->ofcCalcTime + priv->totalWarpDuration), 1.0 / priv->sourceFrameTime,
-                 priv->ofc->ofcCalcTime * 1000.0, 1.0 / priv->ofc->ofcCalcTime, 1.0 / priv->sourceFrameTime,
-                 priv->totalWarpDuration * 1000.0, 1.0 / priv->totalWarpDuration, 1.0 / priv->sourceFrameTime);
+                 priv->ofc->opticalFlowSearchRadius, priv->ofc->frameWidth >> priv->ofc->opticalFlowResScalar, priv->ofc->frameHeight >> priv->ofc->opticalFlowResScalar,
+                 priv->targetFrameTime * 1000.0, 1.0 / priv->targetFrameTime, priv->sourceFrameTime * 1000.0, 1.0 / priv->sourceFrameTime, priv->playbackSpeed,
+                 (priv->ofc->ofcCalcTime + priv->totalWarpDuration) * 1000.0, 1.0 / (priv->ofc->ofcCalcTime + priv->totalWarpDuration), 1.0 / priv->sourceFrameTime, priv->ofc->ofcCalcTime * 1000.0,
+                 1.0 / priv->ofc->ofcCalcTime, 1.0 / priv->sourceFrameTime, priv->totalWarpDuration * 1000.0, 1.0 / priv->totalWarpDuration, 1.0 / priv->sourceFrameTime);
 
     for (int i = 0; i < 10; i++) {
         if (i < min(priv->numIntFrames, 10)) {
-            offset += snprintf(buffer2 + offset, sizeof(buffer2) - offset, "\nWarp%d: %06.2f ms", i,
-                               priv->warpCalcDurations[i] * 1000.0);
+            offset += snprintf(buffer2 + offset, sizeof(buffer2) - offset, "\nWarp%d: %06.2f ms", i, priv->warpCalcDurations[i] * 1000.0);
         } else {
             offset += snprintf(buffer2 + offset, sizeof(buffer2) - offset, "\n");
         }
@@ -251,8 +234,7 @@ void *vf_HopperRender_launch_AppIndicator_script(void *arg) {
 
         // Create a buffer to store the full path
         char full_path[512];
-        snprintf(full_path, sizeof(full_path),
-                 "%s/mpv-build/mpv/video/filter/HopperRender/HopperRenderSettingsApplet.py", home);
+        snprintf(full_path, sizeof(full_path), "%s/mpv-build/mpv/video/filter/HopperRender/HopperRenderSettingsApplet.py", home);
 
         // Use the constructed path in execlp
         execlp("python3", "python3", full_path, (char *)NULL);
@@ -368,8 +350,7 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 
     // Warp frames
     if (priv->frameOutputMode != HSVFlow && priv->frameOutputMode != GreyFlow && priv->frameOutputMode != TearingTest) {
-        ERR_CHECK(
-            warpFrames(priv->ofc, priv->blendingScalar, priv->frameOutputMode, (int)(priv->interpolatedFrameNum == 0)), f);
+        ERR_CHECK(warpFrames(priv->ofc, priv->blendingScalar, priv->frameOutputMode, (int)(priv->interpolatedFrameNum == 0)), f);
     }
 
     // Blend the frames together
@@ -427,8 +408,7 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 static void vf_HopperRender_process_intermediate_frame(struct mp_filter *f) {
     struct priv *priv = f->priv;
 
-    struct mp_image *img =
-        mp_image_pool_get(priv->imagePool, IMGFMT_P010, priv->ofc->frameWidth, priv->ofc->frameHeight);
+    struct mp_image *img = mp_image_pool_get(priv->imagePool, IMGFMT_P010, priv->ofc->frameWidth, priv->ofc->frameHeight);
     mp_image_copy_attributes(img, priv->referenceImage);
 
     // Update playback timestamp
@@ -507,18 +487,16 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     // Update timestamps and source information
     priv->sourceFrameNum += 1;
     if (priv->sourceFrameNum <= 2 || priv->resync) {
-        priv->currentOutputPTS =
-            img->pts;  // The first three frames we take the original PTS (see output: 1.0, 2.0, 3.0, 3.1, ...)
+        priv->currentOutputPTS = img->pts;
         priv->resync = false;
     } else {
-        // The rest of the frames we increase in 60fps steps
         priv->currentOutputPTS += priv->targetFrameTime * priv->playbackSpeed;
         img->pts = priv->currentOutputPTS;
     }
 
     // Calculate the number of interpolated frames
     priv->numIntFrames = (int)max(ceil((1.0 - priv->blendingScalar) / (priv->targetFrameTime / priv->sourceFrameTime)), 1.0);
-    
+
     // Adjust the settings to process everything fast enough
     vf_HopperRender_auto_adjust_settings(f);
 
@@ -754,8 +732,5 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 static const m_option_t vf_opts_fields[] = {{"FrameOutput", OPT_INT(frame_output), M_RANGE(0, 7), OPTDEF_INT(2)}};
 
 // Filter entry
-const struct mp_user_filter_entry vf_HopperRender = {.desc = {.description = "Optical-Flow Frame Interpolation",
-                                                              .name = "HopperRender",
-                                                              .priv_size = sizeof(struct priv),
-                                                              .options = vf_opts_fields},
+const struct mp_user_filter_entry vf_HopperRender = {.desc = {.description = "Optical-Flow Frame Interpolation", .name = "HopperRender", .priv_size = sizeof(struct priv), .options = vf_opts_fields},
                                                      .create = vf_HopperRender_create};
