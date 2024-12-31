@@ -56,8 +56,6 @@ typedef struct OpticalFlowCalc {
                                     // new value decreased)
     cl_mem outputFrameArray;        // Array containing the output frame
     cl_mem inputFrameArray[2];      // Array containing the last three frames
-    cl_mem warpedFrameArray12;      // Array containing the warped frame (frame 1 to frame 2)
-    cl_mem warpedFrameArray21;      // Array containing the warped frame (frame 2 to frame 1)
 #if DUMP_IMAGES
     unsigned short *imageDumpArray;  // Array containing the image data
 #endif
@@ -69,9 +67,6 @@ typedef struct OpticalFlowCalc {
     cl_kernel flipFlowKernel;
     cl_kernel blurFlowKernel;
     cl_kernel warpFrameKernel;
-    cl_kernel blendFrameKernel;
-    cl_kernel sideBySide1Kernel;
-    cl_kernel sideBySide2Kernel;
     cl_kernel visualizeFlowKernel;
     cl_kernel tearingTestKernel;
 } OpticalFlowCalc;
@@ -129,42 +124,10 @@ bool calculateOpticalFlow(struct OpticalFlowCalc *ofc);
  * @param ofc: Pointer to the optical flow calculator
  * @param blendingScalar: The scalar to blend the frames with (i.e. the progress between frame1 and frame2)
  * @param frameOutputMode: The mode to output the frames in (0: WarpedFrame12, 1: WarpedFrame21, 2: Both)
- * @param isNewFrame: Whether or not this is the first call for a new source frame
  *
  * @return: Whether or not the frames were warped successfully
  */
-bool warpFrames(struct OpticalFlowCalc *ofc, const float blendingScalar, const int frameOutputMode, const int isNewFrame);
-
-/*
- * Blends warpedFrame1 and warpedFrame2 according to the blending scalar
- *
- * @param ofc: Pointer to the optical flow calculator
- * @param blendingScalar: The scalar to blend the frames with (i.e. the progress between frame1 and frame2)
- *
- * @return: Whether or not the frames were blended successfully
- */
-bool blendFrames(struct OpticalFlowCalc *ofc, const float blendingScalar);
-
-/*
- * Places the left half of inputFrameArray[0] over the outputFrame
- *
- * @param ofc: Pointer to the optical flow calculator
- *
- * @return: Whether or not the frame was inserted successfully
- */
-bool sideBySide1(struct OpticalFlowCalc *ofc);
-
-/*
- * Produces a side by side comparison where the current source frame is on the left and the interpolated result is on
- * the right
- *
- * @param ofc: Pointer to the optical flow calculator
- * @param blendingScalar: The scalar to blend the frames with (i.e. the progress between frame1 and frame2)
- * @param sourceFrameNum: The current source frame number
- *
- * @return: Whether or not the frames were blended successfully
- */
-bool sideBySide2(struct OpticalFlowCalc *ofc, const float blendingScalar, const int sourceFrameNum);
+bool warpFrames(struct OpticalFlowCalc *ofc, const float blendingScalar, const int frameOutputMode);
 
 /*
  * Draws the offsetArray12 as an RGB image visualizing the flow

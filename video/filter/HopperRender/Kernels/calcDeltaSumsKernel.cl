@@ -1,5 +1,5 @@
 // Helper function to get neighbor offset values
-inline short getNeighborOffset(__global const short *offsetArray, int neighborIndexX, int neighborIndexY, 
+inline short getNeighborOffset(__global const short* offsetArray, int neighborIndexX, int neighborIndexY, 
                                int lowDimX, int lowDimY, int directionIndexOffset) {
     return (neighborIndexX >= 0 && neighborIndexX < lowDimX && neighborIndexY >= 0 && neighborIndexY < lowDimY)
         ? offsetArray[directionIndexOffset + neighborIndexY * lowDimX + neighborIndexX]
