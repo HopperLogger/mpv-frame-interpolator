@@ -45,7 +45,6 @@ struct priv {
 
     // Settings
     FrameOutput frameOutputMode;  // What frame output to use
-    bool isFilterInitialized;     // Whether or not the filter has been initialized
     double targetFrameTime;       // The target presentation time stamp (PTS) of the video
 
     // Video info
@@ -272,7 +271,7 @@ void *vf_HopperRender_launch_AppIndicator_script(void *arg) {
  */
 static void vf_HopperRender_uninit(struct mp_filter *f) {
     struct priv *priv = f->priv;
-    if (priv->isFilterInitialized) {
+    if (priv->ofc->isInitialized) {
         freeOFC(priv->ofc);
         mp_image_unrefp(&priv->referenceImage);
     }
@@ -464,10 +463,9 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     }
 
     // Initialize the filter if needed
-    if (!priv->isFilterInitialized) {
+    if (!priv->ofc->isInitialized) {
         priv->referenceImage = mp_image_new_ref(img);
         ERR_CHECK(initOpticalFlowCalc(priv->ofc, img->h, img->w), f);
-        priv->isFilterInitialized = true;
     }
 
     /* unsigned short* buffer = (unsigned short*)malloc(priv->ofc->frameHeight * priv->ofc->frameWidth * sizeof(unsigned short));
@@ -689,7 +687,6 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 
     // Settings
     priv->frameOutputMode = (FrameOutput)priv->opts->frame_output;
-    priv->isFilterInitialized = false;
     double display_fps = 60.0;
 #if !DUMP_IMAGES
     struct mp_stream_info *info = mp_filter_find_stream_info(f);
@@ -724,6 +721,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 
     // Optical Flow calculator
     priv->ofc = calloc(1, sizeof(struct OpticalFlowCalc));
+    priv->ofc->isInitialized = false;
 
     return f;
 }

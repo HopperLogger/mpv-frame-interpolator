@@ -9,34 +9,30 @@
 
 typedef struct OpticalFlowCalc {
     // Video properties
+    bool isInitialized;      // Whether or not the optical flow calculator is initialized
     int frameWidth;          // Width of the frame
     int frameHeight;         // Height of the frame
     float outputBlackLevel;  // The black level used for the output frame
     float outputWhiteLevel;  // The white level used for the output frame
 
     // Optical flow calculation
-    int opticalFlowIterations;    // Number of iterations to use in the optical flow calculation (0: As many as possible)
     int opticalFlowResScalar;     // Determines which resolution scalar will be used for the optical flow calculation
     int opticalFlowFrameWidth;    // Width of the frame used by the optical flow calculation
     int opticalFlowFrameHeight;   // Height of the frame used by the optical flow calculation
     int opticalFlowSearchRadius;  // Search radius used for the optical flow calculation
-    int directionIndexOffset;     // opticalFlowFrameHeight * opticalFlowFrameWidth
-    int channelIndexOffset;       // frameHeight * frameWidth
     double ofcCalcTime;           // The time it took to calculate the optical flow
-    double warpCalcTime;          // The time it took to warp the frames
+    double warpCalcTime;          // The time it took to warp the current intermediate frame
 
     // OpenCL variables
     cl_device_id clDeviceId;
     cl_context clContext;
 
     // Grids
-    size_t lowGrid16x16xL[3];
     size_t lowGrid16x16x4[3];
     size_t lowGrid16x16x2[3];
     size_t lowGrid16x16x1[3];
     size_t lowGrid8x8xL[3];
     size_t grid16x16x2[3];
-    size_t grid16x16x1[3];
     size_t halfGrid16x16x2[3];
 
     // Threads
