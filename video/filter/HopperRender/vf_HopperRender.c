@@ -163,9 +163,9 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv) {
         default:
             // Black and White Levels
             if (code >= 100 && code <= 355) {
-                priv->ofc->outputBlackLevel = (float)((code - 100) * 256);
+                priv->ofc->outputBlackLevel = (float)(code - 100);
             } else if (code >= 400 && code <= 655) {
-                priv->ofc->outputWhiteLevel = (float)((code - 400) * 256);
+                priv->ofc->outputWhiteLevel = (float)(code - 400);
             }
             break;
     }
@@ -349,12 +349,7 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 
     // Warp frames
     if (priv->frameOutputMode != TearingTest && priv->frameOutputMode != GreyFlow) {
-        ERR_CHECK(warpFrames(priv->ofc, priv->blendingScalar, priv->frameOutputMode, (int)(priv->interpolatedFrameNum == 0)), f);
-    }
-
-    // Blend the frames together
-    if (priv->frameOutputMode == BlendedFrame || priv->frameOutputMode == SideBySide1 || priv->frameOutputMode == HSVFlow) {
-        ERR_CHECK(blendFrames(priv->ofc, priv->blendingScalar), f);
+        ERR_CHECK(warpFrames(priv->ofc, priv->blendingScalar, priv->frameOutputMode), f);
     }
 
     // Special output modes
@@ -362,10 +357,6 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
         ERR_CHECK(visualizeFlow(priv->ofc, 0), f);
     } else if (priv->frameOutputMode == GreyFlow) {
         ERR_CHECK(visualizeFlow(priv->ofc, 1), f);
-    } else if (priv->frameOutputMode == SideBySide1) {
-        ERR_CHECK(sideBySide1(priv->ofc), f);
-    } else if (priv->frameOutputMode == SideBySide2) {
-        ERR_CHECK(sideBySide2(priv->ofc, priv->blendingScalar, priv->sourceFrameNum), f);
     } else if (priv->frameOutputMode == TearingTest) {
         ERR_CHECK(tearingTest(priv->ofc), f);
     }
