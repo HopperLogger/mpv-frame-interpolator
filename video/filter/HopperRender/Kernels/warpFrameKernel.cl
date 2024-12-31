@@ -1,5 +1,3 @@
-#define KERNEL_RADIUS 2
-
 // Kernel that warps a frame according to the offset array
 __kernel void warpFrameKernel(__global const unsigned char* sourceFrame, __global const short* offsetArray,
                               __global unsigned char* warpedFrame, const float frameScalar, const int lowDimX,
@@ -18,38 +16,22 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame, __globa
         const int offsetY = (int)round((float)(offsetArray[directionIndexOffset + scaledCy * lowDimX + scaledCx]) * frameScalar);
 
         // Move a block of pixels to mask the holes
-        for (int nx = cx - KERNEL_RADIUS; nx < cx + KERNEL_RADIUS; nx++) {
-            for (int ny = cy - KERNEL_RADIUS; ny < cy + KERNEL_RADIUS; ny++) {
-                const int newCx = nx + offsetX;
-                const int newCy = ny + offsetY;
+        const int newCx = max(min(cx + offsetX, dimX - 1), 0);
+        const int newCy = max(min(cy + offsetY, dimY - 1), 0);
 
-                if (newCy >= 0 && newCy < dimY && newCx >= 0 && newCx < dimX && ny >= 2 && ny < dimY - 2 && nx >= 2 && nx < dimX - 2) {
-                    warpedFrame[newCy * dimX + newCx] = sourceFrame[ny * dimX + nx];
-                }
-            }
-        }
+        warpedFrame[cy * dimX + cx] = sourceFrame[newCy * dimX + newCx];
         
     } else if (cz == 1 && cy < (dimY >> 1) && cx < dimX) {
 		// U/V-Channel
         const int scaledCx = (cx >> resolutionScalar) & ~1;  // The X-Index of the current thread in the offset array
         const int scaledCy = (cy >> resolutionScalar) << 1;  // The Y-Index of the current thread in the offset array
         const int offsetX = (int)round((float)(offsetArray[scaledCy * lowDimX + scaledCx]) * frameScalar);
-        const int offsetY = (int)round((float)(offsetArray[directionIndexOffset + scaledCy * lowDimX + scaledCx]) * frameScalar * 0.5);
+        const int offsetY = (int)round((float)(offsetArray[directionIndexOffset + scaledCy * lowDimX + scaledCx]) * frameScalar * 0.5f);
 
         // Move a block of pixels to mask the holes
-        for (int nx = cx - KERNEL_RADIUS; nx < cx + KERNEL_RADIUS; nx+=2) {
-            for (int ny = cy - KERNEL_RADIUS / 2; ny < cy + KERNEL_RADIUS / 2; ny++) {
-                const int newCx = nx + offsetX;
-                const int newCy = ny + offsetY;
+        const int newCx = max(min(cx + offsetX, dimX - 1), 0);
+        const int newCy = max(min(cy + offsetY, (dimY >> 1) - 1), 0);
 
-                if (newCy >= 0 && newCy < (dimY >> 1) && newCx >= 0 && newCx < dimX && ny >= 1 && ny < (dimY >> 1) - 1 && nx >= 2 && nx < dimX - 2) {
-                    if (!(cx & 1)) { // U-Channel
-                        warpedFrame[channelIndexOffset + newCy * dimX + (newCx & ~1)] = sourceFrame[channelIndexOffset + ny * dimX + (nx & ~1)];
-                    } else { // V-Channel
-                        warpedFrame[channelIndexOffset + newCy * dimX + (newCx & ~1) + 1] = sourceFrame[channelIndexOffset + ny * dimX + (nx & ~1) + 1];
-                    }
-                }
-            }
-        }
+        warpedFrame[channelIndexOffset + cy * dimX + cx] = sourceFrame[channelIndexOffset + newCy * dimX + (newCx & ~1) + (cx & 1)];
     }
 }

@@ -91,9 +91,9 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
         }
 
         // Calculate the delta value for the current pixel
-        delta = abs_diff(frame1[scaledCy * dimX + scaledCx], frame2[newCy * dimX + newCx]) + 
-                abs_diff(frame1[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1)], frame2[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1)]) + 
-                abs_diff(frame1[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1) + 1], frame2[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1) + 1]);
+        delta = abs_diff(frame1[newCy * dimX + newCx], frame2[scaledCy * dimX + scaledCx]) + 
+                abs_diff(frame1[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1)], frame2[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1)]) + 
+                abs_diff(frame1[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1) + 1], frame2[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1) + 1]);
     }
 
     // Calculate the offset bias

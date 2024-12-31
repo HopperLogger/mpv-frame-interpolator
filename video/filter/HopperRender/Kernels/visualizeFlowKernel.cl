@@ -15,11 +15,11 @@ __kernel void visualizeFlowKernel(__global const short* offsetArray, __global un
     short x;
     short y;
     if (cz == 0 && cy < dimY && cx < dimX) {
-        x = offsetArray[scaledCy * lowDimX + scaledCx];
-        y = offsetArray[directionIndexOffset + scaledCy * lowDimX + scaledCx];
+        x = -offsetArray[scaledCy * lowDimX + scaledCx];
+        y = -offsetArray[directionIndexOffset + scaledCy * lowDimX + scaledCx];
     } else if (cz == 1 && cy < (dimY >> 1) && cx < dimX) {
-        x = offsetArray[(scaledCy << 1) * lowDimX + scaledCx];
-        y = offsetArray[directionIndexOffset + (scaledCy << 1) * lowDimX + scaledCx];
+        x = -offsetArray[(scaledCy << 1) * lowDimX + scaledCx];
+        y = -offsetArray[directionIndexOffset + (scaledCy << 1) * lowDimX + scaledCx];
     }
 
     // Used for color output
