@@ -199,8 +199,6 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
         (windowSize == 2 && ((tIdx & 1) == 0 && (get_local_id(1) & 1) == 0))) {
         const int windowIndexX = cx / windowSize;
         const int windowIndexY = cy / windowSize;
-        atomic_add(&summedUpDeltaArray[cz * lowDimY * lowDimX + (windowIndexY * windowSize) * lowDimX +
-                                       (windowIndexX * windowSize)],
-                   partialSums[tIdx]);
+        atomic_add(&summedUpDeltaArray[cz * lowDimY * lowDimX + (windowIndexY * windowSize) * lowDimX + (windowIndexX * windowSize)], partialSums[tIdx]);
     }
 }
