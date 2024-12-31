@@ -1,13 +1,12 @@
 // Kernel that creates an HSV flow image from the offset array
 __kernel void visualizeFlowKernel(__global const short* offsetArray, __global unsigned char* outputFrame,
-                                  __global const unsigned char* inputFrame, const int lowDimY, const int lowDimX,
+                                  const int lowDimY, const int lowDimX,
                                   const int dimY, const int dimX, const int resolutionScalar,
                                   const int directionIndexOffset, const int channelIndexOffset, const int doBWOutput) {
     // Current entry to be computed by the thread
     const int cx = get_global_id(0);
     const int cy = get_global_id(1);
     const int cz = get_global_id(2);
-    const float blendScalar = 0.5f;
 
     const int scaledCx = cx >> resolutionScalar;  // The X-Index of the current thread in the offset array
     const int scaledCy = cy >> resolutionScalar;  // The Y-Index of the current thread in the offset array
@@ -30,7 +29,7 @@ __kernel void visualizeFlowKernel(__global const short* offsetArray, __global un
     struct RGB rgb;
 
     // Used for black and white output
-    const unsigned short normFlow = min((abs(x) + abs(y)) << 2, 255);
+    const unsigned char normFlow = min((abs(x) + abs(y)) << 2, 255);
 
     // Color Output
     if (!doBWOutput) {
@@ -112,8 +111,7 @@ __kernel void visualizeFlowKernel(__global const short* offsetArray, __global un
 
     // Convert the RGB flow to YUV and write it to the output frame
     if (cz == 0 && cy < dimY && cx < dimX) { // Y Channel
-        outputFrame[cy * dimX + cx] = doBWOutput ? normFlow : fmax(fmin(rgb.r * 0.299f + rgb.g * 0.587f + rgb.b * 0.114f, 255.0f), 0.0f) * blendScalar +
-                                                              inputFrame[cy * dimX + cx] * (1.0f - blendScalar);
+        outputFrame[cy * dimX + cx] = doBWOutput ? normFlow : ((unsigned short)fmax(fmin(rgb.r * 0.299f + rgb.g * 0.587f + rgb.b * 0.114f, 255.0f), 0.0f) + outputFrame[cy * dimX + cx]) >> 1;
     } else if (cz == 1 && cy < (dimY >> 1) && cx < dimX) {
         if ((cx & 1) == 0) { // U Channel
             outputFrame[channelIndexOffset + cy * dimX + (cx & ~1)] = doBWOutput ? 128 : fmax(fmin(rgb.r * -0.168736f + rgb.g * -0.331264f + rgb.b * 0.5f + 128.0f, 255.0f), 0.0f);

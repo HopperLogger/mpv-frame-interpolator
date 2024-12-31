@@ -349,12 +349,12 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
     struct priv *priv = f->priv;
 
     // Warp frames
-    if (priv->frameOutputMode != HSVFlow && priv->frameOutputMode != GreyFlow && priv->frameOutputMode != TearingTest) {
+    if (priv->frameOutputMode != TearingTest && priv->frameOutputMode != GreyFlow) {
         ERR_CHECK(warpFrames(priv->ofc, priv->blendingScalar, priv->frameOutputMode, (int)(priv->interpolatedFrameNum == 0)), f);
     }
 
     // Blend the frames together
-    if (priv->frameOutputMode == BlendedFrame || priv->frameOutputMode == SideBySide1) {
+    if (priv->frameOutputMode == BlendedFrame || priv->frameOutputMode == SideBySide1 || priv->frameOutputMode == HSVFlow) {
         ERR_CHECK(blendFrames(priv->ofc, priv->blendingScalar), f);
     }
 

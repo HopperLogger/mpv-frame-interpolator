@@ -102,7 +102,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     } else {
         offsetBias = abs(relOffsetAdjustmentY);
     }
-    offsetBias = pow((float)offsetBias, 1.2f) * 0.05f;
+    offsetBias >>= 4;
 
     // Calculate the neighbor biases
     if (!isFirstIteration) {
@@ -146,8 +146,8 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
         }
 
         // Scale biases
-        neighborBias1 >>= 2;
-        neighborBias2 >>= 2;
+        neighborBias1 >>= 3;
+        neighborBias2 >>= 3;
     }
     
     if (windowSize == 1) {
