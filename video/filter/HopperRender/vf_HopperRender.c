@@ -17,10 +17,6 @@ typedef struct {
 } ThreadData;
 #endif
 
-#if DUMP_IMAGES
-static int dump_iter = 0;
-#endif
-
 typedef enum FrameOutput { WarpedFrame12, WarpedFrame21, BlendedFrame, HSVFlow, GreyFlow, SideBySide1, SideBySide2 } FrameOutput;
 
 typedef enum InterpolationState { Deactivated, NotNeeded, Active, TooSlow } InterpolationState;
@@ -308,7 +304,7 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f) {
     fclose(file);
 #endif
 
-#if !DUMP_IMAGES && AUTO_SEARCH_RADIUS_ADJUST
+#if AUTO_SEARCH_RADIUS_ADJUST
     double currMaxCalcDuration = priv->ofc->ofcCalcTime + priv->totalWarpDuration;
 
     // Check if we were too slow or have leftover capacity
@@ -650,12 +646,10 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
     // Settings
     priv->frameOutputMode = (FrameOutput)priv->opts->frame_output;
     double display_fps = 60.0;
-#if !DUMP_IMAGES
     struct mp_stream_info *info = mp_filter_find_stream_info(f);
     if (info) {
         if (info->get_display_fps) display_fps = info->get_display_fps(info);  // Set the target FPS to the display FPS
     }
-#endif
     priv->targetFrameTime = 1.0 / display_fps;
 
     // Video info

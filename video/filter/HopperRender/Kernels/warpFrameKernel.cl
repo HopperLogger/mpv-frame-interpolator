@@ -137,7 +137,10 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
     int adjCy = cy;
 
     if (cz == 0 && cy < dimY && cx < dimX) {
-        if (frameOutputMode == 5) { // SideBySide1
+        if (frameOutputMode == 4) { // GreyFlow
+            outputFrame[cy * dimX + cx] = visualizeFlow(offsetArray12[cy * lowDimX + cx], offsetArray12[directionIndexOffset + cy * lowDimX + cx], 0, 0, 1);
+            return;
+        } else if (frameOutputMode == 5) { // SideBySide1
             const bool isInLeftSideY = cy >= verticalOffset && cy < (verticalOffset + (dimY >> 1)) && cx < (dimX >> 1);
         
             if (isInLeftSideY) { // Fill the left side of the output frame with the source frame
@@ -181,14 +184,17 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
             outputFrame[cy * dimX + cx] = sourceFrame21[newCy21 * dimX + newCx21];
         } else { // BlendedFrame
             unsigned char blendedValue = (float)sourceFrame12[newCy12 * dimX + newCx12] * frameScalar21 + (float)sourceFrame21[newCy21 * dimX + newCx21] * frameScalar12;
-            if (frameOutputMode == 3 || frameOutputMode == 4) { // HSVFlow / GreyFlow
+            if (frameOutputMode == 3) { // HSVFlow
                 blendedValue = visualizeFlow(offsetX12, offsetY12, blendedValue, 0, frameOutputMode == 4);
             }
             outputFrame[cy * dimX + cx] = apply_levelsY(blendedValue, black_level, white_level);
         }
         
     } else if (cz == 1 && cy < (dimY >> 1) && cx < dimX) {
-        if (frameOutputMode == 5) { // SideBySide1
+        if (frameOutputMode == 4) { // GreyFlow
+            outputFrame[channelIndexOffset + cy * dimX + cx] = 128;
+            return;
+        } else if (frameOutputMode == 5) { // SideBySide1
             const bool isInLeftSideUV = cy >= (verticalOffset >> 1) && cy < ((verticalOffset >> 1) + (dimY >> 2)) && cx < (dimX >> 1);
         
             if (isInLeftSideUV) { // Fill the left side of the output frame with the source frame
@@ -232,7 +238,7 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
             outputFrame[channelIndexOffset + cy * dimX + cx] = sourceFrame21[channelIndexOffset + newCy21 * dimX + (newCx21 & ~1) + (cx & 1)];
         } else { // BlendedFrame
             unsigned char blendedValue = (float)sourceFrame12[channelIndexOffset + newCy12 * dimX + (newCx12 & ~1) + (cx & 1)] * frameScalar21 + (float)sourceFrame21[channelIndexOffset + newCy21 * dimX + (newCx21 & ~1) + (cx & 1)] * frameScalar12;
-            if (frameOutputMode == 3 || frameOutputMode == 4) { // HSVFlow / GreyFlow
+            if (frameOutputMode == 3) { // HSVFlow
                 blendedValue = visualizeFlow(offsetX12, offsetY12, blendedValue, 1 + (cx & 1), frameOutputMode == 4);
             }
             outputFrame[channelIndexOffset + cy * dimX + cx] = apply_levelsUV(blendedValue, white_level);
