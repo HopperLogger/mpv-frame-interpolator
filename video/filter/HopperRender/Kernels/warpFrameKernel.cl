@@ -185,7 +185,7 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
         } else { // BlendedFrame
             unsigned char blendedValue = (float)sourceFrame12[newCy12 * dimX + newCx12] * frameScalar21 + (float)sourceFrame21[newCy21 * dimX + newCx21] * frameScalar12;
             if (frameOutputMode == 3) { // HSVFlow
-                blendedValue = visualizeFlow(offsetX12, offsetY12, blendedValue, 0, frameOutputMode == 4);
+                blendedValue = visualizeFlow(-offsetX12, -offsetY12, blendedValue, 0, frameOutputMode == 4);
             }
             outputFrame[cy * dimX + cx] = apply_levelsY(blendedValue, black_level, white_level);
         }
@@ -239,7 +239,7 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
         } else { // BlendedFrame
             unsigned char blendedValue = (float)sourceFrame12[channelIndexOffset + newCy12 * dimX + (newCx12 & ~1) + (cx & 1)] * frameScalar21 + (float)sourceFrame21[channelIndexOffset + newCy21 * dimX + (newCx21 & ~1) + (cx & 1)] * frameScalar12;
             if (frameOutputMode == 3) { // HSVFlow
-                blendedValue = visualizeFlow(offsetX12, offsetY12, blendedValue, 1 + (cx & 1), frameOutputMode == 4);
+                blendedValue = visualizeFlow(-offsetX12, -offsetY12, blendedValue, 1 + (cx & 1), frameOutputMode == 4);
             }
             outputFrame[channelIndexOffset + cy * dimX + cx] = apply_levelsUV(blendedValue, white_level);
         }
