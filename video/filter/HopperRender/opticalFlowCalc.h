@@ -28,7 +28,6 @@ typedef struct OpticalFlowCalc {
     cl_context clContext;
 
     // Grids
-    size_t lowGrid16x16x4[3];
     size_t lowGrid16x16x2[3];
     size_t lowGrid16x16x1[3];
     size_t lowGrid8x8xL[3];
@@ -46,10 +45,8 @@ typedef struct OpticalFlowCalc {
     cl_event warpStartedEvent;  // Event marking the start of the interpolation
 
     // GPU Arrays
-    cl_mem offsetArray12;           // Array containing x,y offsets for each pixel of frame1
-    cl_mem offsetArray21;           // Array containing x,y offsets for each pixel of frame2
-    cl_mem blurredOffsetArray12;    // Array containing x,y offsets for each pixel of frame1
-    cl_mem blurredOffsetArray21;    // Array containing x,y offsets for each pixel of frame2
+    cl_mem offsetArray;             // Array containing x,y offsets for each pixel of frame1
+    cl_mem blurredOffsetArray;      // Array containing x,y offsets for each pixel of frame1
     cl_mem summedDeltaValuesArray;  // Array containing the summed up delta values of each window
     cl_mem lowestLayerArray;        // Array containing the comparison results of the two normalized delta arrays (true if the new value decreased)
     cl_mem outputFrameArray;        // Array containing the output frame
@@ -59,7 +56,6 @@ typedef struct OpticalFlowCalc {
     cl_kernel calcDeltaSumsKernel;
     cl_kernel determineLowestLayerKernel;
     cl_kernel adjustOffsetArrayKernel;
-    cl_kernel flipFlowKernel;
     cl_kernel blurFlowKernel;
     cl_kernel warpFrameKernel;
 } OpticalFlowCalc;
