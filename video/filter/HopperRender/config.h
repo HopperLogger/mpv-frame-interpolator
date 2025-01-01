@@ -13,6 +13,5 @@
 #define LOWER_PERF_BUFFER 1.6 // The lower performance buffer, i.e. calc_time * lower_buffer < frame_time triggers quality improvement
 
 // Debugging
-#define DUMP_IMAGES 0          // Whether or not to dump the warped frames to the 'dump' folder (0: Disabled, 1: Enabled)
 #define INC_APP_IND 1          // Whether or not to include the AppIndicator (0: Disabled, 1: Enabled)
 #define SAVE_STATS 0           // Whether or not to save the ofc Calc Times to a log file (0: Disabled, 1: Enabled)
