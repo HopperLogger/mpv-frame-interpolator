@@ -1,9 +1,7 @@
 // Helper function to get neighbor offset values
 inline short getNeighborOffset(__global const short* offsetArray, int neighborIndexX, int neighborIndexY, 
                                int lowDimX, int lowDimY, int directionIndexOffset) {
-    return (neighborIndexX >= 0 && neighborIndexX < lowDimX && neighborIndexY >= 0 && neighborIndexY < lowDimY)
-        ? offsetArray[directionIndexOffset + neighborIndexY * lowDimX + neighborIndexX]
-        : 0;
+    return offsetArray[directionIndexOffset + min(max(neighborIndexY, 0), lowDimY - 1) * lowDimX + min(max(neighborIndexX, 0), lowDimX - 1)];
 }
 
 // Helper kernel for the calcDeltaSums kernel
@@ -108,14 +106,14 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     if (!isFirstIteration) {
         // Relative positions of neighbors
         const int neighborOffsets[8][2] = {
-            {0, windowSize},   // Down
-            {windowSize, 0},   // Right
-            {-windowSize, 0},  // Left
-            {0, -windowSize},  // Up
-            {-windowSize, -windowSize}, // Top Left
-            {windowSize, -windowSize},  // Top Right
-            {-windowSize, windowSize},  // Bottom Left
-            {windowSize, windowSize},   // Bottom Right
+            {0, 2 * windowSize},   // Down
+            {2 * windowSize, 0},   // Right
+            {-2 * windowSize, 0},  // Left
+            {0, -2 * windowSize},  // Up
+            {-4 * windowSize, -4 * windowSize}, // Top Left
+            {4 * windowSize, -4 * windowSize},  // Top Right
+            {-4 * windowSize, 4 * windowSize},  // Bottom Left
+            {4 * windowSize, 4 * windowSize},   // Bottom Right
         };
 
         // Iterate over neighbors
@@ -146,8 +144,8 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
         }
 
         // Scale biases
-        neighborBias1 <<= 4;
-        neighborBias2 <<= 4;
+        neighborBias1 <<= 6;
+        neighborBias2 <<= 6;
     }
     
     if (windowSize == 1) {
