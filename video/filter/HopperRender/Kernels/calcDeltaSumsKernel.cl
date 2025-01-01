@@ -94,13 +94,14 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
         delta = abs_diff(frame1[newCy * dimX + newCx], frame2[scaledCy * dimX + scaledCx]) + 
                 abs_diff(frame1[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1)], frame2[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1)]) + 
                 abs_diff(frame1[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1) + 1], frame2[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1) + 1]);
+        delta <<= 8;
     }
 
     // Calculate the offset bias
     if (!step) {
-        offsetBias = abs(relOffsetAdjustmentX) == 0 ? 0 : max(abs(relOffsetAdjustmentX) >> 6, 1);
+        offsetBias = pow((float)abs(relOffsetAdjustmentX), 1.2f);
     } else {
-        offsetBias = abs(relOffsetAdjustmentY) == 0 ? 0 : max(abs(relOffsetAdjustmentY) >> 6, 1);
+        offsetBias = pow((float)abs(relOffsetAdjustmentY), 1.2f);
     }
 
     // Calculate the neighbor biases
@@ -145,8 +146,8 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
         }
 
         // Scale biases
-        neighborBias1 >>= 3;
-        neighborBias2 >>= 3;
+        neighborBias1 <<= 4;
+        neighborBias2 <<= 4;
     }
     
     if (windowSize == 1) {
