@@ -33,7 +33,6 @@ typedef struct OpticalFlowCalc {
     size_t lowGrid16x16x1[3];
     size_t lowGrid8x8xL[3];
     size_t grid16x16x2[3];
-    size_t halfGrid16x16x2[3];
 
     // Threads
     size_t threads16x16x1[3];
@@ -52,13 +51,9 @@ typedef struct OpticalFlowCalc {
     cl_mem blurredOffsetArray12;    // Array containing x,y offsets for each pixel of frame1
     cl_mem blurredOffsetArray21;    // Array containing x,y offsets for each pixel of frame2
     cl_mem summedDeltaValuesArray;  // Array containing the summed up delta values of each window
-    cl_mem lowestLayerArray;        // Array containing the comparison results of the two normalized delta arrays (true if the
-                                    // new value decreased)
+    cl_mem lowestLayerArray;        // Array containing the comparison results of the two normalized delta arrays (true if the new value decreased)
     cl_mem outputFrameArray;        // Array containing the output frame
     cl_mem inputFrameArray[2];      // Array containing the last three frames
-#if DUMP_IMAGES
-    unsigned short *imageDumpArray;  // Array containing the image data
-#endif
 
     // Kernels
     cl_kernel calcDeltaSumsKernel;
@@ -67,8 +62,6 @@ typedef struct OpticalFlowCalc {
     cl_kernel flipFlowKernel;
     cl_kernel blurFlowKernel;
     cl_kernel warpFrameKernel;
-    cl_kernel visualizeFlowKernel;
-    cl_kernel tearingTestKernel;
 } OpticalFlowCalc;
 
 /*
@@ -128,37 +121,6 @@ bool calculateOpticalFlow(struct OpticalFlowCalc *ofc);
  * @return: Whether or not the frames were warped successfully
  */
 bool warpFrames(struct OpticalFlowCalc *ofc, const float blendingScalar, const int frameOutputMode);
-
-/*
- * Draws the offsetArray12 as an RGB image visualizing the flow
- *
- * @param ofc: Pointer to the optical flow calculator
- * @param doBWOutput: Whether to output the flow as a black and white image
- *
- * @return: Whether or not the flow was drawn successfully
- */
-bool visualizeFlow(struct OpticalFlowCalc *ofc, const int doBWOutput);
-
-/*
- * Draws a white vertical bar on the screen that can be used to detect tearing
- *
- * @param ofc: Pointer to the optical flow calculator
- *
- * @return: Whether or not the bar was drawn successfully
- */
-bool tearingTest(struct OpticalFlowCalc *ofc);
-
-#if DUMP_IMAGES
-/*
- * Saves the outputFrameArray in binary form to ~/dump
- *
- * @param ofc: Pointer to the optical flow calculator
- * @param filePath: Path to the image file
- *
- * @return: Whether or not the image was saved successfully
- */
-bool saveImage(struct OpticalFlowCalc *ofc, const char *filePath);
-#endif
 
 /*
  * Adjusts the search radius of the optical flow calculation

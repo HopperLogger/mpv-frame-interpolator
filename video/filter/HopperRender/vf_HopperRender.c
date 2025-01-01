@@ -21,7 +21,7 @@ typedef struct {
 static int dump_iter = 0;
 #endif
 
-typedef enum FrameOutput { WarpedFrame12, WarpedFrame21, BlendedFrame, HSVFlow, GreyFlow, SideBySide1, SideBySide2, TearingTest } FrameOutput;
+typedef enum FrameOutput { WarpedFrame12, WarpedFrame21, BlendedFrame, HSVFlow, GreyFlow, SideBySide1, SideBySide2 } FrameOutput;
 
 typedef enum InterpolationState { Deactivated, NotNeeded, Active, TooSlow } InterpolationState;
 
@@ -156,9 +156,6 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv) {
             break;
         case 8:
             priv->frameOutputMode = SideBySide2;
-            break;
-        case 9:
-            priv->frameOutputMode = TearingTest;
             break;
         default:
             // Black and White Levels
@@ -348,33 +345,7 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
     struct priv *priv = f->priv;
 
     // Warp frames
-    if (priv->frameOutputMode != TearingTest && priv->frameOutputMode != GreyFlow) {
-        ERR_CHECK(warpFrames(priv->ofc, priv->blendingScalar, priv->frameOutputMode), f);
-    }
-
-    // Special output modes
-    if (priv->frameOutputMode == HSVFlow) {
-        ERR_CHECK(visualizeFlow(priv->ofc, 0), f);
-    } else if (priv->frameOutputMode == GreyFlow) {
-        ERR_CHECK(visualizeFlow(priv->ofc, 1), f);
-    } else if (priv->frameOutputMode == TearingTest) {
-        ERR_CHECK(tearingTest(priv->ofc), f);
-    }
-
-// Save the result to a file
-#if DUMP_IMAGES
-    // Get the home directory from the environment
-    const char *home = getenv("HOME");
-    if (home == NULL) {
-        MP_ERR(f, "HOME environment variable is not set.\n");
-        mp_filter_internal_mark_failed(f);
-        return;
-    }
-    char path[32];
-    snprintf(path, sizeof(path), "%s/dump/%d.bin", home, dump_iter);
-    dump_iter++;
-    ERR_CHECK(saveImage(priv->ofc, path), f);
-#endif
+    ERR_CHECK(warpFrames(priv->ofc, priv->blendingScalar, priv->frameOutputMode), f);
 
     // Download the result to the output buffer (this is a blocking call and waits for the warping to complete)
     ERR_CHECK(downloadFrame(priv->ofc, outputPlanes), f);
@@ -493,7 +464,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     ERR_CHECK(updateFrame(priv->ofc, img->planes), f);
 
     // Calculate the optical flow
-    if (priv->sourceFrameNum >= 2 && priv->frameOutputMode != TearingTest) {
+    if (priv->sourceFrameNum >= 2) {
         ERR_CHECK(calculateOpticalFlow(priv->ofc), f);
     }
 
@@ -718,7 +689,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
 }
 
 #define OPT_BASE_STRUCT struct HopperRender_opts
-static const m_option_t vf_opts_fields[] = {{"FrameOutput", OPT_INT(frame_output), M_RANGE(0, 7), OPTDEF_INT(2)}};
+static const m_option_t vf_opts_fields[] = {{"FrameOutput", OPT_INT(frame_output), M_RANGE(0, 6), OPTDEF_INT(2)}};
 
 // Filter entry
 const struct mp_user_filter_entry vf_HopperRender = {.desc = {.description = "Optical-Flow Frame Interpolation", .name = "HopperRender", .priv_size = sizeof(struct priv), .options = vf_opts_fields},
