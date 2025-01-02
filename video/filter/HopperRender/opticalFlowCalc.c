@@ -145,10 +145,6 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
         opticalFlowIterations = log2(windowSize);
     }
 
-    // Reset the number of offset layers
-    int currSearchRadius = ofc->opticalFlowSearchRadius;
-    CHECK_ERROR(adjustSearchRadius(ofc, ofc->opticalFlowSearchRadius));
-
     // Prepare the initial offset array
     cl_uint zero = 0;
     CHECK_ERROR(clEnqueueFillBuffer(ofc->queue, ofc->offsetArray, &zero, sizeof(short), 0, 2 * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short), 0, NULL, NULL));
@@ -158,14 +154,13 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
         for (int step = 0; step < 2; step++) {
             // Reset the summed up delta array
             CHECK_ERROR(clEnqueueFillBuffer(ofc->queue, ofc->summedDeltaValuesArray, &zero, sizeof(unsigned int), 0,
-                                            currSearchRadius * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(unsigned int), 0, NULL, NULL));
+                                            ofc->opticalFlowSearchRadius * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(unsigned int), 0, NULL, NULL));
 
             // 1. Calculate the image delta and sum up the deltas of each window
             cl_int err = clSetKernelArg(ofc->calcDeltaSumsKernel, 1, sizeof(cl_mem), &ofc->inputFrameArray[0]);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 2, sizeof(cl_mem), &ofc->inputFrameArray[1]);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 9, sizeof(int), &windowSize);
-            int isFirstIteration = (int)(iter <= 3);
-            err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 12, sizeof(int), &isFirstIteration);
+            err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 12, sizeof(int), &iter);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 13, sizeof(int), &step);
             CHECK_ERROR(err);
             CHECK_ERROR(clEnqueueNDRangeKernel(ofc->queue, ofc->calcDeltaSumsKernel, 3, NULL, ofc->lowGrid8x8xL, ofc->threads8x8x1, 0, NULL, NULL));

@@ -33,7 +33,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
                                   __global const unsigned char* frame2, __global const short* offsetArray,
                                   const int directionIndexOffset, const int dimY, const int dimX, const int lowDimY,
                                   const int lowDimX, const int windowSize, const int searchWindowSize,
-                                  const int resolutionScalar, const int isFirstIteration, const int step) {
+                                  const int resolutionScalar, const int iteration, const int step) {
     // Shared memory for the partial sums of the current block
     __local unsigned int partialSums[64];
 
@@ -97,13 +97,13 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
 
     // Calculate the offset bias
     if (!step) {
-        offsetBias = pow((float)abs(relOffsetAdjustmentX), 1.2f);
+        offsetBias = abs(relOffsetAdjustmentX);
     } else {
-        offsetBias = pow((float)abs(relOffsetAdjustmentY), 1.2f);
+        offsetBias = abs(relOffsetAdjustmentY);
     }
 
     // Calculate the neighbor biases
-    if (!isFirstIteration) {
+    if (iteration > 3) {
         // Relative positions of neighbors
         const int neighborOffsets[8][2] = {
             {0, 2 * windowSize},   // Down
