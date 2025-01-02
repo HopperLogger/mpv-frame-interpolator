@@ -127,11 +127,10 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
                               __global unsigned char* outputFrame, const float frameScalar12, const float frameScalar21,
                               const int lowDimX, const int dimY, const int dimX,
                               const int resolutionScalar, const int directionIndexOffset, const int channelIndexOffset,
-                              const int frameOutputMode, const float black_level, const float white_level) {
+                              const int frameOutputMode, const float black_level, const float white_level, const int cz) {
     // Current entry to be computed by the thread
     const int cx = get_global_id(0);
     const int cy = get_global_id(1);
-    const int cz = get_global_id(2);
     const int verticalOffset = dimY >> 2;
     int adjCx = cx;
     int adjCy = cy;
