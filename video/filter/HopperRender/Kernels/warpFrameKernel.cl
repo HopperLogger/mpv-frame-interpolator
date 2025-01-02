@@ -221,9 +221,9 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
 
         // Get the new pixel position
         const int newCx12 = mirrorCoordinate(adjCx + (int)round((float)(offsetX) * frameScalar12), dimX);
-        const int newCy12 = mirrorCoordinate(adjCy + (int)round((float)(offsetY) * frameScalar12), (dimY >> 1));
+        const int newCy12 = mirrorCoordinate(adjCy + (int)round((float)(offsetY) * frameScalar12 * 0.5f), (dimY >> 1));
         const int newCx21 = mirrorCoordinate(adjCx - (int)round((float)(offsetX) * frameScalar21), dimX);
-        const int newCy21 = mirrorCoordinate(adjCy - (int)round((float)(offsetY) * frameScalar21), (dimY >> 1));
+        const int newCy21 = mirrorCoordinate(adjCy - (int)round((float)(offsetY) * frameScalar21 * 0.5f), (dimY >> 1));
 
         // Move the origin pixel to the new position
         if (frameOutputMode == 0) { // WarpedFrame12
