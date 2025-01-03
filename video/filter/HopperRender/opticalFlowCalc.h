@@ -28,9 +28,9 @@ typedef struct OpticalFlowCalc {
     cl_context clContext;
 
     // Grids
+    size_t lowGrid16x16xL[3];
     size_t lowGrid16x16x2[3];
     size_t lowGrid16x16x1[3];
-    size_t lowGrid8x8xL[3];
     size_t halfGrid16x16x1[3];
     size_t grid16x16x1[3];
 
