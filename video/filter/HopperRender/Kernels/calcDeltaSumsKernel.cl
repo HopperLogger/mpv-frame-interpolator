@@ -5,9 +5,7 @@ inline short getNeighborOffset(__global const short* offsetArray, int neighborIn
 }
 
 // Helper kernel for the calcDeltaSums kernel
-void warpReduce16x16(volatile __local unsigned int* partialSums, int tIdx) {
-    partialSums[tIdx] += partialSums[tIdx + 128];
-    partialSums[tIdx] += partialSums[tIdx + 64];
+void warpReduce8x8(volatile __local unsigned int* partialSums, int tIdx) {
     partialSums[tIdx] += partialSums[tIdx + 32];
     partialSums[tIdx] += partialSums[tIdx + 16];
     partialSums[tIdx] += partialSums[tIdx + 8];
@@ -17,26 +15,16 @@ void warpReduce16x16(volatile __local unsigned int* partialSums, int tIdx) {
 }
 
 // Helper kernel for the calcDeltaSums kernel
-void warpReduce8x8(volatile __local unsigned int* partialSums, int tIdx) {
-    partialSums[tIdx] += partialSums[tIdx + 64];
-    partialSums[tIdx] += partialSums[tIdx + 32];
-    partialSums[tIdx] += partialSums[tIdx + 16];
-    partialSums[tIdx] += partialSums[tIdx + 4];
-    partialSums[tIdx] += partialSums[tIdx + 2];
-    partialSums[tIdx] += partialSums[tIdx + 1];
-}
-
-// Helper kernel for the calcDeltaSums kernel
 void warpReduce4x4(volatile __local unsigned int* partialSums, int tIdx) {
-    partialSums[tIdx] += partialSums[tIdx + 32];
     partialSums[tIdx] += partialSums[tIdx + 16];
+    partialSums[tIdx] += partialSums[tIdx + 8];
     partialSums[tIdx] += partialSums[tIdx + 2];
     partialSums[tIdx] += partialSums[tIdx + 1];
 }
 
 // Helper kernel for the calcDeltaSums kernel
 void warpReduce2x2(volatile __local unsigned int* partialSums, int tIdx) {
-    partialSums[tIdx] += partialSums[tIdx + 16];
+    partialSums[tIdx] += partialSums[tIdx + 8];
     partialSums[tIdx] += partialSums[tIdx + 1];
 }
 
@@ -47,7 +35,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
                                   const int lowDimX, const int windowSize, const int searchWindowSize,
                                   const int resolutionScalar, const int iteration, const int step) {
     // Shared memory for the partial sums of the current block
-    __local unsigned int partialSums[256];
+    __local unsigned int partialSums[64];
 
     // Current entry to be computed by the thread
     int cx = get_global_id(0);
@@ -161,47 +149,51 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     }
     
     if (windowSize == 1) {
+        // Window size of 1x1
         summedUpDeltaArray[cz * lowDimY * lowDimX + cy * lowDimX + cx] = delta + offsetBias + neighborBias1 + neighborBias2;
         return;
     } else {
+        // All other window sizes
         partialSums[tIdx] = delta + offsetBias + neighborBias1 + neighborBias2;
     }
 
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    // Reduce the values
-    if (windowSize >= 16) {
-        if (tIdx < 128) {
-            warpReduce16x16(partialSums, tIdx);
+    // Sum up the remaining pixels for the current window
+    for (int s = (get_local_size(1) * get_local_size(0)) >> 1; s > 32; s >>= 1) {
+        if (tIdx < s) {
+            partialSums[tIdx] += partialSums[tIdx + s];
         }
-    } else if (windowSize == 8) {
-        if (get_local_id(1) < 4) {
-            warpReduce8x8(partialSums, tIdx);
-        } else if (get_local_id(1) >= 8 && get_local_id(1) < 12) {
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
+
+    // Loop over the remaining values
+    if (windowSize >= 8) {
+        // Window size of 8x8 or larger
+        if (tIdx < 32) {
             warpReduce8x8(partialSums, tIdx);
         }
     } else if (windowSize == 4) {
+        // Window size of 4x4
         if (get_local_id(1) < 2) {
+            // Top 4x4 Blocks
             warpReduce4x4(partialSums, tIdx);
         } else if (get_local_id(1) >= 4 && get_local_id(1) < 6) {
-            warpReduce4x4(partialSums, tIdx);
-        } else if (get_local_id(1) >= 8 && get_local_id(1) < 10) {
-            warpReduce4x4(partialSums, tIdx);
-        } else if (get_local_id(1) >= 12 && get_local_id(1) < 14) {
+            // Bottom 4x4 Blocks
             warpReduce4x4(partialSums, tIdx);
         }
     } else if (windowSize == 2) {
+        // Window size of 2x2
         if ((get_local_id(1) & 1) == 0) {
             warpReduce2x2(partialSums, tIdx);
         }
     }
 
+    // Sync all threads
     barrier(CLK_LOCAL_MEM_FENCE);
 
     // Sum up the results of all blocks
-    if ((windowSize >= 16 && tIdx == 0) ||
-        (windowSize == 8 && (tIdx == 0 || tIdx == 8 || tIdx == 128 || tIdx == 136)) ||
-        (windowSize == 4 && (tIdx == 0 || tIdx == 4 || tIdx == 8 || tIdx == 12 || tIdx == 64 || tIdx == 68 || tIdx == 72 || tIdx == 76 || tIdx == 128 || tIdx == 132 || tIdx == 136 || tIdx == 140 || tIdx == 192 || tIdx == 196 || tIdx == 200 || tIdx == 204)) ||
+    if ((windowSize >= 8 && tIdx == 0) || (windowSize == 4 && (tIdx == 0 || tIdx == 4 || tIdx == 32 || tIdx == 36)) ||
         (windowSize == 2 && ((tIdx & 1) == 0 && (get_local_id(1) & 1) == 0))) {
         const int windowIndexX = cx / windowSize;
         const int windowIndexY = cy / windowSize;
