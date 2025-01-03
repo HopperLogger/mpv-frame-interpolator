@@ -126,6 +126,9 @@ bool downloadFrame(struct OpticalFlowCalc* ofc, unsigned char** outputPlanes) {
 bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
     CHECK_ERROR(!ofc->isInitialized);
 
+    // Adjust the search radius
+    ofc->lowGrid8x8xL[2] = ofc->opticalFlowSearchRadius;
+
     // We set the initial window size to the next larger power of 2
     int windowSize = 1;
     int maxDim = max(ofc->opticalFlowFrameWidth, ofc->opticalFlowFrameHeight);
@@ -157,27 +160,23 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
                                             ofc->opticalFlowSearchRadius * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(unsigned int), 0, NULL, NULL));
 
             // 1. Calculate the image delta and sum up the deltas of each window
-            cl_event test;
             cl_int err = clSetKernelArg(ofc->calcDeltaSumsKernel, 1, sizeof(cl_mem), &ofc->inputFrameArray[0]);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 2, sizeof(cl_mem), &ofc->inputFrameArray[1]);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 9, sizeof(int), &windowSize);
+            err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 10, sizeof(int), &ofc->opticalFlowSearchRadius);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 12, sizeof(int), &iter);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 13, sizeof(int), &step);
             CHECK_ERROR(err);
-            CHECK_ERROR(clEnqueueNDRangeKernel(ofc->queue, ofc->calcDeltaSumsKernel, 3, NULL, ofc->lowGrid16x16xL, ofc->threads16x16x1, 0, NULL, &test));
-/*             CHECK_ERROR(clWaitForEvents(1, &test));
-            cl_ulong start_time, end_time;
-            CHECK_ERROR(clGetEventProfilingInfo(test, CL_PROFILING_COMMAND_START, sizeof(cl_ulong), &start_time, NULL));
-            CHECK_ERROR(clGetEventProfilingInfo(test, CL_PROFILING_COMMAND_END, sizeof(cl_ulong), &end_time, NULL));
-            if ((double)(end_time - start_time) / 1e6 > 1.5)
-                printf("Took too long. %d\n", iter); */
+            CHECK_ERROR(clEnqueueNDRangeKernel(ofc->queue, ofc->calcDeltaSumsKernel, 3, NULL, ofc->lowGrid8x8xL, ofc->threads8x8x1, 0, NULL, NULL));
 
             // 2. Find the layer with the lowest delta sum
             CHECK_ERROR(clSetKernelArg(ofc->determineLowestLayerKernel, 2, sizeof(int), &windowSize));
+            CHECK_ERROR(clSetKernelArg(ofc->determineLowestLayerKernel, 3, sizeof(int), &ofc->opticalFlowSearchRadius));
             CHECK_ERROR(clEnqueueNDRangeKernel(ofc->queue, ofc->determineLowestLayerKernel, 2, NULL, ofc->lowGrid16x16x1, ofc->threads16x16x1, 0, NULL, NULL));
 
             // 3. Adjust the offset array based on the comparison results
             err = clSetKernelArg(ofc->adjustOffsetArrayKernel, 2, sizeof(int), &windowSize);
+            err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 4, sizeof(int), &ofc->opticalFlowSearchRadius);
             err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 7, sizeof(int), &step);
             CHECK_ERROR(err);
             CHECK_ERROR(clEnqueueNDRangeKernel(ofc->queue, ofc->adjustOffsetArrayKernel, 2, NULL, ofc->lowGrid16x16x1, ofc->threads16x16x1, 0, NULL, NULL));
@@ -229,16 +228,6 @@ bool warpFrames(struct OpticalFlowCalc* ofc, const float blendingScalar, const i
     cz = 1; // UV-Plane
     CHECK_ERROR(clSetKernelArg(ofc->warpFrameKernel, 15, sizeof(int), &cz));
     CHECK_ERROR(clEnqueueNDRangeKernel(ofc->queue, ofc->warpFrameKernel, 2, NULL, ofc->halfGrid16x16x1, ofc->threads16x16x1, 0, NULL, NULL));
-    return 0;
-}
-
-bool adjustSearchRadius(struct OpticalFlowCalc* ofc, int newSearchRadius) {
-    CHECK_ERROR(!ofc->isInitialized);
-    ofc->lowGrid16x16xL[2] = newSearchRadius;
-    cl_int err = clSetKernelArg(ofc->calcDeltaSumsKernel, 10, sizeof(int), &newSearchRadius);
-    err |= clSetKernelArg(ofc->determineLowestLayerKernel, 3, sizeof(int), &newSearchRadius);
-    err |= clSetKernelArg(ofc->adjustOffsetArrayKernel, 4, sizeof(int), &newSearchRadius);
-    CHECK_ERROR(err);
     return 0;
 }
 
@@ -348,15 +337,15 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     ofc->warpCalcTime = 0.0;
 
     // Define the global and local work sizes
-    ofc->lowGrid16x16xL[0] = ceil(ofc->opticalFlowFrameWidth / 16.0) * 16.0;
-    ofc->lowGrid16x16xL[1] = ceil(ofc->opticalFlowFrameHeight / 16.0) * 16.0;
-    ofc->lowGrid16x16xL[2] = ofc->opticalFlowSearchRadius;
     ofc->lowGrid16x16x2[0] = ceil(ofc->opticalFlowFrameWidth / 16.0) * 16.0;
     ofc->lowGrid16x16x2[1] = ceil(ofc->opticalFlowFrameHeight / 16.0) * 16.0;
     ofc->lowGrid16x16x2[2] = 2;
     ofc->lowGrid16x16x1[0] = ceil(ofc->opticalFlowFrameWidth / 16.0) * 16.0;
     ofc->lowGrid16x16x1[1] = ceil(ofc->opticalFlowFrameHeight / 16.0) * 16.0;
     ofc->lowGrid16x16x1[2] = 1;
+    ofc->lowGrid8x8xL[0] = ceil(ofc->opticalFlowFrameWidth / 8.0) * 8.0;
+    ofc->lowGrid8x8xL[1] = ceil(ofc->opticalFlowFrameHeight / 8.0) * 8.0;
+    ofc->lowGrid8x8xL[2] = ofc->opticalFlowSearchRadius;
     ofc->halfGrid16x16x1[0] = ceil(ofc->frameWidth / 16.0) * 16.0;
     ofc->halfGrid16x16x1[1] = ceil((ofc->frameHeight >> 1) / 16.0) * 16.0;
     ofc->halfGrid16x16x1[2] = 1;

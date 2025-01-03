@@ -28,9 +28,9 @@ typedef struct OpticalFlowCalc {
     cl_context clContext;
 
     // Grids
-    size_t lowGrid16x16xL[3];
     size_t lowGrid16x16x2[3];
     size_t lowGrid16x16x1[3];
+    size_t lowGrid8x8xL[3];
     size_t halfGrid16x16x1[3];
     size_t grid16x16x1[3];
 
@@ -118,15 +118,5 @@ bool calculateOpticalFlow(struct OpticalFlowCalc *ofc);
  * @return: Whether or not the frames were warped successfully
  */
 bool warpFrames(struct OpticalFlowCalc *ofc, const float blendingScalar, const int frameOutputMode);
-
-/*
- * Adjusts the search radius of the optical flow calculation
- *
- * @param ofc: Pointer to the optical flow calculator
- * @param newSearchRadius: The new search radius
- *
- * @return: Whether or not the search radius was adjusted successfully
- */
-bool adjustSearchRadius(struct OpticalFlowCalc *ofc, int newSearchRadius);
 
 #endif  // OPTICALFLOWCALC_H

@@ -312,7 +312,6 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f) {
         if (priv->ofc->opticalFlowSearchRadius > MIN_SEARCH_RADIUS) {
             // Decrease the number of steps to reduce calculation time
             priv->ofc->opticalFlowSearchRadius--;
-            adjustSearchRadius(priv->ofc, priv->ofc->opticalFlowSearchRadius);
         } else {
             // Disable Interpolation if we are too slow
             priv->interpolationState = TooSlow;
@@ -322,7 +321,6 @@ static void vf_HopperRender_auto_adjust_settings(struct mp_filter *f) {
         // Increase the frame scalar if we have enough leftover capacity
         if (priv->ofc->opticalFlowSearchRadius < MAX_SEARCH_RADIUS) {
             priv->ofc->opticalFlowSearchRadius++;
-            adjustSearchRadius(priv->ofc, priv->ofc->opticalFlowSearchRadius);
         }
     }
 #endif
