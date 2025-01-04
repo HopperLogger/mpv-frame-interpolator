@@ -135,106 +135,58 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
     int adjCx = cx;
     int adjCy = cy;
 
-    if (cz == 0 && cy < dimY && cx < dimX) {
-        if (frameOutputMode == 4) { // GreyFlow
-            outputFrame[cy * dimX + cx] = 
-                visualizeFlow(offsetArray[(cy >> resolutionScalar) * lowDimX + (cx >> resolutionScalar)], 
-                              offsetArray[directionIndexOffset + (cy >> resolutionScalar) * lowDimX + (cx >> resolutionScalar)], 0, 0, 1);
+    if (cy >= dimY && cx >= dimX) {
+        return;
+    }
+    
+    // SideBySide1 (Left side)
+    if (frameOutputMode == 5 && cx < (dimX >> 1)) {
+        outputFrame[cz * dimY * dimX + cy * dimX + cx] = sourceFrame12[cz * dimY * dimX + cy * dimX + cx];
+        return;
+    } else if (frameOutputMode == 6) { // SideBySide2
+        const bool isInLeftSide = cy >= (verticalOffset >> cz) && cy < ((verticalOffset >> cz) + (dimY >> (1 + cz))) && cx < (dimX >> 1);
+        const bool isInRightSide = cy >= (verticalOffset >> cz) && cy < ((verticalOffset >> cz) + (dimY >> (1 + cz))) && cx >= (dimX >> 1) && cx < dimX;
+    
+        if (isInLeftSide) { // Place the source frame in the left side of the output frame
+            outputFrame[cz * dimY * dimX + cy * dimX + cx] = sourceFrame12[cz * dimY * dimX + ((cy - (verticalOffset >> cz)) << 1) * dimX + (cx << 1) + (cz ? (cx & 1) : 0)];
             return;
-        } else if (frameOutputMode == 5) { // SideBySide1
-            if (cx < (dimX >> 1)) { // Fill the left side of the output frame with the source frame
-                outputFrame[cy * dimX + cx] = sourceFrame12[cy * dimX + cx];
-                return;
-            }
-        } else if (frameOutputMode == 6) { // SideBySide2
-            const bool isInLeftSideY = cy >= verticalOffset && cy < (verticalOffset + (dimY >> 1)) && cx < (dimX >> 1);
-            const bool isInRightSideY = cy >= verticalOffset && cy < (verticalOffset + (dimY >> 1)) && cx >= (dimX >> 1) && cx < dimX;
-        
-            if (isInLeftSideY) { // Place the source frame in the left side of the output frame
-                outputFrame[cy * dimX + cx] = sourceFrame12[((cy - verticalOffset) << 1) * dimX + (cx << 1)];
-                return;
-            } else if (isInRightSideY) { // Place the warped frame in the right side of the output frame
-                adjCx = (cx - (dimX >> 1)) << 1;
-                adjCy = (cy - verticalOffset) << 1;
-            } else { // Fill the surrounding area with black
-                outputFrame[cy * dimX + cx] = 0;
-                return;
-            }
-        }
-
-        // Get the current flow values
-        const int scaledCx = adjCx >> resolutionScalar;  // The X-Index of the current thread in the offset array
-        const int scaledCy = adjCy >> resolutionScalar;  // The Y-Index of the current thread in the offset array
-        const int offsetX = offsetArray[scaledCy * lowDimX + scaledCx];
-        const int offsetY = offsetArray[directionIndexOffset + scaledCy * lowDimX + scaledCx];
-
-        // Get the new pixel position
-        const int newCx12 = mirrorCoordinate(adjCx + (int)round((float)(offsetX) * frameScalar12), dimX);
-        const int newCy12 = mirrorCoordinate(adjCy + (int)round((float)(offsetY) * frameScalar12), dimY);
-        const int newCx21 = mirrorCoordinate(adjCx - (int)round((float)(offsetX) * frameScalar21), dimX);
-        const int newCy21 = mirrorCoordinate(adjCy - (int)round((float)(offsetY) * frameScalar21), dimY);
-
-        // Move the origin pixel to the new position
-        if (frameOutputMode == 0) { // WarpedFrame12
-            outputFrame[cy * dimX + cx] = sourceFrame12[newCy12 * dimX + newCx12];
-        } else if (frameOutputMode == 1) { // WarpedFrame21
-            outputFrame[cy * dimX + cx] = sourceFrame21[newCy21 * dimX + newCx21];
-        } else { // BlendedFrame
-            unsigned char blendedValue = (float)sourceFrame12[newCy12 * dimX + newCx12] * frameScalar21 + (float)sourceFrame21[newCy21 * dimX + newCx21] * frameScalar12;
-            if (frameOutputMode == 3) { // HSVFlow
-                blendedValue = visualizeFlow(-offsetX, -offsetY, blendedValue, 0, frameOutputMode == 4);
-            }
-            outputFrame[cy * dimX + cx] = apply_levelsY(blendedValue, black_level, white_level);
-        }
-        
-    } else if (cz == 1 && cy < (dimY >> 1) && cx < dimX) {
-        if (frameOutputMode == 4) { // GreyFlow
-            outputFrame[channelIndexOffset + cy * dimX + cx] = 128;
+        } else if (isInRightSide) { // Place the warped frame in the right side of the output frame
+            adjCx = (cx - (dimX >> 1)) << 1;
+            adjCy = (cy - (verticalOffset >> cz)) << 1;
+        } else { // Fill the surrounding area with black
+            outputFrame[cz * dimY * dimX + cy * dimX + cx] = cz ? 128 : 0;
             return;
-        } else if (frameOutputMode == 5) { // SideBySide1
-            if (cx < (dimX >> 1)) { // Fill the left side of the output frame with the source frame
-                outputFrame[channelIndexOffset + cy * dimX + cx] = sourceFrame12[channelIndexOffset + cy * dimX + cx];
-                return;
-            }
-        } else if (frameOutputMode == 6) { // SideBySide2
-            const bool isInLeftSideUV = cy >= (verticalOffset >> 1) && cy < ((verticalOffset >> 1) + (dimY >> 2)) && cx < (dimX >> 1);
-            const bool isInRightSideUV = cy >= (verticalOffset >> 1) && cy < ((verticalOffset >> 1) + (dimY >> 2)) && cx >= (dimX >> 1) && cx < dimX;
-        
-            if (isInLeftSideUV) { // Place the source frame in the left side of the output frame
-                outputFrame[channelIndexOffset + cy * dimX + cx] = sourceFrame12[channelIndexOffset + ((cy - (verticalOffset >> 1)) << 1) * dimX + (cx << 1) + (cx & 1)];
-                return;
-            } else if (isInRightSideUV) { // Place the warped frame in the right side of the output frame
-                adjCx = (cx - (dimX >> 1)) << 1;
-                adjCy = (cy - (verticalOffset >> 1)) << 1;
-            } else { // Fill the surrounding area with black
-                outputFrame[channelIndexOffset + cy * dimX + cx] = 128;
-                return;
-            }
         }
+    }
 
-		// Get the current flow values
-        const int scaledCx = (adjCx >> resolutionScalar) & ~1;  // The X-Index of the current thread in the offset array
-        const int scaledCy = (adjCy >> resolutionScalar) << 1;  // The Y-Index of the current thread in the offset array
-        const int offsetX = offsetArray[scaledCy * lowDimX + scaledCx];
-        const int offsetY = offsetArray[directionIndexOffset + scaledCy * lowDimX + scaledCx];
+    // Get the current flow values
+    const int scaledCx = cz ? (adjCx >> resolutionScalar) & ~1 : (adjCx >> resolutionScalar);  // The X-Index of the current thread in the offset array
+    const int scaledCy = cz ? (adjCy >> resolutionScalar) << 1 : (adjCy >> resolutionScalar);  // The Y-Index of the current thread in the offset array
+    const int offsetX = offsetArray[scaledCy * lowDimX + scaledCx];
+    const int offsetY = offsetArray[directionIndexOffset + scaledCy * lowDimX + scaledCx];
 
-        // Get the new pixel position
-        const int newCx12 = mirrorCoordinate(adjCx + (int)round((float)(offsetX) * frameScalar12), dimX);
-        const int newCy12 = mirrorCoordinate(adjCy + (int)round((float)(offsetY) * frameScalar12 * 0.5f), (dimY >> 1));
-        const int newCx21 = mirrorCoordinate(adjCx - (int)round((float)(offsetX) * frameScalar21), dimX);
-        const int newCy21 = mirrorCoordinate(adjCy - (int)round((float)(offsetY) * frameScalar21 * 0.5f), (dimY >> 1));
+    // GreyFlow
+    if (frameOutputMode == 4) {
+        outputFrame[cz * dimY * dimX + cy * dimX + cx] = cz ? 128 : visualizeFlow(offsetX, offsetY, 0, 0, 1);
+        return;
+    }
 
-        // Move the origin pixel to the new position
-        if (frameOutputMode == 0) { // WarpedFrame12
-            outputFrame[channelIndexOffset + cy * dimX + cx] = sourceFrame12[channelIndexOffset + newCy12 * dimX + (newCx12 & ~1) + (cx & 1)];
-        } else if (frameOutputMode == 1) { // WarpedFrame21
-            outputFrame[channelIndexOffset + cy * dimX + cx] = sourceFrame21[channelIndexOffset + newCy21 * dimX + (newCx21 & ~1) + (cx & 1)];
-        } else { // BlendedFrame
-            unsigned char blendedValue = (float)sourceFrame12[channelIndexOffset + newCy12 * dimX + (newCx12 & ~1) + (cx & 1)] * frameScalar21 + (float)sourceFrame21[channelIndexOffset + newCy21 * dimX + (newCx21 & ~1) + (cx & 1)] * frameScalar12;
-            if (frameOutputMode == 3) { // HSVFlow
-                blendedValue = visualizeFlow(-offsetX, -offsetY, blendedValue, 1 + (cx & 1), frameOutputMode == 4);
-            }
-            outputFrame[channelIndexOffset + cy * dimX + cx] = apply_levelsUV(blendedValue, white_level);
+    // Get the new pixel position
+    const int newCx12 = mirrorCoordinate(adjCx + (int)round((float)(offsetX) * frameScalar12), dimX);
+    const int newCy12 = mirrorCoordinate(adjCy + (int)round((float)(offsetY) * frameScalar12 * (cz ? 0.5f : 1.0f)), cz ? (dimY >> 1) : dimY);
+    const int newCx21 = mirrorCoordinate(adjCx - (int)round((float)(offsetX) * frameScalar21), dimX);
+    const int newCy21 = mirrorCoordinate(adjCy - (int)round((float)(offsetY) * frameScalar21 * (cz ? 0.5f : 1.0f)), cz ? (dimY >> 1) : dimY);
+
+    if (frameOutputMode == 0) { // WarpedFrame12
+        outputFrame[cz * dimY * dimX + cy * dimX + cx] = sourceFrame12[cz * dimY * dimX + newCy12 * dimX + (newCx12 & (cz ? ~1 : ~0)) + (cx & (cz ? 1 : 0))];
+    } else if (frameOutputMode == 1) { // WarpedFrame21
+        outputFrame[cz * dimY * dimX + cy * dimX + cx] = sourceFrame21[cz * dimY * dimX + newCy21 * dimX + (newCx21 & (cz ? ~1 : ~0)) + (cx & (cz ? 1 : 0))];
+    } else { // BlendedFrame
+        unsigned char blendedValue = (float)sourceFrame12[cz * dimY * dimX + newCy12 * dimX + (newCx12 & (cz ? ~1 : ~0)) + (cx & (cz ? 1 : 0))] * frameScalar21 + 
+                                        (float)sourceFrame21[cz * dimY * dimX + newCy21 * dimX + (newCx21 & (cz ? ~1 : ~0)) + (cx & (cz ? 1 : 0))] * frameScalar12;
+        if (frameOutputMode == 3) { // HSVFlow
+            blendedValue = visualizeFlow(-offsetX, -offsetY, blendedValue, cz + (cx & (cz ? 1 : 0)), frameOutputMode == 4);
         }
+        outputFrame[cz * dimY * dimX + cy * dimX + cx] = cz ? apply_levelsUV(blendedValue, white_level) : apply_levelsY(blendedValue, black_level, white_level);
     }
 }
