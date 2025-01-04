@@ -40,8 +40,6 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     // Current entry to be computed by the thread
     int cx = get_global_id(0);
     int cy = get_global_id(1);
-    cx = min(cx, lowDimX - 1);
-    cy = min(cy, lowDimY - 1);
     const int cz = get_global_id(2);
     const int tIdx = get_local_id(1) * get_local_size(0) + get_local_id(0);
     int scaledCx = cx << resolutionScalar;               // The X-Index of the current thread in the input frames
@@ -55,117 +53,114 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     short neighborOffsetY = 0;                           // The Y-Offset of the current neighbor
     unsigned short diffToNeighbor = 0;                   // The difference of the current offset to the neighbor's offset
 
-    // Retrieve the offset values for the current thread that are going to be tested
-    const short idealOffsetX = offsetArray[threadIndex2D];
-    const short idealOffsetY = offsetArray[directionIndexOffset + threadIndex2D];
-    short relOffsetAdjustmentX = 0;
-    short relOffsetAdjustmentY = 0;
-    if (!(step & 1)) {
-        relOffsetAdjustmentX = (cz % searchWindowSize) - (searchWindowSize / 2);
-        relOffsetAdjustmentX = (relOffsetAdjustmentX * relOffsetAdjustmentX * (relOffsetAdjustmentX > 0 ? 1 : -1));
+    // Threads that are out of bounds set their delta to 0
+    if (cy >= lowDimY || cx >= lowDimX) {
+        partialSums[tIdx] = 0;
     } else {
-        relOffsetAdjustmentY = (cz % searchWindowSize) - (searchWindowSize / 2);
-        relOffsetAdjustmentY = (relOffsetAdjustmentY * relOffsetAdjustmentY * (relOffsetAdjustmentY > 0 ? 1 : -1));
-    }
-    const short offsetX = idealOffsetX + relOffsetAdjustmentX;
-    const short offsetY = idealOffsetY + relOffsetAdjustmentY;
-    int newCx = scaledCx + offsetX;
-    int newCy = scaledCy + offsetY;
-
-    // Check if we are out of bounds
-    if (scaledCx < 0 || scaledCx >= dimX || scaledCy < 0 || scaledCy >= dimY) {
-        delta = 0;
-    } else {
-        // Mirror the projected pixel if it is out of bounds
-        if (newCx >= dimX) {
-            newCx = dimX - (newCx - dimX + 1);
-        } else if (newCx < 0) {
-            newCx = -newCx - 1;
+        // Retrieve the offset values for the current thread that are going to be tested
+        const short idealOffsetX = offsetArray[threadIndex2D];
+        const short idealOffsetY = offsetArray[directionIndexOffset + threadIndex2D];
+        short relOffsetAdjustmentX = 0;
+        short relOffsetAdjustmentY = 0;
+        if (!(step & 1)) {
+            relOffsetAdjustmentX = (cz % searchWindowSize) - (searchWindowSize / 2);
+            relOffsetAdjustmentX = (relOffsetAdjustmentX * relOffsetAdjustmentX * (relOffsetAdjustmentX > 0 ? 1 : -1));
+        } else {
+            relOffsetAdjustmentY = (cz % searchWindowSize) - (searchWindowSize / 2);
+            relOffsetAdjustmentY = (relOffsetAdjustmentY * relOffsetAdjustmentY * (relOffsetAdjustmentY > 0 ? 1 : -1));
         }
-        if (newCy >= dimY) {
-            newCy = dimY - (newCy - dimY + 1);
-        } else if (newCy < 0) {
-            newCy = -newCy - 1;
-        }
+        const short offsetX = idealOffsetX + relOffsetAdjustmentX;
+        const short offsetY = idealOffsetY + relOffsetAdjustmentY;
+        int newCx = scaledCx + offsetX;
+        int newCy = scaledCy + offsetY;
 
-        // Calculate the delta value for the current pixel
-        delta = abs_diff(frame1[newCy * dimX + newCx], frame2[scaledCy * dimX + scaledCx]) + 
-                abs_diff(frame1[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1)], frame2[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1)]) + 
-                abs_diff(frame1[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1) + 1], frame2[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1) + 1]);
-        delta <<= 8;
-    }
-
-    // Calculate the offset bias
-    if (!step) {
-        offsetBias = abs(relOffsetAdjustmentX);
-    } else {
-        offsetBias = abs(relOffsetAdjustmentY);
-    }
-
-    // Calculate the neighbor biases
-    if (iteration > 3) {
-        // Relative positions of neighbors
-        const int neighborOffsets[8][2] = {
-            {0, 2 * windowSize},   // Down
-            {2 * windowSize, 0},   // Right
-            {-2 * windowSize, 0},  // Left
-            {0, -2 * windowSize},  // Up
-            {-4 * windowSize, -4 * windowSize}, // Top Left
-            {4 * windowSize, -4 * windowSize},  // Top Right
-            {-4 * windowSize, 4 * windowSize},  // Bottom Left
-            {4 * windowSize, 4 * windowSize},   // Bottom Right
-        };
-
-        // Iterate over neighbors
-        for (int i = 0; i < 8; ++i) {
-            int neighborIndexX = cx + neighborOffsets[i][0];
-            int neighborIndexY = cy + neighborOffsets[i][1];
-
-            // Get the offset values of the current neighbor
-            if (!step) {
-                neighborOffsetX = getNeighborOffset(offsetArray, neighborIndexX, neighborIndexY, lowDimX, lowDimY, 0);
-            } else {
-                neighborOffsetY = getNeighborOffset(offsetArray, neighborIndexX, neighborIndexY, lowDimX, lowDimY, directionIndexOffset);
+        // Check if we are out of bounds
+        if (scaledCx < 0 || scaledCx >= dimX || scaledCy < 0 || scaledCy >= dimY) {
+            delta = 0;
+        } else {
+            // Mirror the projected pixel if it is out of bounds
+            if (newCx >= dimX) {
+                newCx = dimX - (newCx - dimX + 1);
+            } else if (newCx < 0) {
+                newCx = -newCx - 1;
+            }
+            if (newCy >= dimY) {
+                newCy = dimY - (newCy - dimY + 1);
+            } else if (newCy < 0) {
+                newCy = -newCy - 1;
             }
 
-            // Calculate the difference between the proposed offset and the neighbor's offset
-            if (!step) {
-                diffToNeighbor = abs_diff(neighborOffsetX, offsetX);
-            } else {
-                diffToNeighbor = abs_diff(neighborOffsetY, offsetY);
-            }
-
-            // Sum differences into appropriate groups
-            if (i < 4) {
-                neighborBias1 += diffToNeighbor; // Neighbors
-            } else if (i < 8) {
-                neighborBias2 += diffToNeighbor; // Diagonal neighbors
-            }
+            // Calculate the delta value for the current pixel
+            delta = abs_diff(frame1[newCy * dimX + newCx], frame2[scaledCy * dimX + scaledCx]) + 
+                    abs_diff(frame1[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1)], frame2[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1)]) + 
+                    abs_diff(frame1[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1) + 1], frame2[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1) + 1]);
+            delta <<= 8;
         }
 
-        // Scale biases
-        neighborBias1 <<= 6;
-        neighborBias2 <<= 6;
-    }
-    
-    if (windowSize == 1) {
-        // Window size of 1x1
-        summedUpDeltaArray[cz * lowDimY * lowDimX + cy * lowDimX + cx] = delta + offsetBias + neighborBias1 + neighborBias2;
-        return;
-    } else {
-        // All other window sizes
-        partialSums[tIdx] = delta + offsetBias + neighborBias1 + neighborBias2;
+        // Calculate the offset bias
+        if (!step) {
+            offsetBias = abs(relOffsetAdjustmentX);
+        } else {
+            offsetBias = abs(relOffsetAdjustmentY);
+        }
+
+        // Calculate the neighbor biases
+        if (iteration > 3) {
+            // Relative positions of neighbors
+            const int neighborOffsets[8][2] = {
+                {0, 2 * windowSize},   // Down
+                {2 * windowSize, 0},   // Right
+                {-2 * windowSize, 0},  // Left
+                {0, -2 * windowSize},  // Up
+                {-4 * windowSize, -4 * windowSize}, // Top Left
+                {4 * windowSize, -4 * windowSize},  // Top Right
+                {-4 * windowSize, 4 * windowSize},  // Bottom Left
+                {4 * windowSize, 4 * windowSize},   // Bottom Right
+            };
+
+            // Iterate over neighbors
+            for (int i = 0; i < 8; ++i) {
+                int neighborIndexX = cx + neighborOffsets[i][0];
+                int neighborIndexY = cy + neighborOffsets[i][1];
+
+                // Get the offset values of the current neighbor
+                if (!step) {
+                    neighborOffsetX = getNeighborOffset(offsetArray, neighborIndexX, neighborIndexY, lowDimX, lowDimY, 0);
+                } else {
+                    neighborOffsetY = getNeighborOffset(offsetArray, neighborIndexX, neighborIndexY, lowDimX, lowDimY, directionIndexOffset);
+                }
+
+                // Calculate the difference between the proposed offset and the neighbor's offset
+                if (!step) {
+                    diffToNeighbor = abs_diff(neighborOffsetX, offsetX);
+                } else {
+                    diffToNeighbor = abs_diff(neighborOffsetY, offsetY);
+                }
+
+                // Sum differences into appropriate groups
+                if (i < 4) {
+                    neighborBias1 += diffToNeighbor; // Neighbors
+                } else if (i < 8) {
+                    neighborBias2 += diffToNeighbor; // Diagonal neighbors
+                }
+            }
+
+            // Scale biases
+            neighborBias1 <<= 6;
+            neighborBias2 <<= 6;
+        }
+        
+        if (windowSize == 1) {
+            // Window size of 1x1
+            summedUpDeltaArray[cz * lowDimY * lowDimX + cy * lowDimX + cx] = delta + offsetBias + neighborBias1 + neighborBias2;
+            return;
+        } else {
+            // All other window sizes
+            partialSums[tIdx] = delta + offsetBias + neighborBias1 + neighborBias2;
+        }
     }
 
     barrier(CLK_LOCAL_MEM_FENCE);
-
-    // Sum up the remaining pixels for the current window
-    for (int s = (get_local_size(1) * get_local_size(0)) >> 1; s > 32; s >>= 1) {
-        if (tIdx < s) {
-            partialSums[tIdx] += partialSums[tIdx + s];
-        }
-        barrier(CLK_LOCAL_MEM_FENCE);
-    }
 
     // Loop over the remaining values
     if (windowSize >= 8) {
@@ -193,8 +188,9 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     barrier(CLK_LOCAL_MEM_FENCE);
 
     // Sum up the results of all blocks
-    if ((windowSize >= 8 && tIdx == 0) || (windowSize == 4 && (tIdx == 0 || tIdx == 4 || tIdx == 32 || tIdx == 36)) ||
-        (windowSize == 2 && ((tIdx & 1) == 0 && (get_local_id(1) & 1) == 0))) {
+    if ((cy < lowDimY && cx < lowDimX) &&
+        ((windowSize >= 8 && tIdx == 0) || (windowSize == 4 && (tIdx == 0 || tIdx == 4 || tIdx == 32 || tIdx == 36)) ||
+        (windowSize == 2 && ((tIdx & 1) == 0 && (get_local_id(1) & 1) == 0)))) {
         const int windowIndexX = cx / windowSize;
         const int windowIndexY = cy / windowSize;
         atomic_add(&summedUpDeltaArray[cz * lowDimY * lowDimX + (windowIndexY * windowSize) * lowDimX + (windowIndexX * windowSize)], partialSums[tIdx]);
