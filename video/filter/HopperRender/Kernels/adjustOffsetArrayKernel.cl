@@ -1,7 +1,6 @@
 // Kernel that adjusts the offset array based on the comparison results
 __kernel void adjustOffsetArrayKernel(__global short* offsetArray, __global const unsigned char* lowestLayerArray,
-                                      const int windowSize, const int directionIndexOffset,
-                                      const int searchWindowSize, const int lowDimY,
+                                      const int windowSize, const int searchWindowSize, const int lowDimY,
                                       const int lowDimX, const int step) {
     // Current entry to be computed by the thread
     const int cx = get_global_id(0);
@@ -15,6 +14,6 @@ __kernel void adjustOffsetArrayKernel(__global short* offsetArray, __global cons
         const short idealRelOffset = (lowestLayer % searchWindowSize) - (searchWindowSize / 2);
 
         // Calculate the relative offset adjustment that was determined to be ideal
-        offsetArray[(step & 1) * directionIndexOffset + cy * lowDimX + cx] += (idealRelOffset * idealRelOffset * (idealRelOffset > 0 ? 1 : -1));
+        offsetArray[(step & 1) * lowDimY * lowDimX + cy * lowDimX + cx] += (idealRelOffset * idealRelOffset * (idealRelOffset > 0 ? 1 : -1));
     }
 }
