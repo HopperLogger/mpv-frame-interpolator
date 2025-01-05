@@ -31,7 +31,7 @@ void warpReduce2x2(volatile __local unsigned int* partialSums, int tIdx) {
 // Kernel that sums up all the pixel deltas of each window
 __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __global const unsigned char* frame1,
                                   __global const unsigned char* frame2, __global const short* offsetArray,
-                                  const int directionIndexOffset, const int dimY, const int dimX, const int lowDimY,
+                                  const int dimY, const int dimX, const int lowDimY,
                                   const int lowDimX, const int windowSize, const int searchWindowSize,
                                   const int resolutionScalar, const int iteration, const int step) {
     // Shared memory for the partial sums of the current block
@@ -59,7 +59,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     } else {
         // Retrieve the offset values for the current thread that are going to be tested
         const short idealOffsetX = offsetArray[threadIndex2D];
-        const short idealOffsetY = offsetArray[directionIndexOffset + threadIndex2D];
+        const short idealOffsetY = offsetArray[lowDimY * lowDimX + threadIndex2D];
         short relOffsetAdjustmentX = 0;
         short relOffsetAdjustmentY = 0;
         if (!(step & 1)) {
@@ -127,7 +127,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
                 if (!step) {
                     neighborOffsetX = getNeighborOffset(offsetArray, neighborIndexX, neighborIndexY, lowDimX, lowDimY, 0);
                 } else {
-                    neighborOffsetY = getNeighborOffset(offsetArray, neighborIndexX, neighborIndexY, lowDimX, lowDimY, directionIndexOffset);
+                    neighborOffsetY = getNeighborOffset(offsetArray, neighborIndexX, neighborIndexY, lowDimX, lowDimY, lowDimY * lowDimX);
                 }
 
                 // Calculate the difference between the proposed offset and the neighbor's offset
