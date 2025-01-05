@@ -162,20 +162,23 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
     // Get the current flow values
     const int scaledCx = cz ? (adjCx >> resolutionScalar) & ~1 : (adjCx >> resolutionScalar);  // The X-Index of the current thread in the offset array
     const int scaledCy = cz ? (adjCy >> resolutionScalar) << 1 : (adjCy >> resolutionScalar);  // The Y-Index of the current thread in the offset array
-    const int offsetX = offsetArray[scaledCy * lowDimX + scaledCx];
-    const int offsetY = offsetArray[directionIndexOffset + scaledCy * lowDimX + scaledCx];
+    const int offsetX12 = offsetArray[scaledCy * lowDimX + scaledCx];
+    const int offsetY12 = offsetArray[directionIndexOffset + scaledCy * lowDimX + scaledCx];
+    const int lowDimY = dimY >> resolutionScalar;
+    const int offsetX21 = offsetArray[min(max(scaledCy - (offsetY12 >> resolutionScalar), 0), lowDimY - 1) * lowDimX + min(max(scaledCx - (offsetX12 >> resolutionScalar), 0), lowDimX - 1)];
+    const int offsetY21 = offsetArray[directionIndexOffset + min(max(scaledCy - (offsetY12 >> resolutionScalar), 0), lowDimY - 1) * lowDimX + min(max(scaledCx - (offsetX12 >> resolutionScalar), 0), lowDimX - 1)];
 
     // GreyFlow
     if (frameOutputMode == 4) {
-        outputFrame[cz * dimY * dimX + cy * dimX + cx] = cz ? 128 : visualizeFlow(offsetX, offsetY, 0, 0, 1);
+        outputFrame[cz * dimY * dimX + cy * dimX + cx] = cz ? 128 : visualizeFlow(offsetX12, offsetY12, 0, 0, 1);
         return;
     }
 
     // Get the new pixel position
-    const int newCx12 = mirrorCoordinate(adjCx + (int)round((float)(offsetX) * frameScalar12), dimX);
-    const int newCy12 = mirrorCoordinate(adjCy + (int)round((float)(offsetY) * frameScalar12 * (cz ? 0.5f : 1.0f)), cz ? (dimY >> 1) : dimY);
-    const int newCx21 = mirrorCoordinate(adjCx - (int)round((float)(offsetX) * frameScalar21), dimX);
-    const int newCy21 = mirrorCoordinate(adjCy - (int)round((float)(offsetY) * frameScalar21 * (cz ? 0.5f : 1.0f)), cz ? (dimY >> 1) : dimY);
+    const int newCx12 = mirrorCoordinate(adjCx + (int)round((float)(offsetX12) * frameScalar12), dimX);
+    const int newCy12 = mirrorCoordinate(adjCy + (int)round((float)(offsetY12) * frameScalar12 * (cz ? 0.5f : 1.0f)), cz ? (dimY >> 1) : dimY);
+    const int newCx21 = mirrorCoordinate(adjCx - (int)round((float)(offsetX21) * frameScalar21), dimX);
+    const int newCy21 = mirrorCoordinate(adjCy - (int)round((float)(offsetY21) * frameScalar21 * (cz ? 0.5f : 1.0f)), cz ? (dimY >> 1) : dimY);
 
     if (frameOutputMode == 0) { // WarpedFrame12
         outputFrame[cz * dimY * dimX + cy * dimX + cx] = sourceFrame12[cz * dimY * dimX + newCy12 * dimX + (newCx12 & (cz ? ~1 : ~0)) + (cx & (cz ? 1 : 0))];
@@ -183,9 +186,9 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
         outputFrame[cz * dimY * dimX + cy * dimX + cx] = sourceFrame21[cz * dimY * dimX + newCy21 * dimX + (newCx21 & (cz ? ~1 : ~0)) + (cx & (cz ? 1 : 0))];
     } else { // BlendedFrame
         unsigned char blendedValue = (float)sourceFrame12[cz * dimY * dimX + newCy12 * dimX + (newCx12 & (cz ? ~1 : ~0)) + (cx & (cz ? 1 : 0))] * frameScalar21 + 
-                                        (float)sourceFrame21[cz * dimY * dimX + newCy21 * dimX + (newCx21 & (cz ? ~1 : ~0)) + (cx & (cz ? 1 : 0))] * frameScalar12;
+                                     (float)sourceFrame21[cz * dimY * dimX + newCy21 * dimX + (newCx21 & (cz ? ~1 : ~0)) + (cx & (cz ? 1 : 0))] * frameScalar12;
         if (frameOutputMode == 3) { // HSVFlow
-            blendedValue = visualizeFlow(-offsetX, -offsetY, blendedValue, cz + (cx & (cz ? 1 : 0)), frameOutputMode == 4);
+            blendedValue = visualizeFlow(-offsetX12, -offsetY12, blendedValue, cz + (cx & (cz ? 1 : 0)), frameOutputMode == 4);
         }
         outputFrame[cz * dimY * dimX + cy * dimX + cx] = cz ? apply_levelsUV(blendedValue, white_level) : apply_levelsY(blendedValue, black_level, white_level);
     }
