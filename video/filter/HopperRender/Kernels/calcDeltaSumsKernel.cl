@@ -1,5 +1,6 @@
 #define DELTA_WEIGHT 8
-#define NEIGHBOR_WEIGHT 3
+#define NEIGHBOR_WEIGHT_4K 3
+#define NEIGHBOR_WEIGHT_2K 8
 #define FIRST_NEIGHBOR_ITERATION 4
 
 // Helper function to get neighbor offset values
@@ -139,7 +140,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
                 // Sum differences to the neighbor's offset
                 neighborBias += diffToNeighbor;
             }
-            neighborBias <<= NEIGHBOR_WEIGHT;
+            neighborBias <<= (resolutionScalar <= 2 ? NEIGHBOR_WEIGHT_2K : NEIGHBOR_WEIGHT_4K);
         }
         
         if (windowSize == 1) {
