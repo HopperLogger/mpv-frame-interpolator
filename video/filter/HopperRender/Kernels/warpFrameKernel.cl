@@ -17,7 +17,7 @@ int mirrorCoordinate(int pos, int dim) {
 }
 
 // Generates a color representation of the flow
-unsigned char visualizeFlow(const short offsetX, const short offsetY, const unsigned char currPixel, const int channel) {
+unsigned char visualizeFlow(const short offsetX, const short offsetY, const unsigned char currPixel, const int channel, const int resImpact) {
     // Used for color output
     struct RGB {
         unsigned char r, g, b;
@@ -94,9 +94,9 @@ unsigned char visualizeFlow(const short offsetX, const short offsetY, const unsi
         }
 
         // Adjust the color intensity based on the flow magnitude
-        rgb.r = fmax(fmin((float)rgb.r / 255.0f * (abs(offsetX) + abs(offsetY)) * 4.0f, 255.0f), 0.0f);
-        rgb.g = fmax(fmin((float)rgb.g / 255.0f * abs(offsetY) * 8.0f, 255.0f), 0.0f);
-        rgb.b = fmax(fmin((float)rgb.b / 255.0f * (abs(offsetX) + abs(offsetY)) * 4.0f, 255.0f), 0.0f);
+        rgb.r = fmax(fmin((float)rgb.r / 255.0f * (abs(offsetX) + abs(offsetY)) * (float)resImpact, 255.0f), 0.0f);
+        rgb.g = fmax(fmin((float)rgb.g / 255.0f * abs(offsetY) * 2.0f * (float)resImpact, 255.0f), 0.0f);
+        rgb.b = fmax(fmin((float)rgb.b / 255.0f * (abs(offsetX) + abs(offsetY)) * (float)resImpact, 255.0f), 0.0f);
     }
 
     // Convert the RGB flow to YUV and return the appropriate channel
@@ -174,7 +174,7 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
         unsigned char blendedValue = (float)sourceFrame12[cz * dimY * dimX + newCy12 * dimX + (newCx12 & (cz ? ~1 : ~0)) + (cx & (cz ? 1 : 0))] * frameScalar21 + 
                                      (float)sourceFrame21[cz * dimY * dimX + newCy21 * dimX + (newCx21 & (cz ? ~1 : ~0)) + (cx & (cz ? 1 : 0))] * frameScalar12;
         if (frameOutputMode == 3) { // HSVFlow
-            blendedValue = visualizeFlow(-offsetX12, -offsetY12, blendedValue, cz + (cx & (cz ? 1 : 0)));
+            blendedValue = visualizeFlow(-offsetX12, -offsetY12, blendedValue, cz + (cx & (cz ? 1 : 0)), resolutionScalar <= 2 ? 4 : 1);
         }
         outputFrame[cz * dimY * dimX + cy * dimX + cx] = cz ? apply_levelsUV(blendedValue, white_level) : apply_levelsY(blendedValue, black_level, white_level);
     }
