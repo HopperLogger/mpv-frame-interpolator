@@ -122,7 +122,7 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
     int adjCx = cx;
     int adjCy = cy;
 
-    if (cy >= dimY && cx >= dimX) {
+    if (cy >= (dimY >> cz) || cx >= dimX) {
         return;
     }
     

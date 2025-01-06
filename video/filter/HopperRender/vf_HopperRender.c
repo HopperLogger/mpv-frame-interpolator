@@ -41,7 +41,7 @@ struct priv {
 
     // Settings
     FrameOutput frameOutputMode;  // What frame output to use
-    double targetFrameTime;       // The target presentation time stamp (PTS) of the video
+    double targetFrameTime;       // The target frame time (e.g. 1/60 for 60fps)
 
     // Video info
     struct mp_image *referenceImage;  // The reference image used for the optical flow calculation
@@ -126,7 +126,9 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv) {
         case 0:
             if (priv->interpolationState != Deactivated) {
                 priv->interpolationState = Deactivated;
+                priv->sourceFrameNum = 0;
                 priv->interpolatedFrameNum = 0;
+                priv->blendingScalar = 0.0;
             } else {
                 priv->interpolationState = Active;
             }
@@ -483,7 +485,7 @@ output:
 static void vf_HopperRender_process(struct mp_filter *f) {
     struct priv *priv = f->priv;
 
-    // Convert the incoming frames using the autoconvert filter (Any -> P010)
+    // Convert the incoming frames using the autoconvert filter (Any -> NV12)
     if (mp_pin_can_transfer_data(priv->conv->f->pins[0], f->ppins[0])) {
         mp_pin_in_write(priv->conv->f->pins[0], mp_pin_out_read(f->ppins[0]));
     }
