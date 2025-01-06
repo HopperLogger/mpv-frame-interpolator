@@ -22,7 +22,9 @@ typedef struct OpticalFlowCalc {
     int opticalFlowSearchRadius;  // Search radius used for the optical flow calculation
     double ofcCalcTime;           // The time it took to calculate the optical flow
     double warpCalcTime;          // The time it took to warp the current intermediate frame
-
+    int deltaScalar;              // How many bits the pixel delta values are shifted to the left (affects the weight of the delta values)
+    int neighborBiasScalar;       // How many bits the neighbor bias values are shifted to the left (affects the weight of the neighbor bias)
+    
     // OpenCL variables
     cl_device_id clDeviceId;
     cl_context clContext;

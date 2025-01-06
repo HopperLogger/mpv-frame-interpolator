@@ -1,6 +1,3 @@
-#define DELTA_WEIGHT 8
-#define NEIGHBOR_WEIGHT_4K 3
-#define NEIGHBOR_WEIGHT_2K 8
 #define FIRST_NEIGHBOR_ITERATION 4
 
 // Helper function to get neighbor offset values
@@ -38,7 +35,8 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
                                   __global const unsigned char* frame2, __global const short* offsetArray,
                                   const int dimY, const int dimX, const int lowDimY,
                                   const int lowDimX, const int windowSize, const int searchWindowSize,
-                                  const int resolutionScalar, const int iteration, const int step) {
+                                  const int resolutionScalar, const int iteration, const int step, 
+                                  const int deltaScalar, const int neighborBiasScalar) {
     // Shared memory for the partial sums of the current block
     __local unsigned int partialSums[64];
 
@@ -98,7 +96,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
             delta = abs_diff(frame1[newCy * dimX + newCx], frame2[scaledCy * dimX + scaledCx]) + 
                     abs_diff(frame1[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1)], frame2[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1)]) + 
                     abs_diff(frame1[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1) + 1], frame2[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1) + 1]);
-            delta <<= DELTA_WEIGHT;
+            delta <<= deltaScalar;
         }
 
         // Calculate the offset bias
@@ -140,7 +138,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
                 // Sum differences to the neighbor's offset
                 neighborBias += diffToNeighbor;
             }
-            neighborBias <<= (resolutionScalar <= 2 ? NEIGHBOR_WEIGHT_2K : NEIGHBOR_WEIGHT_4K);
+            neighborBias <<= neighborBiasScalar;
         }
         
         if (windowSize == 1) {

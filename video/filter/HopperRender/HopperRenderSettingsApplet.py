@@ -19,6 +19,14 @@ def on_white_level_slider_change(slider):
     value = int(slider.get_value())
     print(value + 400, flush=True)
 
+def delta_slider_change(slider):
+    value = int(slider.get_value())
+    print(value + 700, flush=True)
+
+def neighbor_slider_change(slider):
+    value = int(slider.get_value())
+    print(value + 800, flush=True)
+
 # Callback functions for the radio items
 def on_warped_frame12_activate(widget):
     if widget.get_active():
@@ -156,23 +164,39 @@ class HopperRenderSettings:
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.window.add(vbox)
 
-        # Create a horizontal slider
+        # Create the black level slider
         black_level_label = Gtk.Label(label="Black Level")
         self.black_level_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 255, 1)
         self.black_level_slider.set_value(0)
         self.black_level_slider.connect("value-changed", on_black_level_slider_change)
 
-        # Create a horizontal slider
+        # Create the white level slider
         white_level_label = Gtk.Label(label="White Level")
         self.white_level_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 255, 1)
         self.white_level_slider.set_value(255)
         self.white_level_slider.connect("value-changed", on_white_level_slider_change)
+
+        # Create the delta scalar slider
+        delta_scalar_label = Gtk.Label(label="Delta Scalar")
+        self.delta_scalar_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 31, 1)
+        self.delta_scalar_slider.set_value(8)
+        self.delta_scalar_slider.connect("value-changed", delta_slider_change)
+
+        # Create the neighbor scalar slider
+        neighbor_scalar_label = Gtk.Label(label="Neighbor Scalar")
+        self.neighbor_scalar_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 31, 1)
+        self.neighbor_scalar_slider.set_value(6)
+        self.neighbor_scalar_slider.connect("value-changed", neighbor_slider_change)
 
         # Add the slider to the box
         vbox.pack_start(black_level_label, True, True, 0)
         vbox.pack_start(self.black_level_slider, True, True, 0)
         vbox.pack_start(white_level_label, True, True, 0)
         vbox.pack_start(self.white_level_slider, True, True, 0)
+        vbox.pack_start(delta_scalar_label, True, True, 0)
+        vbox.pack_start(self.delta_scalar_slider, True, True, 0)
+        vbox.pack_start(neighbor_scalar_label, True, True, 0)
+        vbox.pack_start(self.neighbor_scalar_slider, True, True, 0)
 
         # Show all components
         self.window.show_all()
