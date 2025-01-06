@@ -166,6 +166,8 @@ bool calculateOpticalFlow(struct OpticalFlowCalc* ofc) {
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 9, sizeof(int), &ofc->opticalFlowSearchRadius);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 11, sizeof(int), &iter);
             err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 12, sizeof(int), &step);
+            err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 13, sizeof(int), &ofc->deltaScalar);
+            err |= clSetKernelArg(ofc->calcDeltaSumsKernel, 14, sizeof(int), &ofc->neighborBiasScalar);
             CHECK_ERROR(err);
             CHECK_ERROR(clEnqueueNDRangeKernel(ofc->queue, ofc->calcDeltaSumsKernel, 3, NULL, ofc->lowGrid8x8xL, ofc->threads8x8x1, 0, NULL, NULL));
 
@@ -333,6 +335,8 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     ofc->opticalFlowFrameHeight = ofc->frameHeight >> ofc->opticalFlowResScalar;
     ofc->ofcCalcTime = 0.0;
     ofc->warpCalcTime = 0.0;
+    ofc->deltaScalar = 8;
+    ofc->neighborBiasScalar = 6;
 
     // Define the global and local work sizes
     ofc->lowGrid16x16x2[0] = ceil(ofc->opticalFlowFrameWidth / 16.0) * 16.0;

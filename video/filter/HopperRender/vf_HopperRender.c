@@ -161,6 +161,10 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv) {
                 priv->ofc->outputBlackLevel = (float)(code - 100);
             } else if (code >= 400 && code <= 655) {
                 priv->ofc->outputWhiteLevel = (float)(code - 400);
+            } else if (code >= 700 && code <= 731) {
+                priv->ofc->deltaScalar = code - 700;
+            } else if (code >= 800 && code <= 831) {
+                priv->ofc->neighborBiasScalar = code - 800;
             }
             break;
     }
