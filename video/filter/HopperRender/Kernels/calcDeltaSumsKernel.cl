@@ -101,9 +101,9 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
 
         // Calculate the offset bias
         if (!step) {
-            offsetBias = abs(relOffsetAdjustmentX);
+            offsetBias = abs(offsetX);
         } else {
-            offsetBias = abs(relOffsetAdjustmentY);
+            offsetBias = abs(offsetY);
         }
 
         // Calculate the neighbor biases
