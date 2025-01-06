@@ -1,3 +1,7 @@
+#define DELTA_WEIGHT 8
+#define NEIGHBOR_WEIGHT 3
+#define FIRST_NEIGHBOR_ITERATION 4
+
 // Helper function to get neighbor offset values
 inline short getNeighborOffset(__global const short* offsetArray, int neighborIndexX, int neighborIndexY, 
                                int lowDimX, int lowDimY, int directionIndexOffset) {
@@ -47,8 +51,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
     const int threadIndex2D = cy * lowDimX + cx;         // Standard thread index without Z-Dim
     unsigned int delta = 0;                              // The delta value of the current pixel
     unsigned int offsetBias = 0;                         // The bias of the current offset
-    unsigned int neighborBias1 = 0;                      // The bias of the neighbors (up, down, left, right)
-    unsigned int neighborBias2 = 0;                      // The bias of the diagonal neighbors
+    unsigned int neighborBias = 0;                       // The bias of the neighbors (up, down, left, right)
     short neighborOffsetX = 0;                           // The X-Offset of the current neighbor
     short neighborOffsetY = 0;                           // The Y-Offset of the current neighbor
     unsigned short diffToNeighbor = 0;                   // The difference of the current offset to the neighbor's offset
@@ -94,7 +97,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
             delta = abs_diff(frame1[newCy * dimX + newCx], frame2[scaledCy * dimX + scaledCx]) + 
                     abs_diff(frame1[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1)], frame2[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1)]) + 
                     abs_diff(frame1[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1) + 1], frame2[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1) + 1]);
-            delta <<= 8;
+            delta <<= DELTA_WEIGHT;
         }
 
         // Calculate the offset bias
@@ -105,21 +108,17 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
         }
 
         // Calculate the neighbor biases
-        if (iteration > 3) {
+        if (iteration >= FIRST_NEIGHBOR_ITERATION) {
             // Relative positions of neighbors
-            const int neighborOffsets[8][2] = {
+            const int neighborOffsets[4][2] = {
                 {0, 2 * windowSize},   // Down
                 {2 * windowSize, 0},   // Right
                 {-2 * windowSize, 0},  // Left
-                {0, -2 * windowSize},  // Up
-                {-4 * windowSize, -4 * windowSize}, // Top Left
-                {4 * windowSize, -4 * windowSize},  // Top Right
-                {-4 * windowSize, 4 * windowSize},  // Bottom Left
-                {4 * windowSize, 4 * windowSize},   // Bottom Right
+                {0, -2 * windowSize}  // Up
             };
 
             // Iterate over neighbors
-            for (int i = 0; i < 8; ++i) {
+            for (int i = 0; i < 4; ++i) {
                 int neighborIndexX = cx + neighborOffsets[i][0];
                 int neighborIndexY = cy + neighborOffsets[i][1];
 
@@ -137,26 +136,19 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
                     diffToNeighbor = abs_diff(neighborOffsetY, offsetY);
                 }
 
-                // Sum differences into appropriate groups
-                if (i < 4) {
-                    neighborBias1 += diffToNeighbor; // Neighbors
-                } else if (i < 8) {
-                    neighborBias2 += diffToNeighbor; // Diagonal neighbors
-                }
+                // Sum differences to the neighbor's offset
+                neighborBias += diffToNeighbor;
             }
-
-            // Scale biases
-            neighborBias1 <<= 6;
-            neighborBias2 <<= 6;
+            neighborBias <<= NEIGHBOR_WEIGHT;
         }
         
         if (windowSize == 1) {
             // Window size of 1x1
-            summedUpDeltaArray[cz * lowDimY * lowDimX + cy * lowDimX + cx] = delta + offsetBias + neighborBias1 + neighborBias2;
+            summedUpDeltaArray[cz * lowDimY * lowDimX + cy * lowDimX + cx] = delta + offsetBias + neighborBias;
             return;
         } else {
             // All other window sizes
-            partialSums[tIdx] = delta + offsetBias + neighborBias1 + neighborBias2;
+            partialSums[tIdx] = delta + offsetBias + neighborBias;
         }
     }
 
