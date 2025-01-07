@@ -124,29 +124,28 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv) {
     switch (code) {
         // **** Activation Status ****
         case 0:
-            if (priv->interpolationState != Deactivated) {
-                priv->interpolationState = Deactivated;
-                priv->sourceFrameNum = 0;
-                priv->interpolatedFrameNum = 0;
-                priv->blendingScalar = 0.0;
-            } else {
-                priv->interpolationState = Active;
-            }
+            priv->interpolationState = Deactivated;
+            priv->sourceFrameNum = 0;
+            priv->interpolatedFrameNum = 0;
+            priv->blendingScalar = 0.0;
+            break;
+        case 1:
+            priv->interpolationState = Active;
             break;
         // **** Frame Output ****
-        case 1:
+        case 2:
             priv->frameOutputMode = WarpedFrame12;
             break;
-        case 2:
+        case 3:
             priv->frameOutputMode = WarpedFrame21;
             break;
-        case 3:
+        case 4:
             priv->frameOutputMode = BlendedFrame;
             break;
-        case 4:
+        case 5:
             priv->frameOutputMode = HSVFlow;
             break;
-        case 5:
+        case 6:
             priv->frameOutputMode = GreyFlow;
             break;
         case 7:

@@ -28,25 +28,31 @@ def neighbor_slider_change(slider):
     print(value + 800, flush=True)
 
 # Callback functions for the radio items
-def on_warped_frame12_activate(widget):
+def on_activation_toggle(widget):
     if widget.get_active():
         print(1, flush=True)
+    else:
+        print(0, flush=True)
 
-def on_warped_frame21_activate(widget):
+def on_warped_frame12_activate(widget):
     if widget.get_active():
         print(2, flush=True)
 
-def on_blended_frame_activate(widget):
+def on_warped_frame21_activate(widget):
     if widget.get_active():
         print(3, flush=True)
 
-def on_hsvflow_activate(widget):
+def on_blended_frame_activate(widget):
     if widget.get_active():
         print(4, flush=True)
 
-def on_greyscaleflow_activate(widget):
+def on_hsvflow_activate(widget):
     if widget.get_active():
         print(5, flush=True)
+
+def on_greyscaleflow_activate(widget):
+    if widget.get_active():
+        print(6, flush=True)
 
 def on_sidebyside1_activate(widget):
     if widget.get_active():
@@ -55,9 +61,6 @@ def on_sidebyside1_activate(widget):
 def on_sidebyside2_activate(widget):
     if widget.get_active():
         print(8, flush=True)
-
-def on_activation_toggle(widget):
-    print(0, flush=True)
 
 def quit_app(_):
     Gtk.main_quit()
@@ -164,17 +167,17 @@ class HopperRenderSettings:
         vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self.window.add(vbox)
 
-        # Create the black level slider
-        black_level_label = Gtk.Label(label="Black Level")
-        self.black_level_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 255, 1)
-        self.black_level_slider.set_value(0)
-        self.black_level_slider.connect("value-changed", on_black_level_slider_change)
-
         # Create the white level slider
         white_level_label = Gtk.Label(label="White Level")
         self.white_level_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 255, 1)
         self.white_level_slider.set_value(255)
         self.white_level_slider.connect("value-changed", on_white_level_slider_change)
+
+        # Create the black level slider
+        black_level_label = Gtk.Label(label="Black Level")
+        self.black_level_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 255, 1)
+        self.black_level_slider.set_value(0)
+        self.black_level_slider.connect("value-changed", on_black_level_slider_change)
 
         # Create the delta scalar slider
         delta_scalar_label = Gtk.Label(label="Delta Scalar")
@@ -189,10 +192,10 @@ class HopperRenderSettings:
         self.neighbor_scalar_slider.connect("value-changed", neighbor_slider_change)
 
         # Add the slider to the box
-        vbox.pack_start(black_level_label, True, True, 0)
-        vbox.pack_start(self.black_level_slider, True, True, 0)
         vbox.pack_start(white_level_label, True, True, 0)
         vbox.pack_start(self.white_level_slider, True, True, 0)
+        vbox.pack_start(black_level_label, True, True, 0)
+        vbox.pack_start(self.black_level_slider, True, True, 0)
         vbox.pack_start(delta_scalar_label, True, True, 0)
         vbox.pack_start(self.delta_scalar_slider, True, True, 0)
         vbox.pack_start(neighbor_scalar_label, True, True, 0)
