@@ -650,8 +650,10 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
     priv->frameOutputMode = (FrameOutput)priv->opts->frame_output;
     double display_fps = 60.0;
     struct mp_stream_info *info = mp_filter_find_stream_info(f);
-    if (info) {
-        if (info->get_display_fps) display_fps = info->get_display_fps(info);  // Set the target FPS to the display FPS
+    if (info && info->get_display_fps) {
+        double reported_fps = info->get_display_fps(info);
+        if (reported_fps > 0.0)
+            display_fps = reported_fps;  // Set the target FPS to the display FPS
     }
     priv->targetFrameTime = 1.0 / display_fps;
 
