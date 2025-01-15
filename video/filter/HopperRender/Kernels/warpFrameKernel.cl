@@ -1,9 +1,9 @@
 unsigned char apply_levelsY(float value, float black_level, float white_level) {
-    return fmax(fmin((value - black_level) / (white_level - black_level) * 255.0f, 255.0f), 0.0f);
+    return fmax(fmin((value - black_level) / (white_level - black_level) * 65535.0f, 65535.0f), 0.0f);
 }
 
 unsigned char apply_levelsUV(float value, float white_level) {
-    return fmax(fmin((value - 128.0f) / white_level * 255.0f + 128.0f, 255.0f), 0.0f);
+    return fmax(fmin((value - 32768.0f) / white_level * 65535.0f + 32768.0f, 65535.0f), 0.0f);
 }
 
 // Helper function to mirror the coordinate if it is outside the bounds
@@ -17,7 +17,7 @@ int mirrorCoordinate(int pos, int dim) {
 }
 
 // Generates a color representation of the flow
-unsigned char visualizeFlow(const short offsetX, const short offsetY, const unsigned char currPixel, const int channel, const int resImpact) {
+unsigned short visualizeFlow(const short offsetX, const short offsetY, const unsigned short currPixel, const int channel, const int resImpact) {
     // Used for color output
     struct RGB {
         unsigned char r, g, b;
@@ -101,17 +101,17 @@ unsigned char visualizeFlow(const short offsetX, const short offsetY, const unsi
 
     // Convert the RGB flow to YUV and return the appropriate channel
     if (channel == 0) { // Y Channel
-        return ((unsigned char)fmax(fmin(rgb.r * 0.299f + rgb.g * 0.587f + rgb.b * 0.114f, 255.0f), 0.0f) >> 1) + (currPixel >> 1);
+        return ((unsigned short)fmax(fmin(rgb.r * 0.299f + rgb.g * 0.587f + rgb.b * 0.114f, 255.0f), 0.0f) << 7) + (currPixel >> 1);
     } else if (channel == 1) { // U Channel
-        return fmax(fmin(rgb.r * -0.168736f + rgb.g * -0.331264f + rgb.b * 0.5f + 128.0f, 255.0f), 0.0f);
+        return (unsigned short)fmax(fmin(rgb.r * -0.168736f + rgb.g * -0.331264f + rgb.b * 0.5f + 128.0f, 255.0f), 0.0f) << 8;
     } else { // V Channel
-        return fmax(fmin(rgb.r * 0.5f + rgb.g * -0.418688f + rgb.b * -0.081312f + 128.0f, 255.0f), 0.0f);
+        return (unsigned short)fmax(fmin(rgb.r * 0.5f + rgb.g * -0.418688f + rgb.b * -0.081312f + 128.0f, 255.0f), 0.0f) << 8;
     }
 }
 
 // Kernel that warps a frame according to the offset array
-__kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __global const unsigned char* sourceFrame21,
-                              __global const short* offsetArray, __global unsigned char* outputFrame, 
+__kernel void warpFrameKernel(__global const unsigned short* sourceFrame12, __global const unsigned short* sourceFrame21,
+                              __global const short* offsetArray, __global unsigned short* outputFrame, 
                               const float frameScalar12, const float frameScalar21, const int lowDimY, const int lowDimX, 
                               const int dimY, const int dimX, const int resolutionScalar, const int frameOutputMode, 
                               const float black_level, const float white_level, const int cz) {
@@ -141,7 +141,7 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
             adjCx = (cx - (dimX >> 1)) << 1;
             adjCy = (cy - (verticalOffset >> cz)) << 1;
         } else { // Fill the surrounding area with black
-            outputFrame[cz * dimY * dimX + cy * dimX + cx] = cz ? 128 : 0;
+            outputFrame[cz * dimY * dimX + cy * dimX + cx] = cz ? 32768 : 0;
             return;
         }
     }
@@ -156,7 +156,7 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
 
     // GreyFlow
     if (frameOutputMode == 4) {
-        outputFrame[cz * dimY * dimX + cy * dimX + cx] = cz ? 128 : min((abs(offsetX12) + abs(offsetY12)) << 2, 255u);
+        outputFrame[cz * dimY * dimX + cy * dimX + cx] = cz ? 32768 : min((abs(offsetX12) + abs(offsetY12)) << 10, 65535u);
         return;
     }
 
@@ -171,8 +171,8 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
     } else if (frameOutputMode == 1) { // WarpedFrame21
         outputFrame[cz * dimY * dimX + cy * dimX + cx] = sourceFrame21[cz * dimY * dimX + newCy21 * dimX + (newCx21 & (cz ? ~1 : ~0)) + (cx & (cz ? 1 : 0))];
     } else { // BlendedFrame
-        unsigned char blendedValue = (float)sourceFrame12[cz * dimY * dimX + newCy12 * dimX + (newCx12 & (cz ? ~1 : ~0)) + (cx & (cz ? 1 : 0))] * frameScalar21 + 
-                                     (float)sourceFrame21[cz * dimY * dimX + newCy21 * dimX + (newCx21 & (cz ? ~1 : ~0)) + (cx & (cz ? 1 : 0))] * frameScalar12;
+        unsigned short blendedValue = (float)sourceFrame12[cz * dimY * dimX + newCy12 * dimX + (newCx12 & (cz ? ~1 : ~0)) + (cx & (cz ? 1 : 0))] * frameScalar21 + 
+                                      (float)sourceFrame21[cz * dimY * dimX + newCy21 * dimX + (newCx21 & (cz ? ~1 : ~0)) + (cx & (cz ? 1 : 0))] * frameScalar12;
         if (frameOutputMode == 3) { // HSVFlow
             blendedValue = visualizeFlow(-offsetX12, -offsetY12, blendedValue, cz + (cx & (cz ? 1 : 0)), resolutionScalar <= 2 ? 4 : 1);
         }

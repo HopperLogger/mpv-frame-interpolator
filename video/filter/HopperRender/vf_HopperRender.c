@@ -157,9 +157,9 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv) {
         default:
             // Black and White Levels
             if (code >= 100 && code <= 355) {
-                priv->ofc->outputBlackLevel = (float)(code - 100);
+                priv->ofc->outputBlackLevel = (float)(code - 100) * 256.0f;
             } else if (code >= 400 && code <= 655) {
-                priv->ofc->outputWhiteLevel = (float)(code - 400);
+                priv->ofc->outputWhiteLevel = (float)(code - 400) * 256.0f;
             } else if (code >= 700 && code <= 731) {
                 priv->ofc->deltaScalar = code - 700;
             } else if (code >= 800 && code <= 831) {
@@ -368,7 +368,7 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 static void vf_HopperRender_process_intermediate_frame(struct mp_filter *f) {
     struct priv *priv = f->priv;
 
-    struct mp_image *img = mp_image_pool_get(priv->imagePool, IMGFMT_NV12, priv->ofc->frameWidth, priv->ofc->frameHeight);
+    struct mp_image *img = mp_image_pool_get(priv->imagePool, IMGFMT_P010, priv->ofc->frameWidth, priv->ofc->frameHeight);
     mp_image_copy_attributes(img, priv->referenceImage);
 
     // Update playback timestamp
@@ -641,7 +641,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
         talloc_free(options);
         return NULL;
     }
-    mp_autoconvert_add_imgfmt(priv->conv, IMGFMT_NV12, 0);
+    mp_autoconvert_add_imgfmt(priv->conv, IMGFMT_P010, 0);
 
     // Thread data
     priv->m_ptOFCThreadID = 0;
