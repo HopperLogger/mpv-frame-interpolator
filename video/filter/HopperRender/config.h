@@ -15,3 +15,4 @@
 // Debugging
 #define INC_APP_IND 1 // Whether or not to include the AppIndicator (0: Disabled, 1: Enabled)
 #define SAVE_STATS 0  // Whether or not to save the ofc Calc Times to a log file (0: Disabled, 1: Enabled)
+#define IMG_FMT_SIZE 2 // 1 for 8-bit images, 2 for 16-bit images

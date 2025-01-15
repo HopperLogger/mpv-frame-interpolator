@@ -1,3 +1,5 @@
+#define IMG_FMT unsigned short
+#define SHIFT 1
 #define FIRST_NEIGHBOR_ITERATION 4
 
 // Helper function to get neighbor offset values
@@ -31,8 +33,8 @@ void warpReduce2x2(volatile __local unsigned int* partialSums, int tIdx) {
 }
 
 // Kernel that sums up all the pixel deltas of each window
-__kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __global const unsigned short* frame1,
-                                  __global const unsigned short* frame2, __global const short* offsetArray,
+__kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __global const IMG_FMT* frame1,
+                                  __global const IMG_FMT* frame2, __global const short* offsetArray,
                                   const int dimY, const int dimX, const int lowDimY,
                                   const int lowDimX, const int windowSize, const int searchWindowSize,
                                   const int resolutionScalar, const int iteration, const int step, 
@@ -96,7 +98,7 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
             delta = abs_diff(frame1[newCy * dimX + newCx], frame2[scaledCy * dimX + scaledCx]) + 
                     abs_diff(frame1[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1)], frame2[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1)]) + 
                     abs_diff(frame1[dimY * dimX + (newCy >> 1) * dimX + (newCx & ~1) + 1], frame2[dimY * dimX + (scaledCy >> 1) * dimX + (scaledCx & ~1) + 1]);
-            //delta <<= deltaScalar;
+            delta = !SHIFT ? delta <<= deltaScalar : delta;
         }
 
         // Calculate the offset bias
