@@ -256,7 +256,7 @@ void freeOFC(struct OpticalFlowCalc* ofc) {
 static bool detectDevices(struct OpticalFlowCalc* ofc) {
     // Capabilities we are going to check for
     cl_ulong availableVRAM;
-    const cl_ulong requiredVRAM = 4.5 * ofc->frameHeight * ofc->frameWidth +
+    const cl_ulong requiredVRAM = 9 * ofc->frameHeight * ofc->frameWidth +
                                   4lu * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(short) +
                                   MAX_SEARCH_RADIUS * ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth * sizeof(unsigned int) +
                                   ofc->opticalFlowFrameHeight * ofc->opticalFlowFrameWidth;
