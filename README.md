@@ -47,6 +47,7 @@ The compilation is the same as for the [mpv](https://github.com/mpv-player/mpv) 
 That's it! You can now play a video with SMPlayer and HopperRender will interpolate it to your monitor's native refresh-rate.
 
 ## Troubleshooting
+- If the playback doesn't start, the python AppIndicator is most likely the cause. Make sure the `gobject-introspection` package and python library `pygobject` is installed. If it still doesn't work, the AppIndicator can be disabled by modifiyng the flag in `mpv-build/mpv/video/filter/HopperRender/config.h` and then recompiling.
 - Make sure not to move, rename, or delete the mpv-build folder and clone it to your home folder, as the filter depends on the AppIndicator Python script and OpenCL kernels to be at a constant path.
 - The following are a few libraries recommended for proper mpv and ffmpeg compilation:
 ```
