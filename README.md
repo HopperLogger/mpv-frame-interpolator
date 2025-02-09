@@ -59,17 +59,6 @@ a happy accident.
 
 ## Downloads
 
-<<<<<<< HEAD
-=======
-    - _Grey Flow: Visualizes the optical flow as a black and white representation, where the brightness indicates the magnitude of movement_
-    - _Blurred Frames: Outputs the blurred source frames_
-    - _Side-by-side 1: Shows the difference between no interpolation on the left, and interpolation on the right (split in the middle)_
-    - _Side-by-side 2: Shows the difference between no interpolation on the left, and interpolation on the right (scaled down side by side)_
-    - _Tearing Test_: Runs a white bar across the screen. Allows you to check for stuttering or tearing.
-- You can select a shader that changes the dynamic range of the video
-- You can select the calculation resolution used to calculate the optical flow _(this does not affect the output resolution!)_
-- In the status section, you can see the current state of HopperRender, the number of calculation steps that are currently performed, the source framerate, the frame and calculation resolutions, as well as much more technical details
->>>>>>> 7320a9392f (Update README.md)
 
 For semi-official builds and third-party packages please see
 [mpv.io/installation](https://mpv.io/installation/).
