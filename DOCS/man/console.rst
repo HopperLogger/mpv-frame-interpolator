@@ -1,8 +1,10 @@
 CONSOLE
 =======
 
-The console is a REPL for mpv input commands. It is displayed on the video
-window. It also shows log messages. It can be disabled entirely using the
+This script provides the ability to process the user's textual input to other
+scripts through the ``mp.input`` API. It also has a builtin mode of operation to
+complete and run mpv input commands and print mpv's log. It can be displayed on
+both the video window and the terminal. It can be disabled entirely using the
 ``--load-console=no`` option.
 
 Keybindings
@@ -15,8 +17,8 @@ ESC and Ctrl+[
     Hide the console.
 
 ENTER, Ctrl+j and Ctrl+m
-    Expand the first completion suggestion if present and if none was selected,
-    and run the typed command.
+    Select the first completion if one wasn't already manually selected, and run
+    the typed command.
 
 Shift+ENTER
     Type a literal newline character.
@@ -90,7 +92,7 @@ Shift+INSERT
     Paste text (uses the primary selection on X11 and Wayland).
 
 TAB and Ctrl+i
-    Cycle through completion suggestions.
+    Cycle through completions.
 
 Shift+TAB
     Cycle through the completions backwards.
@@ -150,8 +152,7 @@ Configurable Options
     Default: a monospace font depending on the platform
 
     Set the font used for the console.
-    A monospaced font is necessary to align completion suggestions correctly in
-    a grid.
+    A monospaced font is necessary to align completions correctly in a grid.
     If the console was opened by calling ``mp.input.select`` and no font was
     configured, ``--osd-font`` is used, as alignment is not necessary in that
     case.
@@ -198,5 +199,5 @@ Configurable Options
     Default: auto
 
     The ratio of font height to font width.
-    Adjusts table width of completion suggestions.
+    Adjusts grid width of completions.
     Values in the range 1.8..2.5 make sense for common monospace fonts.

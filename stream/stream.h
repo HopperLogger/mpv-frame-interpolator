@@ -67,6 +67,9 @@
 #define STREAM_ERROR 0
 #define STREAM_OK    1
 
+// EOF value returned by stream_read_char()
+#define STREAM_EOF (-256)
+
 enum stream_ctrl {
     // Certain network protocols
     STREAM_CTRL_AVSEEK,
@@ -257,6 +260,7 @@ struct stream *stream_create(const char *url, int flags,
 stream_t *open_output_stream(const char *filename, struct mpv_global *global);
 
 void mp_url_unescape_inplace(char *buf);
+char *mp_url_unescape(void *talloc_ctx, char *url);
 char *mp_url_escape(void *talloc_ctx, const char *s, const char *ok);
 
 // stream_memory.c

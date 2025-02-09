@@ -40,7 +40,7 @@ def otool(objfile, rapths):
     return libs_resolved, libs_relative
 
 def get_rapths(objfile):
-    rpaths = []
+    rpaths: list[str] = []
     command = f"otool -l '{objfile}' | grep -A2 LC_RPATH | grep path"
     path_re = re.compile(r"^\s*path (.*) \(offset \d*\)$")
 
@@ -50,7 +50,10 @@ def get_rapths(objfile):
         return rpaths
 
     for line in result.splitlines():
-        line_clean = path_re.search(line).group(1).strip()
+        match = path_re.search(line)
+        if match is None:
+            continue
+        line_clean = match.group(1).strip()
         # resolve @loader_path
         if line_clean.startswith("@loader_path/"):
             line_clean = line_clean[len("@loader_path/"):]
@@ -68,8 +71,9 @@ def get_rpaths_dev_tools(binary):
     result  = subprocess.check_output(command, shell = True, universal_newlines=True)
     path_re = re.compile(r"^\s*path (.*) \(offset \d*\)$")
     return [
-        path_re.search(line).group(1).strip()
+        match.group(1).strip()
         for line in result.splitlines()
+        if (match := path_re.search(line)) is not None
     ]
 
 def resolve_lib_path(objfile, lib, rapths):
@@ -258,7 +262,7 @@ def process_vulkan_loader(binary, loader_name, loader_relative_folder, library_n
         print(">>> could not find loader library " + library_system_path)
         return
 
-    print(">>> modifiying and writing loader json " + loader_name)
+    print(">>> modifying and writing loader json " + loader_name)
     loader_bundle_file = open(loader_bundle_path, "w")
     loader_library_name = os.path.basename(library_system_path)
     library_path = os.path.join(library_relative_folder, loader_library_name)

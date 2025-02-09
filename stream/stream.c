@@ -156,6 +156,13 @@ void mp_url_unescape_inplace(char *url)
     }
 }
 
+char *mp_url_unescape(void *talloc_ctx, char *url)
+{
+    char *unescaped = talloc_strdup(talloc_ctx, url);
+    mp_url_unescape_inplace(unescaped);
+    return unescaped;
+}
+
 static const char hex_digits[] = "0123456789ABCDEF";
 
 
@@ -604,7 +611,7 @@ int stream_read_partial(stream_t *s, void *buf, int buf_size)
 int stream_read_char_fallback(stream_t *s)
 {
     uint8_t c;
-    return stream_read_partial(s, &c, 1) ? c : -256;
+    return stream_read_partial(s, &c, 1) ? c : STREAM_EOF;
 }
 
 int stream_read(stream_t *s, void *mem, int total)

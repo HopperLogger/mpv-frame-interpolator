@@ -34,6 +34,7 @@
 
 #include "demux/demux.h"
 #include "demux/packet.h"
+#include "demux/packet_pool.h"
 
 #include "common/codecs.h"
 #include "common/global.h"
@@ -114,15 +115,18 @@ const struct m_sub_options dec_wrapper_conf = {
         {"correct-pts", OPT_BOOL(correct_pts)},
         {"container-fps-override", OPT_DOUBLE(fps_override), M_RANGE(0, DBL_MAX)},
         {"ad", OPT_STRING(audio_decoders),
+            .flags = UPDATE_AD,
             .help = decoder_list_help},
         {"vd", OPT_STRING(video_decoders),
+            .flags = UPDATE_VD,
             .help = decoder_list_help},
         {"audio-spdif", OPT_STRING(audio_spdif),
             .help = decoder_list_help},
         {"video-rotate", OPT_CHOICE(video_rotate, {"no", -1}),
             .flags = UPDATE_IMGPAR, M_RANGE(0, 359)},
         {"video-aspect-override", OPT_ASPECT(movie_aspect),
-            .flags = UPDATE_IMGPAR, M_RANGE(-1, 10)},
+            .flags = UPDATE_IMGPAR, M_RANGE(0, 10),
+            OPTDEF_DOUBLE(-1.0)},
         {"video-aspect-method", OPT_CHOICE(aspect_method,
             {"bitstream", 1}, {"container", 2}),
             .flags = UPDATE_IMGPAR},
@@ -692,7 +696,8 @@ static bool process_decoded_frame(struct priv *p, struct mp_frame *frame)
 
         crazy_video_pts_stuff(p, mpi);
 
-        struct demux_packet *ccpkt = new_demux_packet_from_buf(mpi->a53_cc);
+        struct demux_packet *ccpkt = new_demux_packet_from_buf(p->public.f->packet_pool,
+                                                               mpi->a53_cc);
         if (ccpkt) {
             av_buffer_unref(&mpi->a53_cc);
             ccpkt->pts = mpi->pts;
@@ -1313,7 +1318,7 @@ void lavc_process(struct mp_filter *f, struct lavc_state *state,
             return;
         }
         state->packets_sent = true;
-        talloc_free(pkt);
+        demux_packet_pool_push(f->packet_pool, pkt);
         mp_filter_internal_mark_progress(f);
     } else {
         // Decoding error, or hwdec fallback recovery. Just try again.

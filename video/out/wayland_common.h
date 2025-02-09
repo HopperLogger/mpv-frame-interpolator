@@ -121,6 +121,9 @@ struct vo_wayland_state {
     struct zwp_idle_inhibit_manager_v1 *idle_inhibit_manager;
     struct zwp_idle_inhibitor_v1 *idle_inhibitor;
 
+    /* text-input */
+    struct zwp_text_input_manager_v3 *text_input_manager;
+
     /* linux-dmabuf */
     struct wl_list tranche_list;
     struct vo_wayland_tranche *current_tranche;
@@ -163,9 +166,6 @@ struct vo_wayland_state {
 
     /* Data offer */
     struct wl_data_device_manager *devman;
-    struct vo_wayland_data_offer *pending_offer;
-    struct vo_wayland_data_offer *dnd_offer;
-    struct vo_wayland_data_offer *selection_offer;
     bstr selection_text;
 
     /* Cursor */

@@ -398,9 +398,9 @@ struct m_option {
     // Most numeric types restrict the range to [min, max] if min<max (this
     // implies that if min/max are not set, the full range is used). In all
     // cases, the actual range is clamped to the type's native range.
-    // Float types use [DBL_MIN, DBL_MAX], though by setting min or max to
-    // -/+INFINITY, the range can be extended to INFINITY. (This part is buggy
-    // for "float".)
+    // Float type uses [FLT_MIN, FLT_MAX], and double type uses
+    // [DBL_MIN, DBL_MAX], though by setting min or max to -/+INFINITY,
+    // the range can be extended to INFINITY.
     // Preferably use M_RANGE() to set these fields.
     double min, max;
 
@@ -443,7 +443,10 @@ char *format_file_size(int64_t size);
 #define UPDATE_VIDEO            (1 << 15)  // force redraw if needed
 #define UPDATE_VO               (1 << 16)  // reinit the VO
 #define UPDATE_CLIPBOARD        (1 << 17)  // reinit the clipboard
-#define UPDATE_OPT_LAST         (1 << 17)
+#define UPDATE_DEMUXER          (1 << 18)  // invalidate --prefetch-playlist's data
+#define UPDATE_AD               (1 << 19)  // reinit audio chain and decoder
+#define UPDATE_VD               (1 << 20)  // reinit video chain and decoder
+#define UPDATE_OPT_LAST         (1 << 20)
 
 // All bits between of UPDATE_ flags
 #define UPDATE_OPTS_MASK        ((UPDATE_OPT_LAST << 1) - 1)

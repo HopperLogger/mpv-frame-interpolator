@@ -3,6 +3,7 @@ protocols = [[wl_protocol_dir, 'stable/presentation-time/presentation-time.xml']
              [wl_protocol_dir, 'stable/viewporter/viewporter.xml'],
              [wl_protocol_dir, 'stable/xdg-shell/xdg-shell.xml'],
              [wl_protocol_dir, 'unstable/idle-inhibit/idle-inhibit-unstable-v1.xml'],
+             [wl_protocol_dir, 'unstable/text-input/text-input-unstable-v3.xml'],
              [wl_protocol_dir, 'unstable/linux-dmabuf/linux-dmabuf-unstable-v1.xml'],
              [wl_protocol_dir, 'unstable/xdg-decoration/xdg-decoration-unstable-v1.xml'],
              [wl_protocol_dir, 'staging/content-type/content-type-v1.xml'],
@@ -12,7 +13,7 @@ protocols = [[wl_protocol_dir, 'stable/presentation-time/presentation-time.xml']
 wl_protocols_source = []
 wl_protocols_headers = []
 
-foreach v: ['1.32']
+foreach v: ['1.32', '1.39']
     features += {'wayland-protocols-' + v.replace('.', '-'):
         wayland['deps'][2].version().version_compare('>=' + v)}
 endforeach
@@ -20,6 +21,10 @@ endforeach
 if features['wayland-protocols-1-32']
     protocols += [[wl_protocol_dir, 'staging/cursor-shape/cursor-shape-v1.xml'],
                   [wl_protocol_dir, 'unstable/tablet/tablet-unstable-v2.xml']] # required by cursor-shape
+endif
+
+if features['wayland-protocols-1-39']
+    protocols += [[wl_protocol_dir, 'staging/ext-data-control/ext-data-control-v1.xml']]
 endif
 
 foreach p: protocols

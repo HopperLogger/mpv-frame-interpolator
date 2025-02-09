@@ -110,6 +110,7 @@ sources = files(
     'demux/demux_timeline.c',
     'demux/ebml.c',
     'demux/packet.c',
+    'demux/packet_pool.c',
     'demux/timeline.c',
 
     ## Filters
@@ -358,6 +359,7 @@ if not features['build-date']
 endif
 
 features += {'ta-leak-report': get_option('ta-leak-report')}
+features += {'disable-packet-pool': get_option('disable-packet-pool')}
 
 libdl = dependency('dl', required: false)
 features += {'libdl': libdl.found()}
@@ -1052,6 +1054,15 @@ features += {'wayland': wayland_deps and wayland['header'] and wayland['scanner'
 
 if features['wayland']
     subdir(join_paths('video', 'out'))
+endif
+
+foreach v: ['1.39']
+    features += {'wayland-protocols-' + v.replace('.', '-'):
+        wayland['deps'][2].version().version_compare('>=' + v)}
+endforeach
+
+if features['wayland-protocols-1-39']
+    sources += files('player/clipboard/clipboard-wayland.c')
 endif
 
 features += {'memfd-create': false}

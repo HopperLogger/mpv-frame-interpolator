@@ -573,8 +573,8 @@ Playback Control
 
     Known problems:
 
-    - It's fragile. If anything doesn't work, random non-useful behavior may
-      occur. In simple cases, the player will just play nonsense and artifacts.
+    - It's fragile. If anything doesn't work, random behavior may occur.
+      In simple cases, the player will just play nonsense and artifacts.
       In other cases, it may get stuck or heat the CPU. (Exceeding memory usage
       significantly beyond the user-set limits would be a bug, though.)
 
@@ -988,7 +988,7 @@ Program Behavior
         Add thumbnails as video tracks (default: none).
 
         Thumbnails get downloaded when they are added as tracks, so 'all' can
-        have a noticable impact on how long it takes to open the video when
+        have a noticeable impact on how long it takes to open the video when
         there are a lot of thumbnails.
 
     ``use_manifests=<yes|no>``
@@ -1147,6 +1147,26 @@ Watch Later
 ``--ignore-path-in-watch-later-config``
     Ignore path (i.e. use filename only) when using watch later feature.
     (Default: disabled)
+
+Watch History
+-------------
+
+``--save-watch-history``
+    Whether to save which files are played. These can be then selected with the
+    default ``g-h`` key binding.
+
+    .. warning::
+
+        This option may expose privacy-sensitive information and is thus
+        disabled by default.
+
+``--watch-history-path=<path>``
+    The path in which to store the watch history. Default:
+    ``~~state/watch_history.jsonl`` (see `PATHS`_).
+
+    This file contains one JSON object per line. Its ``time`` field is the UNIX
+    timestamp when the file was opened, its ``path`` field is the normalized
+    path, and its ``title`` field is the title when it was available.
 
 Video
 -----
@@ -1552,7 +1572,7 @@ Video
 
     This option has no effect if ``--video-unscaled`` option is used.
 
-``--video-aspect-override=<ratio|no>``
+``--video-aspect-override=<ratio|no|original>``
     Override video aspect ratio, in case aspect information is incorrect or
     missing in the file being played.
 
@@ -1560,7 +1580,8 @@ Video
 
     :0:  disable aspect ratio handling, pretend the video has square pixels
     :no: same as ``0``
-    :-1: use the video stream or container aspect (default)
+    :original: use the video stream or container aspect (default)
+    :-1: same as ``1`` (deprecated)
 
     But note that handling of these special values might change in the future.
 
@@ -1806,14 +1827,7 @@ Video
         ``mpv --hwdec=vdpau --hwdec-codecs=h264,mpeg2video``
             Enable vdpau decoding for h264 and mpeg2 only.
 
-``--vd-lavc-check-hw-profile=<yes|no>``
-    Check hardware decoder profile (default: yes). If ``no`` is set, the
-    highest profile of the hardware decoder is unconditionally selected, and
-    decoding is forced even if the profile of the video is higher than that.
-    The result is most likely broken decoding, but may also help if the
-    detected or reported profiles are somehow incorrect.
-
-``--vd-lavc-software-fallback=<yes|no|N>``
+``--hwdec-software-fallback=<yes|no|N>``
     Fallback to software decoding if the hardware-accelerated decoder fails
     (default: 3). If this is a number, then fallback will be triggered if
     N frames fail to decode in a row. 1 is equivalent to ``yes``.
@@ -1822,6 +1836,13 @@ Video
     a fallback happens, parts of the file will be skipped, approximately by to
     the number of packets that could not be decoded. Values below an unspecified
     count will not have this problem, because mpv retains the packets.
+
+``--vd-lavc-check-hw-profile=<yes|no>``
+    Check hardware decoder profile (default: yes). If ``no`` is set, the
+    highest profile of the hardware decoder is unconditionally selected, and
+    decoding is forced even if the profile of the video is higher than that.
+    The result is most likely broken decoding, but may also help if the
+    detected or reported profiles are somehow incorrect.
 
 ``--vd-lavc-film-grain=<auto|cpu|gpu>``
     Enables film grain application on the GPU. If video decoding is done on
@@ -2001,8 +2022,8 @@ Audio
     Enable exclusive output mode. In this mode, the system is usually locked
     out, and only mpv will be able to output audio.
 
-    This only works for some audio outputs, such as ``wasapi``, ``coreaudio``
-    and ``pipewire``. Other audio outputs silently ignore this option.
+    This only works for some audio outputs, such as ``wasapi``, ``coreaudio``,
+    ``pipewire`` and ``audiounit``. Other audio outputs silently ignore this option.
     They either have no concept of exclusive mode, or the mpv side of the
     implementation is missing.
 
@@ -2052,9 +2073,9 @@ Audio
     explicitly selected or rejected by the option.
 
     ``-`` at the end of the list suppresses fallback on other available
-    decoders not on the ``--ad`` list. ``+`` in front of an entry forces the
-    decoder. Both of these should not normally be used, because they break
-    normal decoder auto-selection! Both of these methods are deprecated.
+    decoders not on the ``--ad`` list. This should not normally be used,
+    because they break normal decoder auto-selection! The ``-`` mode is
+    deprecated.
 
     .. admonition:: Examples
 
@@ -2315,7 +2336,7 @@ Audio
             directories.
 
 ``--audio-exts=ext1,ext2,...``
-    Audio file extentions to try to match when using ``--audio-file-auto``,
+    Audio file extensions to try to match when using ``--audio-file-auto``,
     ``--autocreate-playlist`` or ``--directory-filter-types``.
 
     This is a string list option. See `List Options`_ for details.
@@ -2446,6 +2467,12 @@ Subtitles
 
         This affects ASS subtitles as well, and may lead to incorrect subtitle
         rendering. Use with care, or use ``--sub-font-size`` instead.
+
+``--sub-scale-signs=<yes|no>``
+    When set to yes, also apply ``--sub-scale`` to typesetting (or "signs").
+    When this is set to no, ``--sub-scale`` is only applied to dialogue. The
+    distinction between dialogue and typesetting is done on a best effort basis
+    and is not infallible (default: no).
 
 ``--sub-scale-by-window=<yes|no>``
     Whether to scale subtitles with the window size (default: yes). If this is
@@ -2714,7 +2741,7 @@ Subtitles
     (default: no). Normally, the subtitle canvas is fit into the video canvas
     (e.g. letterboxed). Setting this option uses the video size as subtitle
     canvas size. Can be useful to test broken subtitles, which often happen
-    when the video was trancoded, while attempting to keep the old subtitles.
+    when the video was transcoded, while attempting to keep the old subtitles.
 
 ``--sub-ass=<yes|no>``
     Render ASS subtitles natively (default: yes).
@@ -2748,7 +2775,7 @@ Subtitles
     :all:   Load all subs in the current and ``--sub-file-paths`` directories.
 
 ``--sub-auto-exts=ext1,ext2,...``
-    Subtitle extentions to try and match when using ``--sub-auto``. Note that
+    Subtitle extensions to try and match when using ``--sub-auto``. Note that
     modifying this list will also affect what mpv recognizes as subtitles when
     using drag and drop.
 
@@ -3355,7 +3382,7 @@ Window
 
 ``--ontop-level=<window|system|desktop|level>``
     (macOS only)
-    Sets the level of an ontop window (default: window).
+    Sets the level of an on-top window (default: window).
 
     :window:  On top of all other windows.
     :system:  On top of system elements like Taskbar, Menubar and Dock.
@@ -3569,7 +3596,7 @@ Window
 ``--force-window-position``
     Forcefully move mpv's video output window to default location whenever
     there is a change in video parameters, video stream or file. This used to
-    be the default behavior. Currently only affects X11 and SDL VOs.
+    be the default behavior. Currently only affects X11, macvk and SDL VOs.
 
 ``--auto-window-resize=<yes|no>``
     By default, mpv will automatically resize itself if the video's size changes
@@ -4453,6 +4480,17 @@ Input
     Begin the built-in window dragging when the mouse moves outside a deadzone of
     ``N`` pixels while the mouse button is being held down (default: 3). This only
     affects VOs which support the ``begin-vo-dragging`` command.
+
+``--input-ime=<yes|no>``
+    Enable keyboard input via an active input method (IME) connected to the VO.
+    (default: yes). The input popup window, if there is any, is always
+    positioned at the top left of the window. Whether pre-edit text is drawn
+    depends on the platform. You may need to configure your IME to display the
+    pre-edit inside of the input popup window if you cannot read the pre-edit
+    text in the mpv window.
+
+    Wayland only. On Windows, the IME is currently always enabled. This option
+    is not applicable to terminal input.
 
 OSD
 ---
@@ -5500,7 +5538,7 @@ DVB
     ``channels.conf``, ``--dvbin-full-transponder`` or the magic PID
     ``8192`` are recommended.
 
-``--dvbin-timeout=<1-30>``
+``--dvbin-timeout=<seconds>``
     Maximum number of seconds to wait when trying to tune a frequency before
     giving up (default: 30).
 
@@ -6019,6 +6057,9 @@ them.
     performance issues with older drivers. If flip-model presentation is not
     supported (for example, on Windows 7 without the platform update), mpv will
     automatically fall back to the older bitblt presentation model.
+
+    flip-model needs presentation needs to be disabled for background
+    transparency to work.
 
 ``--d3d11-sync-interval=<0..4>``
     Schedule each frame to be presented for this number of VBlank intervals.
@@ -6867,9 +6908,9 @@ them.
 ``--target-colorspace-hint=<auto|yes|no>``
     Automatically configure the output colorspace of the display to pass
     through the input values of the stream (e.g. for HDR passthrough), if
-    possible. In ``auto`` mode (the default), the target colorspace is only set,
+    possible. In ``auto`` mode, the target colorspace is only set,
     if the display signals support for HDR colorspace.
-    Requires a supporting driver and ``--vo=gpu-next``. (Default: ``auto``)
+    Requires a supporting driver and ``--vo=gpu-next``. (Default: ``no``)
 
 ``--target-prim=<value>``
     Specifies the primaries of the display. Video colors will be adapted to
@@ -7017,7 +7058,8 @@ them.
     Valid values are:
 
     auto
-        Choose the best curve according to internal heuristics. (Default)
+        Maps to ``bt.2390`` when using ``--vo=gpu``, and to ``spline`` with
+        ``--vo=gpu-next``. (Default)
     clip
         Hard-clip any out-of-range values. Use this when you care about
         perfect color accuracy for in-range values at the cost of completely
@@ -7349,6 +7391,8 @@ them.
     none
         Do not blend the frame and leave the alpha as is.
 
+    Background transparency on d3d11 requires ``--d3d11-flip=no``.
+
     Before mpv 0.38.0, this option used to accept a color value specifying the
     background color. This is now done by the ``--background-color`` option.
     Use that instead.
@@ -7646,12 +7690,10 @@ Miscellaneous
 
     .. warning:: Using realtime priority can cause system lockup.
 
-``--media-controls=<yes|player|no>``
+``--media-controls=<yes|no>``
     (Windows only)
     Enable integration of media control interface SystemMediaTransportControls.
-    If set to ``player``, only the player will use the controls. Setting it to
-    ``yes`` will also enable the controls for libmpv integrations.
-    (default: ``player``)
+    Default: yes (except for libmpv)
 
 ``--force-media-title=<string>``
     Force the contents of the ``media-title`` property to this value. Useful
@@ -7710,7 +7752,7 @@ Miscellaneous
     used to disable cover art that is part of the file).
 
 ``--image-exts=ext1,ext2,...``
-    Image file extentions to try to match when using ``--cover-art-auto``,
+    Image file extensions to try to match when using ``--cover-art-auto``,
     ``--autocreate-playlist`` or ``--directory-filter-types``.
 
     This is a string list option. See `List Options`_ for details.
@@ -7726,21 +7768,21 @@ Miscellaneous
     This is a string list option. See `List Options`_ for details.
 
 ``--video-exts=ext1,ext2,...``
-    Video file extentions to try to match when using ``--autocreate-playlist`` or
+    Video file extensions to try to match when using ``--autocreate-playlist`` or
     ``--directory-filter-types``.
 
     This is a string list option. See `List Options`_ for details.
     Use ``--help=video-exts`` to see default extensions.
 
 ``--archive-exts=ext1,ext2,...``
-    Archive file extentions to try to match when using ``--autocreate-playlist``
+    Archive file extensions to try to match when using ``--autocreate-playlist``
     or ``--directory-filter-types``.
 
     This is a string list option. See `List Options`_ for details. Use
     ``--help=archive-exts`` to see the default extensions.
 
 ``--playlist-exts=ext1,ext2,...``
-    Playlist file extentions to try to match when using
+    Playlist file extensions to try to match when using
     ``--autocreate-playlist`` or ``--directory-filter-types``.
 
     This is a string list option. See `List Options`_ for details. Use
@@ -7856,10 +7898,14 @@ Miscellaneous
     writing to the ``clipboard`` property to get and set clipboard contents.
 
 ``--clipboard-monitor=<yes|no>``
-    (Windows and macOS only)
+    (Windows, Wayland and macOS only)
 
     Enable clipboard monitoring so that the ``clipboard`` property can be
     observed for content changes (default: no). This only affects clipboard
     implementations which use polling to monitor clipboard updates.
     Other platforms currently ignore this option and always/never notify
     changes.
+
+    On Wayland, this option only has effect on the ``wayland`` backend, and
+    not for the ``vo`` backend. See ``current-clipboard-backend`` property for
+    more details.

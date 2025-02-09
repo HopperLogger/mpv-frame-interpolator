@@ -21,28 +21,51 @@ jobs:
         run: |
           ./ci/lint-commit-msg.py
 
-  swift-lint:
+  swift:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       - uses: norio-nomura/action-swiftlint@3.2.1
 
-  lua-lint:
+  lua:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: lunarmodules/luacheck@v1
 
-  python-lint:
+  ruff:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: astral-sh/ruff-action@v2
+      - name: Check
+        id: check
+        uses: astral-sh/ruff-action@v3
+        with:
+          src: ". TOOLS/umpv"
+      - name: Suggested changes
+        if: ${{ failure() && steps.check.outcome == 'failure' }}
+        run: ruff check . TOOLS/umpv --diff
 
-  editorconfig-lint:
+  mypy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: python/mypy@master
+        with:
+          install_project_dependencies: no
+          options: '--check-untyped-defs'
+          paths: ". TOOLS/umpv"
+
+  editorconfig:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: editorconfig-checker/action-editorconfig-checker@main
       - run: editorconfig-checker -config .editorconfig-checker.json
+
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pre-commit/action@v3.0.1

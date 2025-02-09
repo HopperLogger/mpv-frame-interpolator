@@ -35,14 +35,6 @@ local function Set (t)
     return set
 end
 
--- ?: surrogate (keep in mind that there is no lazy evaluation)
-local function iif(cond, if_true, if_false)
-    if cond then
-        return if_true
-    end
-    return if_false
-end
-
 -- youtube-dl JSON name to mpv tag name
 local tag_list = {
     ["artist"]          = "artist",
@@ -611,7 +603,7 @@ local function formats_to_edl(json, formats, use_all_formats)
                 end
                 hdr[#hdr + 1] = "!track_meta,title=" ..
                     edl_escape(title) .. ",byterate=" .. byterate ..
-                    iif(#flags > 0, ",flags=" .. table.concat(flags, "+"), "")
+                    (#flags > 0 and ",flags=" .. table.concat(flags, "+") or "")
             end
 
             if duration > 0 then
@@ -839,7 +831,7 @@ local function add_single_video(json)
     end
 
     -- set start time
-    if json.start_time or json.section_start and
+    if (json.start_time or json.section_start) and
         not option_was_set("start") and
         not option_was_set_locally("start") then
         local start_time = json.start_time or json.section_start
@@ -848,7 +840,7 @@ local function add_single_video(json)
     end
 
     -- set end time
-    if json.end_time or json.section_end and
+    if (json.end_time or json.section_end) and
         not option_was_set("end") and
         not option_was_set_locally("end") then
         local end_time = json.end_time or json.section_end
