@@ -10,8 +10,9 @@
 typedef struct OpticalFlowCalc {
     // Video properties
     bool isInitialized;      // Whether or not the optical flow calculator is initialized
-    int frameWidth;          // Width of the frame
+    int frameWidth;          // (stride) width of the frame
     int frameHeight;         // Height of the frame
+    int actualWidth;         // Actual width of the frame (as encoded)
     float outputBlackLevel;  // The black level used for the output frame
     float outputWhiteLevel;  // The white level used for the output frame
 
@@ -69,10 +70,11 @@ typedef struct OpticalFlowCalc {
  * @param ofc: Pointer to the optical flow calculator to be initialized
  * @param frameHeight: The height of the video frame
  * @param frameWidth: The width of the video frame
+ * @param actualWidth: The encoded width of the video frame
  *
  * @return: Whether or not the optical flow calculator was initialized successfully
  */
-bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int frameHeight, const int frameWidth);
+bool initOpticalFlowCalc(struct OpticalFlowCalc *ofc, const int frameHeight, const int frameWidth, const int actualWidth);
 
 /*
  * Frees the memory of the optical flow calculator
