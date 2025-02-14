@@ -320,10 +320,11 @@ static bool detectDevices(struct OpticalFlowCalc* ofc) {
     return 1;
 }
 
-bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, const int frameWidth) {
+bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, const int frameWidth, const int actualWidth) {
     // Set up variables
     ofc->frameWidth = frameWidth;
     ofc->frameHeight = frameHeight;
+    ofc->actualWidth = actualWidth;
     ofc->outputBlackLevel = 0.0f;
     ofc->outputWhiteLevel = 255.0f;
     ofc->opticalFlowSearchRadius = MIN_SEARCH_RADIUS;

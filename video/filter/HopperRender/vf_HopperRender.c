@@ -368,7 +368,7 @@ static void vf_HopperRender_interpolate_frame(struct mp_filter *f, unsigned char
 static void vf_HopperRender_process_intermediate_frame(struct mp_filter *f) {
     struct priv *priv = f->priv;
 
-    struct mp_image *img = mp_image_pool_get(priv->imagePool, IMGFMT_NV12, priv->ofc->frameWidth, priv->ofc->frameHeight);
+    struct mp_image *img = mp_image_pool_get(priv->imagePool, IMGFMT_NV12, priv->ofc->actualWidth, priv->ofc->frameHeight);
     mp_image_copy_attributes(img, priv->referenceImage);
 
     // Update playback timestamp
@@ -426,7 +426,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     // Initialize the filter if needed
     if (!priv->ofc->isInitialized) {
         priv->referenceImage = mp_image_new_ref(img);
-        ERR_CHECK(initOpticalFlowCalc(priv->ofc, img->h, img->w), f);
+        ERR_CHECK(initOpticalFlowCalc(priv->ofc, img->h, img->stride[0], img->w), f);
     }
 
     /* unsigned short* buffer = (unsigned short*)malloc(priv->ofc->frameHeight * priv->ofc->frameWidth * sizeof(unsigned short));
