@@ -427,7 +427,7 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     // Initialize the filter if needed
     if (!priv->ofc->isInitialized) {
         priv->referenceImage = mp_image_new_ref(img);
-        ERR_CHECK(initOpticalFlowCalc(priv->ofc, img->h, img->stride[0], img->w), f);
+        ERR_CHECK(initOpticalFlowCalc(priv->ofc, img->h, img->stride[0] >> (IMG_FMT_SIZE == 2 ? 1 : 0), img->w), f);
     }
 
     /* unsigned short* buffer = (unsigned short*)malloc(priv->ofc->frameHeight * priv->ofc->frameWidth * sizeof(unsigned short));
