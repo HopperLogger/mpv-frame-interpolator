@@ -115,7 +115,7 @@ void mp_init_paths(struct mpv_global *global, struct MPOpts *opts)
     if (!opts->load_config)
         force_configdir = "";
 
-    global->configdir = talloc_strdup(global, force_configdir);
+    global->configdir = mp_get_user_path(global, global, force_configdir);
 }
 
 char *mp_find_user_file(void *talloc_ctx, struct mpv_global *global,
@@ -215,10 +215,21 @@ char *mp_get_user_path(void *talloc_ctx, struct mpv_global *global,
             }
         }
     }
-    if (!res)
+    if (!res) {
         res = talloc_strdup(talloc_ctx, path);
-    MP_DBG(global, "user path: '%s' -> '%s'\n", path, res);
+    } else {
+        MP_DBG(global, "user path: '%s' -> '%s'\n", path, res);
+    }
     return res;
+}
+
+char *mp_normalize_user_path(void *talloc_ctx, struct mpv_global *global,
+                             const char *path)
+{
+    char *expanded = mp_get_user_path(NULL, global, path);
+    char *normalized = mp_normalize_path(talloc_ctx, expanded);
+    talloc_free(expanded);
+    return normalized;
 }
 
 void mp_mk_user_dir(struct mpv_global *global, const char *type, char *subdir)

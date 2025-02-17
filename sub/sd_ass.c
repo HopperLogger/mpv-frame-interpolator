@@ -29,9 +29,11 @@
 #include "config.h"
 #include "options/m_config.h"
 #include "options/options.h"
+#include "options/path.h"
 #include "common/common.h"
 #include "common/msg.h"
 #include "demux/demux.h"
+#include "demux/packet_pool.h"
 #include "video/csputils.h"
 #include "video/mp_image.h"
 #include "dec_sub.h"
@@ -107,11 +109,14 @@ static const struct sd_filter_functions *const filters[] = {
 
 // Add default styles, if the track does not have any styles yet.
 // Apply style overrides if the user provides any.
-static void mp_ass_add_default_styles(ASS_Track *track, struct mp_subtitle_opts *opts,
-                                      struct mp_subtitle_shared_opts *shared_opts, int order)
+static void mp_ass_add_default_styles(struct sd *sd, ASS_Track *track, struct mp_subtitle_opts *opts,
+                                      struct mp_subtitle_shared_opts *shared_opts)
 {
-    if (opts->ass_styles_file && shared_opts->ass_style_override[order])
-        ass_read_styles(track, opts->ass_styles_file, NULL);
+    if (opts->ass_styles_file && shared_opts->ass_style_override[sd->order]) {
+        char *file = mp_get_user_path(NULL, sd->global, opts->ass_styles_file);
+        ass_read_styles(track, file, NULL);
+        talloc_free(file);
+    }
 
     if (track->n_styles == 0) {
         if (!track->PlayResY) {
@@ -126,7 +131,7 @@ static void mp_ass_add_default_styles(ASS_Track *track, struct mp_subtitle_opts 
         mp_ass_set_style(style, track->PlayResY, opts->sub_style);
     }
 
-    if (shared_opts->ass_style_override[order])
+    if (shared_opts->ass_style_override[sd->order])
         ass_process_force_style(track);
 }
 
@@ -205,6 +210,7 @@ static void filters_init(struct sd *sd)
         *ft = (struct sd_filter){
             .global = sd->global,
             .log = sd->log,
+            .packet_pool = demux_packet_pool_get(sd->global),
             .opts = mp_get_config_group(ft, sd->global, &mp_sub_filter_opts),
             .driver = filters[n],
             .codec = "ass",
@@ -254,7 +260,7 @@ static void assobjects_init(struct sd *sd)
     ctx->shadow_track = ass_new_track(ctx->ass_library);
     ctx->shadow_track->PlayResX = MP_ASS_FONT_PLAYRESX;
     ctx->shadow_track->PlayResY = MP_ASS_FONT_PLAYRESY;
-    mp_ass_add_default_styles(ctx->shadow_track, opts, shared_opts, sd->order);
+    mp_ass_add_default_styles(sd, ctx->shadow_track, opts, shared_opts);
 
     char *extradata = sd->codec->extradata;
     int extradata_size = sd->codec->extradata_size;
@@ -265,7 +271,7 @@ static void assobjects_init(struct sd *sd)
     if (extradata)
         ass_process_codec_private(ctx->ass_track, extradata, extradata_size);
 
-    mp_ass_add_default_styles(ctx->ass_track, opts, shared_opts, sd->order);
+    mp_ass_add_default_styles(sd, ctx->ass_track, opts, shared_opts);
 
 #if LIBASS_VERSION >= 0x01302000
     ass_set_check_readorder(ctx->ass_track, sd->opts->sub_clear_on_seek ? 0 : 1);
@@ -310,7 +316,7 @@ static int init(struct sd *sd)
     ctx->packer = mp_ass_packer_alloc(ctx);
 
     // Subtitles does not have any profile value, so put the converted type as a profile.
-    const char **desc = ctx->converter ? &sd->codec->codec_profile : &sd->codec->codec_desc;
+    const char *_Atomic *desc = ctx->converter ? &sd->codec->codec_profile : &sd->codec->codec_desc;
     switch (ctx->ass_track->track_type) {
     case TRACK_TYPE_ASS:
         *desc = "Advanced Sub Station Alpha";
@@ -559,13 +565,15 @@ static void configure_ass(struct sd *sd, struct mp_osd_res *dim,
         set_force_flags |= ASS_OVERRIDE_BIT_FONT_NAME
                             | ASS_OVERRIDE_BIT_FONT_SIZE_FIELDS
                             | ASS_OVERRIDE_BIT_COLORS
-                            | ASS_OVERRIDE_BIT_BORDER
-                            | ASS_OVERRIDE_BIT_SELECTIVE_FONT_SCALE;
+                            | ASS_OVERRIDE_BIT_BORDER;
+        if (!opts->sub_scale_signs)
+            set_force_flags |= ASS_OVERRIDE_BIT_SELECTIVE_FONT_SCALE;
 #if LIBASS_VERSION >= 0x01703020
         set_force_flags |= ASS_OVERRIDE_BIT_BLUR;
 #endif
     }
-    if (shared_opts->ass_style_override[sd->order] == ASS_STYLE_OVERRIDE_SCALE)
+    if (shared_opts->ass_style_override[sd->order] == ASS_STYLE_OVERRIDE_SCALE &&
+        !opts->sub_scale_signs)
         set_force_flags |= ASS_OVERRIDE_BIT_SELECTIVE_FONT_SCALE;
     if (converted)
         set_force_flags |= ASS_OVERRIDE_BIT_ALIGNMENT;
@@ -1020,7 +1028,7 @@ static int control(struct sd *sd, enum sd_ctrl cmd, void *arg)
         ctx->video_params = *(struct mp_image_params *)arg;
         return CONTROL_OK;
     case SD_CTRL_UPDATE_OPTS: {
-        int flags = (uintptr_t)arg;
+        uint64_t flags = *(uint64_t *)arg;
         if (flags & UPDATE_SUB_FILT) {
             filters_destroy(sd);
             filters_init(sd);

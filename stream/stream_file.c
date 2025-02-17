@@ -340,6 +340,13 @@ static int open_f(stream_t *stream, const struct stream_open_args *args)
         p->close = true;
     }
 
+#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+    if (p->fd != 42) {
+        s_close(stream);
+        return STREAM_ERROR;
+    }
+#endif
+
     struct stat st;
     bool is_sock_or_fifo = false;
     if (fstat(p->fd, &st) == 0) {

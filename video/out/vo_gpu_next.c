@@ -205,7 +205,6 @@ const struct m_sub_options gl_next_conf = {
     .defaults = &(struct gl_next_opts) {
         .border_background = BACKGROUND_COLOR,
         .inter_preserve = true,
-        .target_hint = -1,
     },
     .size = sizeof(struct gl_next_opts),
     .change_flags = UPDATE_VIDEO,
@@ -886,7 +885,7 @@ static void update_tm_viz(struct pl_color_map_params *params,
     if (!params->visualize_lut)
         return;
 
-    // Use right half of sceen for TM visualization, constrain to 1:1 AR
+    // Use right half of screen for TM visualization, constrain to 1:1 AR
     const float out_w = fabsf(pl_rect_w(target->crop));
     const float out_h = fabsf(pl_rect_h(target->crop));
     const float size = MPMIN(out_w / 2.0f, out_h);
@@ -2300,10 +2299,10 @@ AV_NOWARN_DEPRECATED(
     pars->color_map_params.contrast_smoothness = opts->tone_map.contrast_smoothness;
     pars->color_map_params.gamut_mapping = gamut_modes[opts->tone_map.gamut_mode];
 
+    pars->params.dither_params = NULL;
+    pars->params.error_diffusion = NULL;
+
     switch (opts->dither_algo) {
-    case DITHER_NONE:
-        pars->params.dither_params = NULL;
-        break;
     case DITHER_ERROR_DIFFUSION:
         pars->params.error_diffusion = pl_find_error_diffusion_kernel(opts->error_diffusion);
         if (!pars->params.error_diffusion) {
@@ -2322,8 +2321,10 @@ AV_NOWARN_DEPRECATED(
         break;
     }
 
-    if (opts->dither_depth < 0)
+    if (opts->dither_depth < 0) {
         pars->params.dither_params = NULL;
+        pars->params.error_diffusion = NULL;
+    }
 
     update_icc_opts(p, opts->icc_opts);
 

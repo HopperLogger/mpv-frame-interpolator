@@ -55,6 +55,7 @@
 #include "video/csputils.h"
 #include "video/mp_image.h"
 #include "demux.h"
+#include "packet_pool.h"
 #include "stheader.h"
 #include "ebml.h"
 #include "matroska.h"
@@ -257,6 +258,7 @@ const struct m_sub_options demux_mkv_conf = {
         .subtitle_preroll_secs_index = 10.0,
         .probe_start_time = true,
     },
+    .change_flags = UPDATE_DEMUXER,
 };
 
 #define REALHEADER_SIZE    16
@@ -584,7 +586,7 @@ static void parse_trackcolour(struct demuxer *demuxer, struct mkv_track *track,
 {
     // Note: As per matroska spec, the order is consistent with ISO/IEC
     // 23001-8:2013/DCOR1, which is the same order used by libavutil/pixfmt.h,
-    // so we can just re-use our avcol_ conversion functions.
+    // so we can just reuse our avcol_ conversion functions.
     if (colour->n_matrix_coefficients) {
         track->repr.sys = pl_system_from_av(colour->matrix_coefficients);
         MP_DBG(demuxer, "|    + Matrix: %s\n",
@@ -1485,7 +1487,8 @@ static void add_coverart(struct demuxer *demuxer)
             continue;
         struct sh_stream *sh = demux_alloc_sh_stream(STREAM_VIDEO);
         sh->codec->codec = codec;
-        sh->attached_picture = new_demux_packet_from(att->data, att->data_size);
+        sh->attached_picture = new_demux_packet_from(demuxer->packet_pool,
+                                                     att->data, att->data_size);
         if (sh->attached_picture) {
             sh->attached_picture->pts = 0;
             talloc_steal(sh, sh->attached_picture);
@@ -1944,6 +1947,13 @@ static int demux_mkv_open_audio(demuxer_t *demuxer, mkv_track_t *track)
             goto error;
         }
 
+        // Limit buffer size to 128 MiB to avoid excessive memory allocation on malformed files.
+        if (track->sub_packet_h * track->audiopk_size > (128 << 20)) {
+            MP_WARN(demuxer, "RealAudio packet size too big (%" PRIu32 " MiB) - skipping track\n",
+                    track->sub_packet_h * track->audiopk_size);
+            goto error;
+        }
+
         track->audio_buf =
             talloc_array_size(track, track->sub_packet_h, track->audiopk_size);
         track->audio_timestamp =
@@ -2221,7 +2231,8 @@ static void probe_x264_garbage(demuxer_t *demuxer)
         if (!nblock.len)
             continue;
 
-        sh->codec->first_packet = new_demux_packet_from(nblock.start, nblock.len);
+        sh->codec->first_packet = new_demux_packet_from(demuxer->packet_pool,
+                                                        nblock.start, nblock.len);
         talloc_steal(mkv_d, sh->codec->first_packet);
 
         if (nblock.start != sblock.start)
@@ -2621,8 +2632,9 @@ static bool handle_realaudio(demuxer_t *demuxer, mkv_track_t *track,
             goto error;
         // Release all the audio packets
         for (int x = 0; x < sph * w / apk_usize; x++) {
-            dp = new_demux_packet_from(track->audio_buf + x * apk_usize,
-                                        apk_usize);
+            dp = new_demux_packet_from(demuxer->packet_pool,
+                                       track->audio_buf + x * apk_usize,
+                                       apk_usize);
             if (!dp)
                 goto error;
             /* Put timestamp only on packets that correspond to original
@@ -2759,7 +2771,8 @@ static void mkv_parse_and_add_packet(demuxer_t *demuxer, mkv_track_t *track,
         int size = dp->len;
         uint8_t *parsed;
         if (libav_parse_wavpack(track, dp->buffer, &parsed, &size) >= 0) {
-            struct demux_packet *new = new_demux_packet_from(parsed, size);
+            struct demux_packet *new = new_demux_packet_from(demuxer->packet_pool,
+                                                             parsed, size);
             if (new) {
                 demux_packet_copy_attribs(new, dp);
                 talloc_free(dp);
@@ -2771,7 +2784,7 @@ static void mkv_parse_and_add_packet(demuxer_t *demuxer, mkv_track_t *track,
 
     if (strcmp(stream->codec->codec, "prores") == 0) {
         size_t newlen = dp->len + 8;
-        struct demux_packet *new = new_demux_packet(newlen);
+        struct demux_packet *new = new_demux_packet(demuxer->packet_pool, newlen);
         if (new) {
             AV_WB32(new->buffer + 0, newlen);
             AV_WB32(new->buffer + 4, MKBETAG('i', 'c', 'p', 'f'));
@@ -2817,7 +2830,8 @@ static void mkv_parse_and_add_packet(demuxer_t *demuxer, mkv_track_t *track,
         dp->len -= len;
         dp->pos += len;
         if (size) {
-            struct demux_packet *new = new_demux_packet_from(data, size);
+            struct demux_packet *new = new_demux_packet_from(demuxer->packet_pool,
+                                                             data, size);
             if (!new)
                 break;
             if (copy_sidedata)
@@ -2838,7 +2852,7 @@ static void mkv_parse_and_add_packet(demuxer_t *demuxer, mkv_track_t *track,
     if (dp->len) {
         add_packet(demuxer, stream, dp);
     } else {
-        talloc_free(dp);
+        demux_packet_pool_push(demuxer->packet_pool, dp);
     }
 }
 
@@ -2991,9 +3005,9 @@ static int handle_block(demuxer_t *demuxer, struct block_info *block_info)
 
             if (block.start != nblock.start || block.len != nblock.len) {
                 // (avoidable copy of the entire data)
-                dp = new_demux_packet_from(nblock.start, nblock.len);
+                dp = new_demux_packet_from(demuxer->packet_pool, nblock.start, nblock.len);
             } else {
-                dp = new_demux_packet_from_buf(data);
+                dp = new_demux_packet_from_buf(demuxer->packet_pool, data);
             }
             if (!dp)
                 break;

@@ -1049,7 +1049,7 @@ static void add_double(const m_option_t *opt, void *val, double add, bool wrap)
 
 static void multiply_double(const m_option_t *opt, void *val, double f)
 {
-    *(double *)val *= f;
+    VAL(val) *= f;
     clamp_double(opt, val);
 }
 
@@ -1066,14 +1066,14 @@ static int double_set(const m_option_t *opt, void *dst, struct mpv_node *src)
     }
     if (clamp_double(opt, &val) < 0)
         return M_OPT_OUT_OF_RANGE;
-    *(double *)dst = val;
+    VAL(dst) = val;
     return 1;
 }
 
 static int double_get(const m_option_t *opt, void *ta_parent,
                       struct mpv_node *dst, void *src)
 {
-    double f = *(double *)src;
+    double f = VAL(src);
     if (isnan(f) && (opt->flags & M_OPT_DEFAULT_NAN)) {
         dst->format = MPV_FORMAT_STRING;
         dst->u.string = talloc_strdup(ta_parent, "default");
@@ -1116,6 +1116,27 @@ static int parse_double_aspect(struct mp_log *log, const m_option_t *opt,
             VAL(dst) = 0.0;
         return 1;
     }
+
+    // Potentially allow -1 but forbid all other negative values.
+    if (opt->defval && *(double *)opt->defval == -1) {
+        if (bstr_equals0(param, "original")) {
+            if (dst)
+                VAL(dst) = -1.0;
+            return 1;
+        }
+
+        struct bstr rest;
+        double val = bstrtod(param, &rest);
+        if (bstr_eatstart0(&rest, ":") || bstr_eatstart0(&rest, "/"))
+            val /= bstrtod(rest, &rest);
+        if (val == -1 && dst) {
+            VAL(dst) = -1.0;
+            mp_warn(log, "Setting '%.*s' to '%.*s' is deprecated. "
+                    "Set 'original' instead.\n", BSTR_P(param), BSTR_P(name));
+            return 1;
+        }
+    }
+
     return parse_double(log, opt, name, param, dst);
 }
 
@@ -1137,11 +1158,36 @@ const m_option_type_t m_option_type_aspect = {
 #undef VAL
 #define VAL(x) (*(float *)(x))
 
+static int clamp_float(const m_option_t *opt, double *val)
+{
+    double v = *val;
+    int r = clamp_double(opt, &v);
+    // Handle the case where range is not set and v is finite
+    // but overflows the float range.
+    if (isfinite(v) && v > FLT_MAX) {
+        v = FLT_MAX;
+        r = M_OPT_OUT_OF_RANGE;
+    }
+    if (isfinite(v) && v < -FLT_MAX) {
+        v = -FLT_MAX;
+        r = M_OPT_OUT_OF_RANGE;
+    }
+    *val = v;
+    return r;
+}
+
 static int parse_float(struct mp_log *log, const m_option_t *opt,
                        struct bstr name, struct bstr param, void *dst)
 {
     double tmp;
     int r = parse_double(log, opt, name, param, &tmp);
+
+    if (r == 1 && clamp_float(opt, &tmp) < 0) {
+        mp_err(log, "The %.*s option is out of range: %.*s\n",
+               BSTR_P(name), BSTR_P(param));
+        return M_OPT_OUT_OF_RANGE;
+    }
+
     if (r == 1 && dst)
         VAL(dst) = tmp;
     return r;
@@ -1163,6 +1209,7 @@ static void add_float(const m_option_t *opt, void *val, double add, bool wrap)
 {
     double tmp = VAL(val);
     add_double(opt, &tmp, add, wrap);
+    clamp_float(opt, &tmp);
     VAL(val) = tmp;
 }
 
@@ -1170,6 +1217,7 @@ static void multiply_float(const m_option_t *opt, void *val, double f)
 {
     double tmp = VAL(val);
     multiply_double(opt, &tmp, f);
+    clamp_float(opt, &tmp);
     VAL(val) = tmp;
 }
 
@@ -1177,6 +1225,8 @@ static int float_set(const m_option_t *opt, void *dst, struct mpv_node *src)
 {
     double tmp;
     int r = double_set(opt, &tmp, src);
+    if (r >= 0 && clamp_double(opt, &tmp) < 0)
+        return M_OPT_OUT_OF_RANGE;
     if (r >= 0)
         VAL(dst) = tmp;
     return r;
@@ -1290,9 +1340,10 @@ const m_option_type_t m_option_type_string = {
 #define OP_ADD 1
 #define OP_PRE 2
 #define OP_CLR 3
-#define OP_TOGGLE 4
-#define OP_APPEND 5
-#define OP_REMOVE 6
+#define OP_DEL 4
+#define OP_TOGGLE 5
+#define OP_APPEND 6
+#define OP_REMOVE 7
 
 static void free_str_list(void *dst)
 {
@@ -1374,23 +1425,84 @@ static int find_list_bstr(char **list, bstr item)
     return -1;
 }
 
+static char **separate_input_param(const m_option_t *opt, bstr param,
+                                   int *len, int op)
+{
+    char separator = opt->priv ? *(char *)opt->priv : OPTION_LIST_SEPARATOR;
+    if (op == OP_APPEND || op == OP_REMOVE)
+        separator = 0; // specially handled
+    struct bstr str = param;
+    int n = *len;
+    while (str.len) {
+        get_nextsep(&str, separator, 0);
+        str = bstr_cut(str, 1);
+        n++;
+    }
+    if (n == 0 && op != OP_NONE)
+        return NULL;
+
+    char **list = talloc_array(NULL, char *, n + 2);
+    str = bstrdup(NULL, param);
+    char *ptr = str.start;
+    n = 0;
+
+    while (1) {
+#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
+        if (n >= 100)
+            break;
+#endif
+        struct bstr el = get_nextsep(&str, separator, 1);
+        list[n] = bstrdup0(NULL, el);
+        n++;
+        if (!str.len)
+            break;
+        str = bstr_cut(str, 1);
+    }
+    list[n] = NULL;
+    *len = n;
+    talloc_free(ptr);
+    return list;
+}
+
+static int str_list_remove(char **remove, int n, void *dst)
+{
+    bool found = false;
+    char **list = VAL(dst);
+    for (int i = 0; i < n; i++) {
+        int index = 0;
+        do {
+            index = find_list_bstr(list, bstr0(remove[i]));
+            if (index >= 0) {
+                found = true;
+                char *old = list[index];
+                for (int j = index; list[j]; j++)
+                    list[j] = list[j + 1];
+                talloc_free(old);
+            }
+        } while (index >= 0);
+        talloc_free(remove[i]);
+    }
+    talloc_free(remove);
+    return found;
+}
+
 static int parse_str_list_impl(struct mp_log *log, const m_option_t *opt,
                                struct bstr name, struct bstr param, void *dst,
                                int default_op)
 {
     char **res;
     int op = default_op;
-    bool multi = true;
 
     if (bstr_endswith0(name, "-add")) {
         op = OP_ADD;
     } else if (bstr_endswith0(name, "-append")) {
-        op = OP_ADD;
-        multi = false;
+        op = OP_APPEND;
     } else if (bstr_endswith0(name, "-pre")) {
         op = OP_PRE;
     } else if (bstr_endswith0(name, "-clr")) {
         op = OP_CLR;
+    } else if (bstr_endswith0(name, "-del")) {
+        op = OP_DEL;
     } else if (bstr_endswith0(name, "-set")) {
         op = OP_NONE;
     } else if (bstr_endswith0(name, "-toggle")) {
@@ -1401,26 +1513,16 @@ static int parse_str_list_impl(struct mp_log *log, const m_option_t *opt,
 
     if (op == OP_TOGGLE || op == OP_REMOVE) {
         if (dst) {
-            char **list = VAL(dst);
-            bool found = false;
-            int index = 0;
-            do {
-                index = find_list_bstr(list, param);
-                if (index >= 0) {
-                    found = true;
-                    char *old = list[index];
-                    for (int n = index; list[n]; n++)
-                        list[n] = list[n + 1];
-                    talloc_free(old);
-                }
-            } while (index >= 0);
+            res = talloc_array(NULL, char *, 2);
+            res[0] = bstrdup0(res, param);
+            res[1] = NULL;
+            bool found = str_list_remove(res, 2, dst);
             if (found)
                 return 1;
         }
         if (op == OP_REMOVE)
             return 1; // ignore if not found
-        op = OP_ADD;
-        multi = false;
+        op = OP_APPEND;
     }
 
     // Clear the list ??
@@ -1434,52 +1536,22 @@ static int parse_str_list_impl(struct mp_log *log, const m_option_t *opt,
     if (param.len == 0 && op != OP_NONE)
         return M_OPT_MISSING_PARAM;
 
-    char separator = opt->priv ? *(char *)opt->priv : OPTION_LIST_SEPARATOR;
-    if (!multi)
-        separator = 0; // specially handled
-    int n = 0;
-    struct bstr str = param;
-    while (str.len) {
-        get_nextsep(&str, separator, 0);
-        str = bstr_cut(str, 1);
-        n++;
-    }
-    if (n == 0 && op != OP_NONE)
-        return M_OPT_INVALID;
-
     if (!dst)
         return 1;
 
-    res = talloc_array(NULL, char *, n + 2);
-    str = bstrdup(NULL, param);
-    char *ptr = str.start;
-    n = 0;
-
-    while (1) {
-#ifdef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
-        if (n >= 100)
-            break;
-#endif
-        struct bstr el = get_nextsep(&str, separator, 1);
-        res[n] = bstrdup0(NULL, el);
-        n++;
-        if (!str.len)
-            break;
-        str = bstr_cut(str, 1);
-    }
-    res[n] = NULL;
-    talloc_free(ptr);
-
-    if (op != OP_NONE && n > 1) {
-        mp_warn(log, "Passing multiple arguments to %.*s is deprecated!\n",
-                BSTR_P(name));
-    }
+    int n = 0;
+    res = separate_input_param(opt, param, &n, op);
+    if (!res)
+        return M_OPT_INVALID;
 
     switch (op) {
     case OP_ADD:
+    case OP_APPEND:
         return str_list_add(res, n, dst, 0);
     case OP_PRE:
         return str_list_add(res, n, dst, 1);
+    case OP_DEL:
+        return str_list_remove(res, n, dst);
     }
 
     if (VAL(dst))
@@ -1610,6 +1682,7 @@ const m_option_type_t m_option_type_string_list = {
         {"add"},
         {"append"},
         {"clr",         M_OPT_TYPE_OPTIONAL_PARAM},
+        {"del"},
         {"pre"},
         {"set"},
         {"toggle"},
@@ -1655,17 +1728,36 @@ static int parse_keyvalue_list(struct mp_log *log, const m_option_t *opt,
     if ((opt->flags & M_OPT_HAVE_HELP) && bstr_equals0(param, "help"))
         param = bstr0("help=");
 
+    int op = 0;
+    if (bstr_endswith0(name, "-del")) {
+        op = OP_DEL;
+    } else if (bstr_endswith0(name, "-remove")) {
+        op = OP_REMOVE;
+    }
+
     if (bstr_endswith0(name, "-add")) {
         append = true;
     } else if (bstr_endswith0(name, "-append")) {
         append = full_value = true;
-    } else if (bstr_endswith0(name, "-remove")) {
+    } else if (bstr_endswith0(name, "-clr")) {
+        if (dst)
+            free_str_list(dst);
+        return 0;
+    } else if (op == OP_DEL || op == OP_REMOVE) {
+        int n = 0;
+        char **res = separate_input_param(opt, param, &n, op);
+        if (!res)
+            return M_OPT_INVALID;
         lst = dst ? VAL(dst) : NULL;
-        int index = dst ? keyvalue_list_find_key(lst, param) : -1;
-        if (index >= 0) {
-            keyvalue_list_del_key(lst, index);
-            VAL(dst) = lst;
+        for (int i = 0; i < n; i++) {
+            int index = dst ? keyvalue_list_find_key(lst, bstr0(res[i])) : -1;
+            if (index >= 0) {
+                keyvalue_list_del_key(lst, index);
+                VAL(dst) = lst;
+            }
+            talloc_free(res[i]);
         }
+        talloc_free(res);
         return 1;
     }
 
@@ -1707,11 +1799,6 @@ static int parse_keyvalue_list(struct mp_log *log, const m_option_t *opt,
 
         if (!bstr_eatstart0(&param, ",") && !bstr_eatstart0(&param, ":"))
             break;
-
-        if (append) {
-            mp_warn(log, "Passing more than 1 argument to %.*s is deprecated!\n",
-                    BSTR_P(name));
-        }
     }
 
     if (param.len) {
@@ -1799,6 +1886,8 @@ const m_option_type_t m_option_type_keyvalue_list = {
     .actions = (const struct m_option_action[]){
         {"add"},
         {"append"},
+        {"clr",         M_OPT_TYPE_OPTIONAL_PARAM},
+        {"del"},
         {"set"},
         {"remove"},
         {0}
@@ -2673,8 +2762,10 @@ static int parse_timestring(struct bstr str, double *time, char endchar)
     bool neg = bstr_eatstart0(&str, "-");
     if (!neg)
         bstr_eatstart0(&str, "+");
-    if (bstrchr(str, '-') >= 0 || bstrchr(str, '+') >= 0)
-        return 0; /* the timestamp shouldn't contain anymore +/- after this point */
+    bool sci = bstr_find0(str, "e-") >= 0 || bstr_find0(str, "e+") >= 0;
+    /* non-scientific notation timestamps shouldn't contain anymore +/- after this point */
+    if (!sci && (bstrchr(str, '-') >= 0 || bstrchr(str, '+') >= 0))
+        return 0;
     if (bstr_sscanf(str, "%u:%u:%lf%n", &h, &m, &s, &len) >= 3) {
         if (m >= 60 || s >= 60)
             return 0; /* minutes or seconds are out of range */
@@ -3459,8 +3550,6 @@ static int parse_obj_settings_list(struct mp_log *log, const m_option_t *opt,
             ret = M_OPT_INVALID;
             goto done;
         }
-        mp_warn(log, "Passing more than 1 argument to %.*s is deprecated!\n",
-                BSTR_P(name));
     }
 
     if (dst) {

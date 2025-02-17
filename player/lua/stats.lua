@@ -57,8 +57,8 @@ local o = {
     font_color = "",
     border_size = 1.65,
     border_color = "",
-    shadow_x_offset = 0.0,
-    shadow_y_offset = 0.0,
+    shadow_x_offset = math.huge,
+    shadow_y_offset = math.huge,
     shadow_color = "",
     alpha = "11",
     vidscale = "auto",
@@ -184,8 +184,15 @@ local function text_style()
             style = style .. "\\4c&H" .. o.shadow_color .. "&\\4a&H" .. o.alpha .. "&"
         end
 
-        return style .. "\\xshad" .. shadow_x_offset ..
-               "\\yshad" .. shadow_y_offset .. "}"
+        if o.shadow_x_offset < math.huge then
+            style = style .. "\\xshad" .. shadow_x_offset
+        end
+
+        if o.shadow_y_offset < math.huge then
+            style = style .. "\\yshad" .. shadow_y_offset
+        end
+
+        return style .. "}"
     end
 end
 
@@ -1733,7 +1740,7 @@ end
 -- Reprint stats immediately when VO was reconfigured, only when toggled
 mp.register_event("video-reconfig",
     function()
-        if display_timer:is_enabled() then
+        if display_timer:is_enabled() and not display_timer.oneshot then
             print_page(curr_page)
         end
     end)

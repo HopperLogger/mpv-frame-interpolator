@@ -121,6 +121,7 @@ const struct m_sub_options demux_lavf_conf = {
         .linearize_ts = -1,
         .propagate_opts = true,
     },
+    .change_flags = UPDATE_DEMUXER,
 };
 
 struct format_hack {
@@ -437,7 +438,7 @@ static int lavf_check_file(demuxer_t *demuxer, enum demux_check check)
 
     const AVInputFormat *forced_format = NULL;
     const char *format = lavfdopts->format;
-    if (!format)
+    if (!format || !format[0])
         format = s->lavf_type;
     if (!format)
         format = avdevice_format;
@@ -717,7 +718,7 @@ static void handle_new_stream(demuxer_t *demuxer, int i)
             !(st->disposition & AV_DISPOSITION_TIMED_THUMBNAILS))
         {
             sh->attached_picture =
-                new_demux_packet_from_avpacket(&st->attached_pic);
+                new_demux_packet_from_avpacket(demuxer->packet_pool, &st->attached_pic);
             if (sh->attached_picture) {
                 sh->attached_picture->pts = 0;
                 talloc_steal(sh, sh->attached_picture);
@@ -1221,7 +1222,7 @@ static bool demux_lavf_read_packet(struct demuxer *demux,
         return true;
     }
 
-    struct demux_packet *dp = new_demux_packet_from_avpacket(pkt);
+    struct demux_packet *dp = new_demux_packet_from_avpacket(demux->packet_pool, pkt);
     if (!dp) {
         av_packet_unref(pkt);
         return true;

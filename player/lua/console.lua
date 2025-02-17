@@ -32,9 +32,16 @@ local opts = {
     font = "",
     font_size = 24,
     border_size = 1.65,
+    background_alpha = 50,
+    padding = 10,
+    menu_outline_size = 0,
+    menu_outline_color = '#FFFFFF',
+    corner_radius = 8,
     margin_x = -1,
     margin_y = -1,
     scale_with_window = "auto",
+    selected_color = '#222222',
+    selected_back_color = '#FFFFFF',
     case_sensitive = platform ~= 'windows' and true or false,
     history_dedup = true,
     font_hw_ratio = 'auto',
@@ -53,9 +60,7 @@ local styles = {
     warn = '{\\1c&H66ccff&}',
     error = '{\\1c&H7a77f2&}',
     fatal = '{\\1c&H5791f9&}',
-    suggestion = '{\\1c&Hcc99cc&}',
-    selected_suggestion = '{\\1c&H2fbdfa&\\b1}',
-    disabled = '{\\1c&Hcccccc&}',
+    completion = '{\\1c&Hcc99cc&}',
 }
 for key, style in pairs(styles) do
     styles[key] = style .. '{\\3c&H111111&}'
@@ -67,7 +72,7 @@ local terminal_styles = {
     warn = '\027[33m',
     error = '\027[31m',
     fatal = '\027[91m',
-    selected_suggestion = '\027[7m',
+    selected_completion = '\027[7m',
     default_item = '\027[1m',
     disabled = '\027[38;5;8m',
 }
@@ -76,6 +81,7 @@ local repl_active = false
 local osd_msg_active = false
 local insert_mode = false
 local pending_update = false
+local ime_active = mp.get_property_bool('input-ime')
 local line = ''
 local cursor = 1
 local default_prompt = '>'
@@ -89,11 +95,12 @@ local searching_history = false
 local log_buffers = {[id] = {}}
 local key_bindings = {}
 local dont_bind_up_down = false
+local overlay = mp.create_osd_overlay('ass-events')
 local global_margins = { t = 0, b = 0 }
 local input_caller
 
-local suggestion_buffer = {}
-local selected_suggestion_index
+local completion_buffer = {}
+local selected_completion_index
 local completion_pos
 local completion_append
 local path_separator = platform == 'windows' and '\\' or '/'
@@ -105,9 +112,11 @@ local matches = {}
 local selected_match = 1
 local first_match_to_print = 1
 local default_item
+local item_positions = {}
+local max_item_width = 0
 
 local complete
-local cycle_through_suggestions
+local cycle_through_completions
 local set_active
 
 
@@ -271,6 +280,12 @@ local function scale_factor()
     return mp.get_property_native('display-hidpi-scale', 1)
 end
 
+local function terminal_output()
+    -- Unlike vo-configured, current-vo doesn't become falsy while switching VO,
+    -- which would print the log to the OSD.
+    return not mp.get_property('current-vo') or not mp.get_property_native('video-osd')
+end
+
 local function get_scaled_osd_dimensions()
     local dims = mp.get_property_native('osd-dimensions')
     local scale = scale_factor()
@@ -278,9 +293,12 @@ local function get_scaled_osd_dimensions()
     return dims.w / scale, dims.h /scale
 end
 
+local function get_line_height()
+    return selectable_items and opts.font_size * 1.1 or opts.font_size
+end
+
 local function calculate_max_log_lines()
-    if not mp.get_property_native('vo-configured')
-       or not mp.get_property_native('video-osd') then
+    if terminal_output() then
         -- Subtract 1 for the input line and for each line in the status line.
         -- This does not detect wrapped lines.
         return mp.get_property_native('term-size/h', 24) - 2 -
@@ -289,16 +307,60 @@ local function calculate_max_log_lines()
 
     return math.floor((select(2, get_scaled_osd_dimensions())
                        * (1 - global_margins.t - global_margins.b)
-                       - get_margin_y())
-                      / opts.font_size
+                       - get_margin_y() - (selectable_items and opts.padding * 2 or 0))
+                      / get_line_height()
                       -- Subtract 1 for the input line and 0.5 for the empty
                       -- line between the log and the input line.
                       - 1.5)
 end
 
+local function calculate_max_item_width()
+    if not selectable_items or terminal_output() then
+        return
+    end
+
+    local longest_item = prompt .. ('a'):rep(9)
+    for _, item in pairs(selectable_items) do
+        if #item > #longest_item then
+            longest_item = item
+        end
+    end
+
+    local osd_w, osd_h = get_scaled_osd_dimensions()
+    local font = get_font()
+    local width_overlay = mp.create_osd_overlay('ass-events')
+    width_overlay.compute_bounds = true
+    width_overlay.hidden = true
+    width_overlay.res_x = osd_w
+    width_overlay.res_y = osd_h
+    width_overlay.data = '{\\fs' .. opts.font_size ..
+                         (font and '\\fn' .. font or '') .. '\\q2}' ..
+                         ass_escape(longest_item)
+    local result = width_overlay:update()
+    max_item_width = math.min(result.x1 - result.x0,
+                              osd_w - get_margin_x() * 2 - opts.padding * 2)
+end
+
 local function should_highlight_completion(i)
-    return i == selected_suggestion_index or
-           (i == 1 and selected_suggestion_index == 0 and input_caller == nil)
+    return i == selected_completion_index or
+           (i == 1 and selected_completion_index == 0 and input_caller == nil)
+end
+
+local function mpv_color_to_ass(color)
+    return color:sub(8,9) .. color:sub(6,7) ..  color:sub(4,5),
+           string.format('%x', 255 - tonumber('0x' .. color:sub(2,3)))
+end
+
+local function option_color_to_ass(color)
+    return color:sub(6,7) .. color:sub(4,5) ..  color:sub(2,3)
+end
+
+local function get_selected_ass()
+    local color, alpha = mpv_color_to_ass(mp.get_property('osd-selected-color'))
+    local outline_color, outline_alpha =
+        mpv_color_to_ass(mp.get_property('osd-selected-outline-color'))
+    return '{\\b1\\1c&H' .. color .. '&\\1a&H' .. alpha ..
+           '&\\3c&H' .. outline_color .. '&\\3a&H' .. outline_alpha .. '&}'
 end
 
 -- Takes a list of strings, a max width in characters and
@@ -306,7 +368,7 @@ end
 -- The result contains at least one column.
 -- Rows are cut off from the top if rows_max is specified.
 -- returns a string containing the formatted table and the row count
-local function format_table(list, width_max, rows_max)
+local function format_grid(list, width_max, rows_max)
     if #list == 0 then
         return '', 0
     end
@@ -383,8 +445,8 @@ local function format_table(list, width_max, rows_max)
             columns[column] = ass_escape(string.format(format_string, list[i]))
 
             if should_highlight_completion(i) then
-                columns[column] = styles.selected_suggestion .. columns[column]
-                                  .. '{\\b}' .. styles.suggestion
+                columns[column] = get_selected_ass() .. columns[column] ..
+                                  '{\\b\\1a&\\3a&}' .. styles.completion
             end
         end
         -- first row is at the bottom
@@ -395,20 +457,17 @@ end
 
 local function fuzzy_find(needle, haystacks, case_sensitive)
     local result = require 'mp.fzy'.filter(needle, haystacks, case_sensitive)
-    if line ~= '' then -- Prevent table.sort() from reordering the items.
-        table.sort(result, function (i, j)
+    table.sort(result, function (i, j)
+        if i[3] ~= j[3] then
             return i[3] > j[3]
-        end)
-    end
+        end
+
+        return i[1] < j[1]
+    end)
     for i, value in ipairs(result) do
         result[i] = value[1]
     end
     return result
-end
-
-local function mpv_color_to_ass(color)
-    return color:sub(8,9) .. color:sub(6,7) ..  color:sub(4,5),
-           string.format('%x', 255 - tonumber('0x' .. color:sub(2,3)))
 end
 
 local function populate_log_with_matches()
@@ -420,12 +479,6 @@ local function populate_log_with_matches()
     local log = log_buffers[id]
 
     local max_log_lines = calculate_max_log_lines()
-    local print_counter = false
-
-    if #matches > max_log_lines then
-        print_counter = true
-        max_log_lines = max_log_lines - 1
-    end
 
     if selected_match < first_match_to_print then
         first_match_to_print = selected_match
@@ -436,35 +489,21 @@ local function populate_log_with_matches()
     local last_match_to_print  = math.min(first_match_to_print + max_log_lines - 1,
                                           #matches)
 
-    if print_counter then
-        log[1] = {
-            text = '',
-            style = styles.disabled .. selected_match .. '/' .. #matches ..
-                    ' {\\fs' .. opts.font_size * 0.75 .. '}[' ..
-                    first_match_to_print .. '-' .. last_match_to_print .. ']',
-            terminal_style = terminal_styles.disabled .. selected_match .. '/' ..
-                             #matches .. ' [' .. first_match_to_print .. '-' ..
-                             last_match_to_print .. ']',
-        }
-    end
-
     for i = first_match_to_print, last_match_to_print do
         local style = ''
         local terminal_style = ''
 
-        if i == selected_match or matches[i].index == default_item then
-            local color, alpha = mpv_color_to_ass(mp.get_property('osd-selected-color'))
-            local outline_color, outline_alpha =
-                mpv_color_to_ass(mp.get_property('osd-selected-outline-color'))
-            style = '{\\1c&H' .. color .. '&\\1a&H' .. alpha ..
-                    '&\\3c&H' .. outline_color .. '&\\3a&H' .. outline_alpha .. '&}'
-        end
         if matches[i].index == default_item then
             terminal_style = terminal_styles.default_item
         end
         if i == selected_match then
-            style = style .. '{\\b1}'
-            terminal_style = terminal_style .. terminal_styles.selected_suggestion
+            if searching_history and
+               mp.get_property('osd-border-style') == 'outline-and-shadow' then
+                style = get_selected_ass()
+            else
+                style = '{\\1c&H' .. option_color_to_ass(opts.selected_color) .. '&}'
+            end
+            terminal_style = terminal_style .. terminal_styles.selected_completion
         end
 
         log[#log + 1] = {
@@ -473,6 +512,21 @@ local function populate_log_with_matches()
             terminal_style = terminal_style,
         }
     end
+end
+
+local function update_overlay(data, res_x, res_y, z)
+    if overlay.data == data and
+       overlay.res_x == res_x and
+       overlay.res_y == res_y and
+       overlay.z == z then
+        return
+    end
+
+    overlay.data = data
+    overlay.res_x = res_x
+    overlay.res_y = res_y
+    overlay.z = z
+    overlay:update()
 end
 
 local function print_to_terminal()
@@ -493,15 +547,24 @@ local function print_to_terminal()
         log = log .. clip .. log_line.terminal_style .. log_line.text .. '\027[0m\n'
     end
 
-    local suggestions = ''
-    for i, suggestion in ipairs(suggestion_buffer) do
+    local completions = ''
+    for i, completion in ipairs(completion_buffer) do
         if should_highlight_completion(i) then
-            suggestions = suggestions .. terminal_styles.selected_suggestion ..
-                          suggestion .. '\027[0m'
+            completions = completions .. terminal_styles.selected_completion ..
+                          completion .. '\027[0m'
         else
-            suggestions = suggestions .. suggestion
+            completions = completions .. completion
         end
-        suggestions = suggestions .. (i < #suggestion_buffer and '\t' or '\n')
+        completions = completions .. (i < #completion_buffer and '\t' or '\n')
+    end
+
+    local counter = ''
+    if selectable_items and #selectable_items > calculate_max_log_lines() then
+        local digits = math.ceil(math.log(#selectable_items, 10))
+        counter = terminal_styles.disabled ..
+                  '[' .. string.format('%0' .. digits .. 'd', selected_match) ..
+                  '/' .. string.format('%0' .. digits .. 'd', #matches) ..
+                  ']\027[0m '
     end
 
     local before_cur = line:sub(1, cursor - 1)
@@ -511,19 +574,16 @@ local function print_to_terminal()
         after_cur = ' '
     end
 
-    mp.osd_message(log .. suggestions .. prompt .. ' ' .. before_cur ..
-                  '\027[7m' .. after_cur:sub(1, 1) .. '\027[0m' ..
+    mp.osd_message(log .. completions .. counter .. prompt .. ' ' .. before_cur
+                   .. '\027[7m' .. after_cur:sub(1, 1) .. '\027[0m' ..
                    after_cur:sub(2), 999)
     osd_msg_active = true
 end
 
--- Render the REPL and console as an ASS OSD
-local function update()
+local function render()
     pending_update = false
 
-    -- Unlike vo-configured, current-vo doesn't become falsy while switching VO,
-    -- which would print the log to the OSD.
-    if not mp.get_property('current-vo') or not mp.get_property_native('video-osd') then
+    if terminal_output() then
         print_to_terminal()
         return
     end
@@ -536,38 +596,55 @@ local function update()
 
     -- Clear the OSD if the REPL is not active
     if not repl_active then
-        mp.set_osd_ass(0, 0, '')
+        update_overlay('', 0, 0, 0)
         return
     end
 
-    local osd_w, osd_h = get_scaled_osd_dimensions()
-
-    local margin_x = get_margin_x()
-    local margin_y = get_margin_y()
-
-    local coordinate_top = math.floor(global_margins.t * osd_h + 0.5)
-    local clipping_coordinates = '0,' .. coordinate_top .. ',' ..
-                                 osd_w .. ',' .. osd_h
     local ass = assdraw.ass_new()
-    local has_shadow = mp.get_property('osd-border-style'):find('box$') == nil
+    local osd_w, osd_h = get_scaled_osd_dimensions()
+    local line_height = get_line_height()
+    local max_lines = calculate_max_log_lines()
+
+    local x, y, alignment, clipping_coordinates
+    if selectable_items and not searching_history then
+        x = (osd_w - max_item_width) / 2
+        y = osd_h / 2 - (math.min(#selectable_items, max_lines) + 1.5) * line_height / 2
+        alignment = 7
+        clipping_coordinates = '0,0,' .. x + max_item_width .. ',' .. osd_h
+    else
+        x = get_margin_x()
+        y = osd_h * (1 - global_margins.b) - get_margin_y()
+        alignment = 1
+        -- Avoid drawing below topbar OSC when there are wrapped lines.
+        local coordinate_top = math.floor(global_margins.t * osd_h + 0.5)
+        clipping_coordinates = '0,' .. coordinate_top .. ',' .. osd_w .. ',' .. osd_h
+    end
+
     local font = get_font()
+    -- Use the same blur value as the rest of the OSD. 288 is the OSD's
+    -- PlayResY.
+    local blur = mp.get_property_native('osd-blur') * osd_h / 288
+    local border_style = mp.get_property('osd-border-style')
+
     local style = '{\\r' ..
-                  (has_shadow and '\\4a&H99&\\4c&H000000&\\xshad0\\yshad1' or '') ..
                   (font and '\\fn' .. font or '') ..
                   '\\fs' .. opts.font_size ..
                   '\\bord' .. opts.border_size .. '\\fsp0' ..
+                  '\\blur' .. blur ..
                   (selectable_items and '\\q2' or '\\q1') ..
                   '\\clip(' .. clipping_coordinates .. ')}'
+
     -- Create the cursor glyph as an ASS drawing. ASS will draw the cursor
     -- inline with the surrounding text, but it sets the advance to the width
     -- of the drawing. So the cursor doesn't affect layout too much, make it as
     -- thin as possible and make it appear to be 1px wide by giving it 0.5px
     -- horizontal borders.
+    local color, alpha = mpv_color_to_ass(mp.get_property('osd-color'))
     local cheight = opts.font_size * 8
-    local cglyph = '{\\rDefault' ..
+    local cglyph = '{\\r\\blur0' ..
                    (mp.get_property_native('focused') == false
-                    and '\\alpha&HFF&' or '\\1a&H44&\\3a&H44&\\4a&H99&') ..
-                   '\\1c&Heeeeee&\\3c&Heeeeee&\\4c&H000000&' ..
+                    and '\\alpha&HFF&' or '\\3a&H' .. alpha .. '&') ..
+                   '\\3c&H' .. color .. '&' ..
                    '\\xbord0.5\\ybord0\\xshad0\\yshad1\\p4\\pbo24}' ..
                    'm 0 0 l 1 0 l 1 ' .. cheight .. ' l 0 ' .. cheight ..
                    '{\\p0}'
@@ -577,41 +654,130 @@ local function update()
     -- Render log messages as ASS.
     -- This will render at most screeny / font_size - 1 messages.
 
-    local lines_max = calculate_max_log_lines()
-    local suggestion_ass = ''
-    if next(suggestion_buffer) then
+    local completion_ass = ''
+    if next(completion_buffer) then
         -- Estimate how many characters fit in one line
         -- Even with bottom-left anchoring,
         -- libass/ass_render.c:ass_render_event() subtracts --osd-margin-x from
         -- the maximum text width twice.
+        -- TODO: --osd-margin-x should scale with osd-width and PlayResX to make
+        -- the calculation accurate.
         local width_max = math.floor(
-            (osd_w - margin_x - mp.get_property_native('osd-margin-x') * 2 / scale_factor())
+            (osd_w - x - mp.get_property_native('osd-margin-x') * 2)
             / opts.font_size * get_font_hw_ratio())
 
-        local suggestions, rows = format_table(suggestion_buffer, width_max, lines_max)
-        lines_max = lines_max - rows
-        suggestion_ass = style .. styles.suggestion .. suggestions .. '\\N'
+        local completions, rows = format_grid(completion_buffer, width_max, max_lines)
+        max_lines = max_lines - rows
+        completion_ass = style .. styles.completion .. completions .. '\\N'
     end
 
     populate_log_with_matches()
 
+    -- Background
+    if selectable_items and
+       (not searching_history or border_style == 'background-box') then
+        style = style .. '{\\bord0\\blur0\\4a&Hff&}'
+        local back_color, back_alpha = mpv_color_to_ass(mp.get_property(
+            border_style == 'background-box' and 'osd-back-color' or 'osd-outline-color'))
+        if not searching_history then
+            back_alpha = string.format('%x', opts.background_alpha)
+        end
+
+        ass:new_event()
+        ass:an(alignment)
+        ass:pos(x, y)
+        ass:append('{\\1c&H' .. back_color .. '&\\1a&H' .. back_alpha ..
+                   '&\\bord' .. opts.menu_outline_size .. '\\3c&H' ..
+                   option_color_to_ass(opts.menu_outline_color) .. '&}')
+        if border_style == 'background-box' then
+            ass:append('{\\4a&Hff&}')
+        end
+        ass:draw_start()
+        ass:round_rect_cw(-opts.padding,
+                          opts.padding * (alignment == 7 and -1 or 1),
+                          max_item_width + opts.padding,
+                          (1.5 + math.min(#matches, max_lines)) * line_height +
+                          opts.padding * (alignment == 7 and 1 or 2),
+                          opts.corner_radius, opts.corner_radius)
+        ass:draw_stop()
+    end
+
     local log_ass = ''
     local log_buffer = log_buffers[id]
-    local log_messages = #log_buffer
-    local log_max_lines = math.max(0, lines_max)
-    if log_max_lines < log_messages then
-        log_messages = log_max_lines
+    item_positions = {}
+
+    for i = #log_buffer - math.min(max_lines, #log_buffer) + 1, #log_buffer do
+        local log_item = style .. log_buffer[i].style .. ass_escape(log_buffer[i].text)
+
+        if selectable_items then
+            local item_y = alignment == 7
+                and y + (1 + i) * line_height
+                or y - (1.5 + #log_buffer - i) * line_height
+
+            if (first_match_to_print - 1 + i == selected_match or
+                matches[first_match_to_print - 1 + i].index == default_item)
+               and (not searching_history or border_style == 'background-box') then
+                ass:new_event()
+                ass:an(4)
+                ass:pos(x, item_y)
+                ass:append('{\\blur0\\bord0\\4aH&ff&\\1c&H' ..
+                           option_color_to_ass(opts.selected_back_color) .. '&}')
+                if first_match_to_print - 1 + i ~= selected_match then
+                    ass:append('{\\1aH&dd&}')
+                end
+                ass:draw_start()
+                ass:rect_cw(-opts.padding, 0, max_item_width + opts.padding, line_height)
+                ass:draw_stop()
+            end
+
+            ass:new_event()
+            ass:an(4)
+            ass:pos(x, item_y)
+            ass:append(log_item)
+
+            item_positions[#item_positions + 1] =
+                { item_y - line_height / 2, item_y + line_height / 2 }
+        else
+            log_ass = log_ass .. log_item .. '\\N'
+        end
     end
-    for i = #log_buffer - log_messages + 1, #log_buffer do
-        log_ass = log_ass .. style .. log_buffer[i].style ..
-                  ass_escape(log_buffer[i].text) .. '\\N'
+
+    -- Scrollbar
+    if selectable_items and #matches > max_lines then
+        ass:new_event()
+        ass:an(alignment + 2)
+        ass:pos(x + max_item_width, y)
+        ass:append('{\\bord0\\4a&Hff&\\blur0}' .. selected_match .. '/' .. #matches)
+
+        local start_percentage = (first_match_to_print - 1) / #matches
+        local end_percentage = (first_match_to_print - 1 + max_lines) / #matches
+        if end_percentage - start_percentage < 0.04 then
+            local diff = 0.04 - (end_percentage - start_percentage)
+            start_percentage = start_percentage * (1 - diff)
+            end_percentage = end_percentage + diff * (1 - end_percentage)
+        end
+
+        local max_height = max_lines * line_height
+        local bar_y = alignment == 7
+                      and y + 1.5 * line_height + start_percentage * max_height
+                      or y - 1.5 * line_height - max_height * (1 - end_percentage)
+       local height = max_height * (end_percentage - start_percentage)
+
+        ass:new_event()
+        ass:an(alignment)
+        ass:append('{\\blur0\\4a&Hff&\\bord1}')
+        ass:pos(x + max_item_width + opts.padding - 1, bar_y)
+        ass:draw_start()
+        ass:rect_cw(0, 0, -opts.padding / 2, height)
+        ass:draw_stop()
     end
 
     ass:new_event()
-    ass:an(1)
-    ass:pos(margin_x, osd_h - margin_y - global_margins.b * osd_h)
-    ass:append(log_ass .. '\\N')
-    ass:append(suggestion_ass)
+    ass:an(alignment)
+    ass:pos(x, y)
+    if not selectable_items then
+        ass:append(log_ass .. '\\N' .. completion_ass)
+    end
     ass:append(style .. ass_escape(prompt) .. ' ' .. before_cur)
     ass:append(cglyph)
     ass:append(style .. after_cur)
@@ -619,19 +785,20 @@ local function update()
     -- Redraw the cursor with the REPL text invisible. This will make the
     -- cursor appear in front of the text.
     ass:new_event()
-    ass:an(1)
-    ass:pos(margin_x, osd_h - margin_y - global_margins.b * osd_h)
+    ass:an(alignment)
+    ass:pos(x, y)
     ass:append(style .. '{\\alpha&HFF&}' .. ass_escape(prompt) .. ' ' .. before_cur)
     ass:append(cglyph)
     ass:append(style .. '{\\alpha&HFF&}' .. after_cur)
 
-    mp.set_osd_ass(osd_w, osd_h, ass.text)
+    -- z with selectable_items needs to be greater than the OSC's.
+    update_overlay(ass.text, osd_w, osd_h, selectable_items and 2000 or 0)
 end
 
 local update_timer = nil
 update_timer = mp.add_periodic_timer(0.05, function()
     if pending_update then
-        update()
+        render()
     else
         update_timer:kill()
     end
@@ -652,7 +819,7 @@ local function log_add(text, style, terminal_style)
 
     if repl_active then
         if not update_timer:is_enabled() then
-            update()
+            render()
             update_timer:resume()
         else
             pending_update = true
@@ -679,8 +846,8 @@ local function handle_cursor_move()
     -- Don't show completions after a command is entered because they move its
     -- output up, and allow clearing completions by emptying the line.
     if line == '' then
-        suggestion_buffer = {}
-        update()
+        completion_buffer = {}
+        render()
     else
         complete()
     end
@@ -689,13 +856,23 @@ end
 local function handle_edit()
     if selectable_items then
         matches = {}
-        selected_match = 1
-
         for i, match in ipairs(fuzzy_find(line, selectable_items)) do
             matches[i] = { index = match, text = selectable_items[match] }
         end
 
-        update()
+        if line == '' and default_item then
+            selected_match = default_item
+
+            local max_lines = calculate_max_log_lines()
+            first_match_to_print = math.max(1, selected_match + 1 - math.ceil(max_lines / 2))
+            if first_match_to_print > #selectable_items - max_lines + 1 then
+                first_match_to_print = math.max(1, #selectable_items - max_lines + 1)
+            end
+        else
+            selected_match = 1
+        end
+
+        render()
 
         return
     end
@@ -847,8 +1024,8 @@ local function handle_enter()
         mp.commandv('script-message-to', input_caller, 'input-event', 'submit',
                     utils.format_json({line}))
     else
-        if selected_suggestion_index == 0 then
-            cycle_through_suggestions()
+        if selected_completion_index == 0 then
+            cycle_through_completions()
         end
 
         -- match "help [<text>]", return <text> or "", strip all whitespace
@@ -869,27 +1046,22 @@ local function handle_enter()
 end
 
 local function determine_hovered_item()
-    local height = select(2, get_scaled_osd_dimensions())
-    local y = mp.get_property_native('mouse-pos').y / scale_factor()
-    local log_bottom_pos = height * (1 - global_margins.b)
-                           - get_margin_y()
-                           - 1.5 * opts.font_size
+    local osd_w, _ = get_scaled_osd_dimensions()
+    local scale = scale_factor()
+    local mouse_pos = mp.get_property_native('mouse-pos')
+    local mouse_x = mouse_pos.x / scale
+    local mouse_y = mouse_pos.y / scale
+    local item_x0 = (searching_history and get_margin_x() or (osd_w - max_item_width) / 2)
+                    - opts.padding
 
-    if y > log_bottom_pos then
+    if mouse_x < item_x0 or mouse_x > item_x0 + max_item_width + opts.padding * 2 then
         return
     end
 
-    local max_lines = calculate_max_log_lines()
-    -- Subtract 1 line for the position counter.
-    if #matches > max_lines then
-        max_lines = max_lines - 1
-    end
-    local last = math.min(first_match_to_print - 1 + max_lines, #matches)
-
-    local hovered_item = last - math.floor((log_bottom_pos - y) / opts.font_size)
-
-    if hovered_item >= first_match_to_print then
-        return hovered_item
+    for i, positions in ipairs(item_positions) do
+        if mouse_y >= positions[1] and mouse_y <= positions[2] then
+            return first_match_to_print - 1 + i
+        end
     end
 end
 
@@ -898,7 +1070,7 @@ local function bind_mouse()
         local item = determine_hovered_item()
         if item and item ~= selected_match then
             selected_match = item
-            update()
+            render()
         end
     end)
 
@@ -956,18 +1128,18 @@ local function move_history(amount, is_wheel)
         -- Update selected_match only if it's the first or last printed item and
         -- there are hidden items.
         if (amount > 0 and selected_match == first_match_to_print
-            and first_match_to_print + max_lines - 2 < #matches)
-           or (amount < 0 and selected_match == first_match_to_print + max_lines - 2
+            and first_match_to_print - 1 + max_lines < #matches)
+           or (amount < 0 and selected_match == first_match_to_print - 1 + max_lines
                and first_match_to_print > 1) then
             selected_match = selected_match + amount
         end
 
-        if amount > 0 and first_match_to_print < #matches - max_lines + 2
+        if amount > 0 and first_match_to_print < #matches - max_lines + 1
            or amount < 0 and first_match_to_print > 1 then
            -- math.min and math.max would only be needed with amounts other than
            -- 1 and -1.
             first_match_to_print = math.min(
-                math.max(first_match_to_print + amount, 1), #matches - max_lines + 2)
+                math.max(first_match_to_print + amount, 1), #matches - max_lines + 1)
         end
 
         local item = determine_hovered_item()
@@ -975,7 +1147,7 @@ local function move_history(amount, is_wheel)
             selected_match = item
         end
 
-        update()
+        render()
         return
     end
 
@@ -986,7 +1158,7 @@ local function move_history(amount, is_wheel)
         elseif selected_match < 1 then
             selected_match = #matches
         end
-        update()
+        render()
         return
     end
 
@@ -996,8 +1168,8 @@ end
 -- Go to the first command in the command history (PgUp)
 local function handle_pgup()
     if selectable_items then
-        selected_match = math.max(selected_match - calculate_max_log_lines() + 2, 1)
-        update()
+        selected_match = math.max(selected_match - calculate_max_log_lines() + 1, 1)
+        render()
         return
     end
 
@@ -1007,8 +1179,8 @@ end
 -- Stop browsing history and start editing a blank line (PgDown)
 local function handle_pgdown()
     if selectable_items then
-        selected_match = math.min(selected_match + calculate_max_log_lines() - 2, #matches)
-        update()
+        selected_match = math.min(selected_match + calculate_max_log_lines() - 1, #matches)
+        render()
         return
     end
 
@@ -1021,14 +1193,14 @@ local function search_history()
     end
 
     searching_history = true
-    suggestion_buffer = {}
+    completion_buffer = {}
     selectable_items = {}
-    first_match_to_print = 1
 
     for i = 1, #history do
         selectable_items[i] = history[#history + 1 - i]
     end
 
+    calculate_max_item_width()
     handle_edit()
     bind_mouse()
 end
@@ -1117,7 +1289,7 @@ end
 -- Empty the log buffer of all messages (Ctrl+L)
 local function clear_log_buffer()
     log_buffers[id] = {}
-    update()
+    render()
 end
 
 -- Returns a string of UTF-8 text from the clipboard (or the primary selection)
@@ -1131,7 +1303,11 @@ local function get_clipboard(clip)
             return res.stdout
         end
     elseif platform == 'wayland' then
-        -- Wayland clipboard is only updated on window focus
+        if mp.get_property('current-clipboard-backend') == 'wayland' then
+            local property = clip and 'clipboard/text' or 'clipboard/text-primary'
+            return mp.get_property(property, '')
+        end
+        -- Wayland VO clipboard is only updated on window focus
         if clip and mp.get_property_native('focused') then
             return mp.get_property('clipboard/text', '')
         end
@@ -1183,7 +1359,7 @@ local function property_list()
         properties[#properties + 1] = 'current-tracks/' .. sub_property
     end
 
-    for _, sub_property in pairs({'text'}) do
+    for _, sub_property in pairs({'text', 'text-primary'}) do
         properties[#properties + 1] = 'clipboard/' .. sub_property
     end
 
@@ -1262,6 +1438,8 @@ end
 local function file_list(directory)
     if directory == '' then
         directory = '.'
+    else
+        directory = mp.command_native({'expand-path', directory})
     end
 
     local files = utils.readdir(directory, 'files') or {}
@@ -1276,22 +1454,14 @@ end
 local function handle_file_completion(before_cur)
     local directory, last_component_pos =
         before_cur:sub(completion_pos):match('(.-)()[^' .. path_separator ..']*$')
-    completion_pos = completion_pos + last_component_pos - 1
 
-    if directory:find('^~' .. path_separator) then
-        local home = mp.command_native({'expand-path', '~/'})
-        before_cur = before_cur:sub(1, completion_pos - #directory - 1) ..
-                     home ..
-                     before_cur:sub(completion_pos - #directory + 1)
-        directory = home .. directory:sub(2)
-        completion_pos = completion_pos + #home - 1
-    end
+    completion_pos = completion_pos + last_component_pos - 1
 
     -- Don't use completion_append for file completion to not add quotes after
     -- directories whose entries you may want to complete afterwards.
     completion_append = ''
 
-    return file_list(directory), before_cur
+    return file_list(directory)
 end
 
 local function handle_choice_completion(option, before_cur)
@@ -1310,13 +1480,13 @@ local function handle_choice_completion(option, before_cur)
         info.choices[1] = '""'
     end
 
-    return info.choices, before_cur
+    return info.choices
 end
 
 local function command_flags_at_1st_argument_list(command)
     local flags = {
         ['playlist-next'] = {'weak', 'force'},
-        ['playlist-play-index'] = {'current'},
+        ['playlist-play-index'] = {'current', 'none'},
         ['playlist-remove'] = {'current'},
         ['rescan-external-files'] = {'reselect', 'keep-selection'},
         ['revert-seek'] = {'mark', 'mark-permanent'},
@@ -1335,6 +1505,7 @@ local function command_flags_at_2nd_argument_list(command)
         ['loadfile'] = {'replace', 'append', 'append-play', 'insert-next',
                         'insert-next-play', 'insert-at', 'insert-at-play'},
         ['screenshot-to-file'] = {'subtitles', 'video', 'window', 'each-frame'},
+        ['screenshot-raw'] = {'bgr0', 'bgra', 'rgba', 'rgba64'},
         ['seek'] = {'relative', 'absolute', 'absolute-percent',
                     'relative-percent', 'keyframes', 'exact'},
         ['sub-add'] = {'select', 'auto', 'cached'},
@@ -1420,8 +1591,8 @@ local function strip_common_characters(str, prefix)
     max_overlap_length(prefix, str)))
 end
 
-cycle_through_suggestions = function (backwards)
-    if #suggestion_buffer == 0 then
+cycle_through_completions = function (backwards)
+    if #completion_buffer == 0 then
         -- Allow Tab completion of commands before typing anything.
         if line == '' then
             complete()
@@ -1430,20 +1601,20 @@ cycle_through_suggestions = function (backwards)
         return
     end
 
-    selected_suggestion_index = selected_suggestion_index + (backwards and -1 or 1)
+    selected_completion_index = selected_completion_index + (backwards and -1 or 1)
 
-    if selected_suggestion_index > #suggestion_buffer then
-        selected_suggestion_index = 1
-    elseif selected_suggestion_index < 1 then
-        selected_suggestion_index = #suggestion_buffer
+    if selected_completion_index > #completion_buffer then
+        selected_completion_index = 1
+    elseif selected_completion_index < 1 then
+        selected_completion_index = #completion_buffer
     end
 
     local before_cur = line:sub(1, completion_pos - 1) ..
-                       suggestion_buffer[selected_suggestion_index] .. completion_append
+                       completion_buffer[selected_completion_index] .. completion_append
     line = before_cur .. strip_common_characters(line:sub(cursor),
-        suggestion_buffer[selected_suggestion_index] .. completion_append)
+        completion_buffer[selected_completion_index] .. completion_append)
     cursor = before_cur:len() + 1
-    update()
+    render()
 end
 
 -- Show autocompletions.
@@ -1453,12 +1624,11 @@ complete = function ()
         completion_old_cursor = cursor
         mp.commandv('script-message-to', input_caller, 'input-event',
                     'complete', utils.format_json({line:sub(1, cursor - 1)}))
-        update()
+        render()
         return
     end
 
     local before_cur = line:sub(1, cursor - 1)
-    local after_cur = line:sub(cursor)
     local tokens = {}
     local first_useful_token_index = 1
     local completions
@@ -1506,19 +1676,21 @@ complete = function ()
         ['async'] = true, ['sync'] = true
     }
 
-    while tokens[first_useful_token_index] and
-          command_prefixes[tokens[first_useful_token_index].text] do
-        first_useful_token_index = first_useful_token_index + 1
-    end
-
-    -- Add an empty token if the cursor is after whitespace to simplify
+    -- Add an empty token if the cursor is after whitespace or ; to simplify
     -- comparisons.
     if before_cur == '' or before_cur:find('[%s;]$') then
         tokens[#tokens + 1] = { text = "", pos = cursor }
-    elseif first_useful_token_index > 1 and
-           command_prefixes[tokens[first_useful_token_index - 1].text] then
-        update()
-        return
+    end
+
+    while tokens[first_useful_token_index] and
+          command_prefixes[tokens[first_useful_token_index].text] do
+        if first_useful_token_index == #tokens then
+            completion_buffer = {}
+            render()
+            return
+        end
+
+        first_useful_token_index = first_useful_token_index + 1
     end
 
     completion_pos = tokens[#tokens].pos
@@ -1559,26 +1731,23 @@ complete = function ()
                first_useful_token.text == 'af-command' then
             completions = list_filter_labels(first_useful_token.text:sub(1,2))
         elseif has_file_argument(first_useful_token.text) then
-            completions, before_cur = handle_file_completion(before_cur)
+            completions = handle_file_completion(before_cur)
         else
             completions = command_flags_at_1st_argument_list(first_useful_token.text)
         end
     elseif first_useful_token.text == 'cycle-values' then
-        completions, before_cur =
-            handle_choice_completion(tokens[first_useful_token_index + 1].text,
-                                     before_cur)
+        completions = handle_choice_completion(tokens[first_useful_token_index + 1].text,
+                                               before_cur)
     elseif #tokens == first_useful_token_index + 2 then
         if first_useful_token.text == 'set' then
-            completions, before_cur =
-                handle_choice_completion(tokens[first_useful_token_index + 1].text,
-                                         before_cur)
+            completions = handle_choice_completion(tokens[first_useful_token_index + 1].text,
+                                                   before_cur)
         elseif first_useful_token.text == 'change-list' then
             completions = list_option_action_list(tokens[first_useful_token_index + 1].text)
         elseif first_useful_token.text == 'vf' or
                first_useful_token.text == 'af' then
             if add_actions[tokens[first_useful_token_index + 1].text] then
-                completions, before_cur =
-                    handle_choice_completion(first_useful_token.text, before_cur)
+                completions = handle_choice_completion(first_useful_token.text, before_cur)
             elseif tokens[first_useful_token_index + 1].text == 'remove' then
                 completions = list_option_value_list(first_useful_token.text)
             end
@@ -1588,30 +1757,27 @@ complete = function ()
     elseif #tokens == first_useful_token_index + 3 then
         if first_useful_token.text == 'change-list' then
             if add_actions[tokens[first_useful_token_index + 2].text] then
-                completions, before_cur =
-                    handle_choice_completion(tokens[first_useful_token_index + 1].text,
-                                             before_cur)
+                completions = handle_choice_completion(tokens[first_useful_token_index + 1].text,
+                                                       before_cur)
             elseif tokens[first_useful_token_index + 2].text == 'remove' then
                 completions = list_option_value_list(tokens[first_useful_token_index + 1].text)
             end
         elseif first_useful_token.text == 'dump-cache' then
-            completions, before_cur = handle_file_completion(before_cur)
+            completions = handle_file_completion(before_cur)
         end
     end
 
-    suggestion_buffer = {}
-    selected_suggestion_index = 0
+    completion_buffer = {}
+    selected_completion_index = 0
     completions = completions or {}
+    table.sort(completions)
     completion_pos = completion_pos or 1
     for i, match in ipairs(fuzzy_find(before_cur:sub(completion_pos),
                                       completions, opts.case_sensitive)) do
-        suggestion_buffer[i] = completions[match]
+        completion_buffer[i] = completions[match]
     end
 
-    -- Expand ~/ with file completion.
-    cursor = before_cur:len() + 1
-    line = before_cur .. after_cur
-    update()
+    render()
 end
 
 -- List of input bindings. This is a weird mashup between common GUI text-input
@@ -1633,7 +1799,6 @@ local function get_bindings()
         { 'ins',         handle_ins                             },
         { 'shift+ins',   function() paste(false) end            },
         { 'mbtn_mid',    function() paste(false) end            },
-        { 'mbtn_right',  function() set_active(false) end       },
         { 'left',        function() prev_char() end             },
         { 'ctrl+b',      function() page_up_or_prev_char() end  },
         { 'right',       function() next_char() end             },
@@ -1650,9 +1815,9 @@ local function get_bindings()
         { 'alt+b',       prev_word                              },
         { 'ctrl+right',  next_word                              },
         { 'alt+f',       next_word                              },
-        { 'tab',         cycle_through_suggestions              },
-        { 'ctrl+i',      cycle_through_suggestions              },
-        { 'shift+tab',   function() cycle_through_suggestions(true) end },
+        { 'tab',         cycle_through_completions              },
+        { 'ctrl+i',      cycle_through_completions              },
+        { 'shift+tab',   function() cycle_through_completions(true) end },
         { 'ctrl+a',      go_home                                },
         { 'home',        go_home                                },
         { 'ctrl+e',      go_end                                 },
@@ -1717,6 +1882,9 @@ set_active = function (active)
         repl_active = true
         insert_mode = false
         define_key_bindings()
+        mp.set_property_bool('user-data/mpv/console/open', true)
+        ime_active = mp.get_property_bool('input-ime')
+        mp.set_property_bool('input-ime', true)
 
         if not input_caller then
             prompt = default_prompt
@@ -1734,9 +1902,11 @@ set_active = function (active)
         unbind_mouse()
     else
         repl_active = false
-        suggestion_buffer = {}
+        completion_buffer = {}
         undefine_key_bindings()
         mp.enable_messages('silent:terminal-default')
+        mp.set_property_bool('user-data/mpv/console/open', false)
+        mp.set_property_bool('input-ime', ime_active)
 
         if input_caller then
             mp.commandv('script-message-to', input_caller, 'input-event',
@@ -1751,7 +1921,7 @@ set_active = function (active)
         end
         collectgarbage()
     end
-    update()
+    render()
 end
 
 -- Show the repl if hidden and replace its contents with 'text'
@@ -1775,7 +1945,7 @@ local function show_and_type(text, cursor_pos)
     history_pos = #history + 1
     insert_mode = false
     if repl_active then
-        update()
+        render()
     else
         set_active(true)
     end
@@ -1797,8 +1967,9 @@ mp.register_script_message('type', function(text, cursor_pos)
 end)
 
 mp.register_script_message('get-input', function (script_name, args)
-    if repl_active then
-        return
+    if repl_active and input_caller and script_name ~= input_caller then
+        mp.commandv('script-message-to', input_caller, 'input-event',
+                    'closed', utils.format_json({line, cursor}))
     end
 
     input_caller = script_name
@@ -1814,23 +1985,20 @@ mp.register_script_message('get-input', function (script_name, args)
     end
     history = histories[id]
     history_pos = #history + 1
+    searching_history = false
 
     if args.items then
         selectable_items = {}
         for i, item in ipairs(args.items) do
             selectable_items[i] = item:gsub("[\r\n].*", "⋯"):sub(1, 300)
         end
-        handle_edit()
-        selected_match = args.default_item or 1
         default_item = args.default_item
-
-        local max_lines = calculate_max_log_lines()
-        first_match_to_print = math.max(1, selected_match - math.floor(max_lines / 2) + 1)
-        if first_match_to_print > #selectable_items - max_lines + 2 then
-            first_match_to_print = math.max(1, #selectable_items - max_lines + 1)
-        end
-
+        calculate_max_item_width()
+        handle_edit()
         bind_mouse()
+    else
+        selectable_items = nil
+        unbind_mouse()
     end
 
     set_active(true)
@@ -1838,7 +2006,7 @@ mp.register_script_message('get-input', function (script_name, args)
 end)
 
 mp.register_script_message('log', function (message)
-    -- input.get's edited handler is invoked after submit, so avoid modifying
+    -- input.get edited handler is invoked after submit, so avoid modifying
     -- the default log.
     if input_caller == nil then
         return
@@ -1874,7 +2042,7 @@ mp.register_script_message('set-log', function (log)
         end
     end
 
-    update()
+    render()
 end)
 
 mp.register_script_message('complete', function(list, start_pos)
@@ -1882,25 +2050,27 @@ mp.register_script_message('complete', function(list, start_pos)
         return
     end
 
-    suggestion_buffer = {}
-    selected_suggestion_index = 0
+    completion_buffer = {}
+    selected_completion_index = 0
     local completions = utils.parse_json(list)
+    table.sort(completions)
     completion_pos = start_pos
     completion_append = ''
     for i, match in ipairs(fuzzy_find(line:sub(completion_pos, cursor),
                                       completions)) do
-        suggestion_buffer[i] = completions[match]
+        completion_buffer[i] = completions[match]
     end
 
-    update()
+    render()
 end)
 
--- Redraw the REPL when the OSD size changes. This is needed because the
--- PlayRes of the OSD will need to be adjusted.
-mp.observe_property('osd-width', 'native', update)
-mp.observe_property('osd-height', 'native', update)
-mp.observe_property('display-hidpi-scale', 'native', update)
-mp.observe_property('focused', 'native', update)
+for _, property in pairs({'osd-width', 'osd-height', 'display-hidpi-scale'}) do
+    mp.observe_property(property, 'native', function ()
+        calculate_max_item_width()
+        render()
+    end)
+end
+mp.observe_property('focused', 'native', render)
 
 mp.observe_property("user-data/osc/margins", "native", function(_, val)
     if type(val) == "table" and type(val.t) == "number" and type(val.b) == "number" then
@@ -1908,7 +2078,7 @@ mp.observe_property("user-data/osc/margins", "native", function(_, val)
     else
         global_margins = { t = 0, b = 0 }
     end
-    update()
+    render()
 end)
 
 -- Enable log messages. In silent mode, mpv will queue log messages in a buffer
@@ -1938,6 +2108,10 @@ mp.register_event('log-message', function(e)
             terminal_styles[e.level])
 end)
 
-require 'mp.options'.read_options(opts, nil, update)
+mp.register_event('shutdown', function ()
+    mp.del_property('user-data/mpv/console')
+end)
+
+require 'mp.options'.read_options(opts, nil, render)
 
 collectgarbage()

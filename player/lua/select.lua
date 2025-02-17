@@ -18,6 +18,20 @@ License along with mpv.  If not, see <http://www.gnu.org/licenses/>.
 local utils = require "mp.utils"
 local input = require "mp.input"
 
+local options = {
+    history_date_format = "%Y-%m-%d %H:%M:%S",
+    hide_history_duplicates = true,
+}
+
+require "mp.options".read_options(options, nil, function () end)
+
+local function show_warning(message)
+    mp.msg.warn(message)
+    if mp.get_property_native("vo-configured") then
+        mp.osd_message(message)
+    end
+end
+
 local function show_error(message)
     mp.msg.error(message)
     if mp.get_property_native("vo-configured") then
@@ -51,7 +65,7 @@ mp.add_key_binding(nil, "select-playlist", function ()
     end
 
     if #playlist == 0 then
-        show_error("The playlist is empty.")
+        show_warning("The playlist is empty.")
         return
     end
 
@@ -118,7 +132,7 @@ mp.add_key_binding(nil, "select-track", function ()
     end
 
     if #tracks == 0 then
-        show_error("No available tracks.")
+        show_warning("No available tracks.")
         return
     end
 
@@ -134,7 +148,7 @@ mp.add_key_binding(nil, "select-track", function ()
     })
 end)
 
-local function select_track(property, type, prompt, error)
+local function select_track(property, type, prompt, warning)
     local tracks = {}
     local items = {}
     local default_item
@@ -152,7 +166,7 @@ local function select_track(property, type, prompt, error)
     end
 
     if #items == 0 then
-        show_error(error)
+        show_warning(warning)
         return
     end
 
@@ -203,7 +217,7 @@ mp.add_key_binding(nil, "select-chapter", function ()
     local default_item = mp.get_property_native("chapter")
 
     if default_item == nil then
-        show_error("No available chapters.")
+        show_warning("No available chapters.")
         return
     end
 
@@ -226,15 +240,15 @@ end)
 mp.add_key_binding(nil, "select-edition", function ()
     local edition_list = mp.get_property_native("edition-list")
 
-    if edition_list == nil or #edition_list == 1 then
-        show_error("No available editions.")
+    if edition_list == nil or #edition_list < 2 then
+        show_warning("No available editions.")
         return
     end
 
     local editions = {}
 
     for i, edition in ipairs(edition_list) do
-        editions[i] = edition.title
+        editions[i] = edition.title or "Edition " .. (edition.id + 1)
     end
 
     input.select({
@@ -251,7 +265,7 @@ mp.add_key_binding(nil, "select-subtitle-line", function ()
     local sub = mp.get_property_native("current-tracks/sub")
 
     if sub == nil then
-        show_error("No subtitle is loaded.")
+        show_warning("No subtitle is loaded.")
         return
     end
 
@@ -324,7 +338,7 @@ mp.add_key_binding(nil, "select-audio-device", function ()
     local default_item
 
     if #devices == 0 then
-        show_error("No available audio devices.")
+        show_warning("No available audio devices.")
         return
     end
 
@@ -342,6 +356,143 @@ mp.add_key_binding(nil, "select-audio-device", function ()
         default_item = default_item,
         submit = function (id)
             mp.set_property("audio-device", devices[id].name)
+        end,
+    })
+end)
+
+local function format_history_entry(entry)
+    local status
+    status, entry.time = pcall(os.date, options.history_date_format, entry.time)
+
+    if not status then
+        mp.msg.warn(entry.time)
+    end
+
+    local item = "(" .. entry.time .. ") "
+
+    if entry.title then
+        return item .. entry.title .. " (" .. entry.path .. ")"
+    end
+
+    if entry.path:find("://") then
+        return item .. entry.path
+    end
+
+    local directory, filename = utils.split_path(entry.path)
+
+    return item .. filename .. " (" .. directory .. ")"
+end
+
+mp.add_key_binding(nil, "select-watch-history", function ()
+    local history_file_path = mp.command_native(
+        {"expand-path", mp.get_property("watch-history-path")})
+    local history_file, error_message = io.open(history_file_path)
+    if not history_file then
+        show_warning(mp.get_property_native("save-watch-history")
+                     and error_message
+                     or "Enable --save-watch-history to jump to recently played files.")
+        return
+    end
+
+    local all_entries = {}
+    local line_num = 1
+    for line in history_file:lines() do
+        local entry = utils.parse_json(line)
+        if entry and entry.path then
+            all_entries[#all_entries + 1] = entry
+        else
+            mp.msg.warn(history_file_path .. ": Parse error at line " .. line_num)
+        end
+        line_num = line_num + 1
+    end
+    history_file:close()
+
+    local entries = {}
+    local items = {}
+    local seen = {}
+
+    for i = #all_entries, 1, -1 do
+        local entry = all_entries[i]
+        if not seen[entry.path] or not options.hide_history_duplicates then
+            seen[entry.path] = true
+            entries[#entries + 1] = entry
+            items[#items + 1] = format_history_entry(entry)
+        end
+    end
+
+    items[#items+1] = "Clear history"
+
+    input.select({
+        prompt = "Select a file:",
+        items = items,
+        submit = function (i)
+            if entries[i] then
+                mp.commandv("loadfile", entries[i].path)
+                return
+            end
+
+            error_message = select(2, os.remove(history_file_path))
+            if error_message then
+                show_error(error_message)
+            else
+                mp.osd_message("History cleared.")
+            end
+        end,
+    })
+end)
+
+mp.add_key_binding(nil, "select-watch-later", function ()
+    local watch_later_dir = mp.get_property("current-watch-later-dir")
+
+    if not watch_later_dir then
+        show_warning("No watch later files found.")
+        return
+    end
+
+    local watch_later_files = {}
+
+    for i, file in ipairs(utils.readdir(watch_later_dir, "files") or {}) do
+        watch_later_files[i] = watch_later_dir .. "/" .. file
+    end
+
+    if #watch_later_files == 0 then
+        show_warning("No watch later files found.")
+        return
+    end
+
+    local files = {}
+    for _, watch_later_file in pairs(watch_later_files) do
+        local file_handle = io.open(watch_later_file)
+        if file_handle then
+            local line = file_handle:read()
+            if line and line ~= "# redirect entry" and line:find("^#") then
+                files[#files + 1] = {line:sub(3), utils.file_info(watch_later_file).mtime}
+            end
+            file_handle:close()
+        end
+    end
+
+    if #files == 0 then
+        show_warning(mp.get_property_native("write-filename-in-watch-later-config")
+            and "No watch later files found."
+            or "Enable --write-filename-in-watch-later-config to select recent files.")
+        return
+    end
+
+    table.sort(files, function (i, j)
+        return i[2] > j[2]
+    end)
+
+    local items = {}
+    for i, file in ipairs(files) do
+        items[i] = os.date("(%Y-%m-%d) ", file[2]) .. file[1]
+    end
+
+    input.select({
+        prompt = "Select a file:",
+        items = items,
+        submit = function (i)
+            mp.commandv("loadfile", files[i][1])
         end,
     })
 end)
@@ -425,6 +576,68 @@ mp.add_key_binding(nil, "show-properties", function ()
             else
                 mp.msg.info(properties[i])
             end
+        end,
+    })
+end)
+
+mp.add_key_binding(nil, "menu", function ()
+    local sub_track_count = 0
+    local audio_track_count = 0
+    local video_track_count = 0
+    local text_sub_selected = false
+    local is_disc = mp.get_property("current-demuxer") == "disc"
+
+    local image_sub_codecs = {["dvd_subtitle"] = true, ["hdmv_pgs_subtitle"] = true}
+
+    for _, track in pairs(mp.get_property_native("track-list")) do
+        if track.type == "sub" then
+            sub_track_count = sub_track_count + 1
+
+            if track["main-selection"] == 0 and not image_sub_codecs[track.codec] then
+                text_sub_selected = true
+            end
+        elseif track.type == "audio" then
+            audio_track_count = audio_track_count + 1
+        elseif track.type == "video" then
+            video_track_count = video_track_count + 1
+        end
+    end
+
+    local menu = {
+        {"Subtitles", "script-binding select/select-sid", sub_track_count > 0},
+        {"Secondary subtitles", "script-binding select/select-secondary-sid", sub_track_count > 1},
+        {"Subtitle lines", "script-binding select/select-subtitle-line", text_sub_selected},
+        {"Audio tracks", "script-binding select/select-aid", audio_track_count > 1},
+        {"Video tracks", "script-binding select/select-vid", video_track_count > 1},
+        {"Playlist", "script-binding select/select-playlist",
+         mp.get_property_native("playlist-count") > 1},
+        {"Chapters", "script-binding select/select-chapter", mp.get_property("chapter")},
+        {is_disc and "Titles" or "Editions", "script-binding select/select-edition",
+         mp.get_property_native("edition-list/count", 0) > 1},
+        {"Audio devices", "script-binding select/select-audio-device", audio_track_count > 0},
+        {"Key bindings", "script-binding select/select-binding", true},
+        {"History", "script-binding select/select-watch-history", true},
+        {"Watch later", "script-binding select/select-watch-later", true},
+        {"Stats for nerds", "script-binding stats/display-page-1-toggle", true},
+        {"File info", "script-binding stats/display-page-5-toggle", true},
+        {"Help", "script-binding stats/display-page-4-toggle", true},
+    }
+
+    local labels = {}
+    local commands = {}
+
+    for _, entry in ipairs(menu) do
+        if entry[3] then
+            labels[#labels + 1] = entry[1]
+            commands[#commands + 1] = entry[2]
+        end
+    end
+
+    input.select({
+        prompt = "",
+        items = labels,
+        submit = function (i)
+            mp.command(commands[i])
         end,
     })
 end)

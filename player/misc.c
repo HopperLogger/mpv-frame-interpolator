@@ -31,6 +31,7 @@
 #include "options/options.h"
 #include "options/m_property.h"
 #include "options/m_config.h"
+#include "options/path.h"
 #include "common/common.h"
 #include "common/encode.h"
 #include "common/playlist.h"
@@ -269,6 +270,7 @@ int stream_dump(struct MPContext *mpctx, const char *source_filename)
     struct MPOpts *opts = mpctx->opts;
     bool ok = false;
 
+    char *filename = mp_get_user_path(NULL, mpctx->global, opts->stream_dump);
     stream_t *stream = stream_create(source_filename,
                                      STREAM_ORIGIN_DIRECT | STREAM_READ,
                                      mpctx->playback_abort, mpctx->global);
@@ -277,7 +279,7 @@ int stream_dump(struct MPContext *mpctx, const char *source_filename)
 
     int64_t size = stream_get_size(stream);
 
-    FILE *dest = fopen(opts->stream_dump, "wb");
+    FILE *dest = fopen(filename, "wb");
     if (!dest) {
         MP_ERR(mpctx, "Error opening dump file: %s\n", mp_strerror(errno));
         goto done;
@@ -305,6 +307,7 @@ int stream_dump(struct MPContext *mpctx, const char *source_filename)
     ok &= fclose(dest) == 0;
 done:
     free_stream(stream);
+    talloc_free(filename);
     return ok ? 0 : -1;
 }
 
@@ -388,9 +391,9 @@ char *mp_format_track_metadata(void *ctx, struct track *t, bool add_lang)
         bstr_xappend_asprintf(ctx, &dst, " %dch", s->codec->channels.num);
     if (s && s->codec->samplerate)
         bstr_xappend_asprintf(ctx, &dst, " %d Hz", s->codec->samplerate);
-    if (s && s->codec->bitrate) {
+    if (s && s->codec->bitrate > 0 && s->codec->bitrate < INT_MAX - 500) {
         bstr_xappend_asprintf(ctx, &dst, " %d kbps", (s->codec->bitrate + 500) / 1000);
-    } else if (s && s->hls_bitrate) {
+    } else if (s && s->hls_bitrate > 0 && s->hls_bitrate < INT_MAX - 500) {
         bstr_xappend_asprintf(ctx, &dst, " %d kbps", (s->hls_bitrate + 500) / 1000);
     }
     bstr_xappend0(ctx, &dst, ")");
@@ -412,4 +415,25 @@ char *mp_format_track_metadata(void *ctx, struct track *t, bool add_lang)
         bstr_xappend0(ctx, &dst, "]");
 
     return bstrto0(ctx, dst);
+}
+
+const char *mp_find_non_filename_media_title(MPContext *mpctx)
+{
+    const char *name = mpctx->opts->media_title;
+    if (name && name[0])
+        return name;
+    if (mpctx->demuxer) {
+        name = mp_tags_get_str(mpctx->demuxer->metadata, "service_name");
+        if (name && name[0])
+            return name;
+        name = mp_tags_get_str(mpctx->demuxer->metadata, "title");
+        if (name && name[0])
+            return name;
+        name = mp_tags_get_str(mpctx->demuxer->metadata, "icy-title");
+        if (name && name[0])
+            return name;
+    }
+    if (mpctx->playing && mpctx->playing->title)
+        return mpctx->playing->title;
+    return NULL;
 }

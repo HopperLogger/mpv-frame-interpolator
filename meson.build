@@ -110,6 +110,7 @@ sources = files(
     'demux/demux_timeline.c',
     'demux/ebml.c',
     'demux/packet.c',
+    'demux/packet_pool.c',
     'demux/timeline.c',
 
     ## Filters
@@ -357,7 +358,7 @@ if not features['build-date']
     flags += '-DNO_BUILD_TIMESTAMPS'
 endif
 
-features += {'ta-leak-report': get_option('ta-leak-report')}
+features += {'disable-packet-pool': get_option('disable-packet-pool')}
 
 libdl = dependency('dl', required: false)
 features += {'libdl': libdl.found()}
@@ -953,7 +954,7 @@ if features['direct3d']
     sources += files('video/out/vo_direct3d.c')
 endif
 
-drm = dependency('libdrm', version: '>= 2.4.109', required: get_option('drm'))
+drm = dependency('libdrm', version: '>= 2.4.105', required: get_option('drm'))
 libdisplay_info = dependency('libdisplay-info', version: '>= 0.1.1', required: get_option('drm'))
 features += {'drm': drm.found() and libdisplay_info.found() and
              (features['vt.h'] or features['consio.h'] or features['wsdisplay-usl-io.h'])}
@@ -1052,6 +1053,15 @@ features += {'wayland': wayland_deps and wayland['header'] and wayland['scanner'
 
 if features['wayland']
     subdir(join_paths('video', 'out'))
+endif
+
+foreach v: ['1.39']
+    features += {'wayland-protocols-' + v.replace('.', '-'):
+        wayland['deps'][2].version().version_compare('>=' + v)}
+endforeach
+
+if features['wayland-protocols-1-39']
+    sources += files('player/clipboard/clipboard-wayland.c')
 endif
 
 features += {'memfd-create': false}
@@ -1575,6 +1585,7 @@ if features['cocoa'] and features['swift']
     swift_sources += files('osdep/mac/application.swift',
                            'osdep/mac/app_hub.swift',
                            'osdep/mac/clipboard.swift',
+                           'osdep/mac/dialog.swift',
                            'osdep/mac/event_helper.swift',
                            'osdep/mac/input_helper.swift',
                            'osdep/mac/log_helper.swift',

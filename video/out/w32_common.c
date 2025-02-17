@@ -188,6 +188,8 @@ struct vo_w32_state {
 
     bool conversion_mode_init;
     bool unmaximize;
+
+    HIMC imc;
 };
 
 static inline int get_system_metrics(struct vo_w32_state *w32, int metric)
@@ -538,7 +540,7 @@ static void begin_dragging(struct vo_w32_state *w32)
     // Unfortunately, the w32->current_fs value is stale because the
     // input is handled in a different thread, and we cannot wait for
     // an up-to-date value before entering the model loop if dragging
-    // needs to be kept resonsive.
+    // needs to be kept responsive.
     // Workaround this by intercepting the loop in the WM_MOVING message,
     // where the up-to-date value is available.
     SystemParametersInfoW(SPI_GETWINARRANGING, 0, &w32->win_arranging, 0);
@@ -1354,6 +1356,19 @@ static void set_ime_conversion_mode(const struct vo_w32_state *w32, DWORD mode)
     }
 }
 
+static void update_ime_enabled(struct vo_w32_state *w32, bool enable)
+{
+    if (w32->parent)
+        return;
+
+    if (enable && w32->imc) {
+        ImmAssociateContext(w32->window, w32->imc);
+        w32->imc = NULL;
+    } else if (!enable && !w32->imc) {
+        w32->imc = ImmAssociateContext(w32->window, NULL);
+    }
+}
+
 static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam,
                                 LPARAM lParam)
 {
@@ -2056,6 +2071,8 @@ static MP_THREAD_VOID gui_thread(void *ptr)
         update_cursor_passthrough(w32);
     if (w32->opts->native_touch)
         update_native_touch(w32);
+    if (!w32->opts->input_ime)
+        update_ime_enabled(w32, false);
 
     if (SUCCEEDED(OleInitialize(NULL))) {
         ole_ok = true;
@@ -2262,6 +2279,8 @@ static int gui_thread_control(struct vo_w32_state *w32, int request, void *arg)
                 update_corners_pref(w32);
             } else if (changed_option == &vo_opts->native_touch) {
                 update_native_touch(w32);
+            } else if (changed_option == &vo_opts->input_ime) {
+                update_ime_enabled(w32, vo_opts->input_ime);
             } else if (changed_option == &vo_opts->geometry || changed_option == &vo_opts->autofit ||
                 changed_option == &vo_opts->autofit_smaller || changed_option == &vo_opts->autofit_larger)
             {

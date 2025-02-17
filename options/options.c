@@ -72,6 +72,7 @@ extern const struct m_sub_options demux_lavf_conf;
 extern const struct m_sub_options demux_mkv_conf;
 extern const struct m_sub_options vd_lavc_conf;
 extern const struct m_sub_options ad_lavc_conf;
+extern const struct m_sub_options hwdec_conf;
 extern const struct m_sub_options input_config;
 extern const struct m_sub_options encode_config;
 extern const struct m_sub_options ra_ctx_conf;
@@ -150,6 +151,7 @@ static const m_option_t mp_vo_opt_list[] = {
     {"fs", OPT_ALIAS("fullscreen")},
     {"input-cursor-passthrough", OPT_BOOL(cursor_passthrough)},
     {"native-keyrepeat", OPT_BOOL(native_keyrepeat)},
+    {"input-ime", OPT_BOOL(input_ime)},
     {"panscan", OPT_FLOAT(panscan), M_RANGE(0.0, 1.0)},
     {"video-zoom", OPT_FLOAT(zoom), M_RANGE(-20.0, 20.0)},
     {"video-pan-x", OPT_FLOAT(pan_x)},
@@ -204,7 +206,10 @@ static const m_option_t mp_vo_opt_list[] = {
         {"auto", -1}, {"no", 0}, {"yes", 1})},
     {"wayland-content-type", OPT_CHOICE(wl_content_type, {"auto", -1}, {"none", 0},
         {"photo", 1}, {"video", 2}, {"game", 3})},
-    {"wayland-disable-vsync", OPT_BOOL(wl_disable_vsync)},
+    {"wayland-disable-vsync", OPT_BOOL(wl_disable_vsync),
+        .deprecation_message = "replaced by --wayland-internal-vsync=no"},
+    {"wayland-internal-vsync", OPT_CHOICE(wl_internal_vsync,
+        {"no", 0}, {"auto", 1}, {"yes", 2})},
     {"wayland-edge-pixels-pointer", OPT_INT(wl_edge_pixels_pointer),
         M_RANGE(0, INT_MAX)},
     {"wayland-edge-pixels-touch", OPT_INT(wl_edge_pixels_touch),
@@ -272,6 +277,7 @@ const struct m_sub_options vo_sub_opts = {
         .wl_content_type = -1,
         .wl_edge_pixels_pointer = 16,
         .wl_edge_pixels_touch = 32,
+        .wl_internal_vsync = 1,
         .wl_present = true,
         .mmcss_profile = "Playback",
         .ontop_level = -1,
@@ -298,6 +304,7 @@ const struct m_sub_options mp_subtitle_sub_opts = {
         {"sub-gray", OPT_BOOL(sub_gray)},
         {"sub-ass", OPT_BOOL(ass_enabled), .flags = UPDATE_SUB_HARD},
         {"sub-scale", OPT_FLOAT(sub_scale), M_RANGE(0, 100)},
+        {"sub-scale-signs", OPT_BOOL(sub_scale_signs)},
         {"sub-line-spacing", OPT_FLOAT(sub_line_spacing), M_RANGE(-1000, 1000)},
         {"sub-ass-line-spacing", OPT_REPLACED("sub-line-spacing")},
         {"sub-use-margins", OPT_BOOL(sub_use_margins)},
@@ -517,8 +524,7 @@ static const m_option_t mp_opts[] = {
         {"idle",        IDLE_PRIORITY_CLASS}),
         .flags = UPDATE_PRIORITY},
 #endif
-    {"media-controls", OPT_CHOICE(media_controls,
-        {"no", 0}, {"player", 1}, {"yes", 2})},
+    {"media-controls", OPT_BOOL(media_controls)},
     {"config", OPT_BOOL(load_config), .flags = M_OPT_PRE_PARSE},
     {"config-dir", OPT_STRING(force_configdir),
         .flags = M_OPT_NOCFG | M_OPT_PRE_PARSE | M_OPT_FILE},
@@ -625,7 +631,7 @@ static const m_option_t mp_opts[] = {
 #endif
 
     // demuxer.c - select audio/sub file/demuxer
-    {"demuxer", OPT_STRING(demuxer_name), .help = demuxer_help},
+    {"demuxer", OPT_STRING(demuxer_name), .help = demuxer_help, .flags = UPDATE_DEMUXER},
     {"audio-demuxer", OPT_STRING(audio_demuxer_name), .help = demuxer_help},
     {"sub-demuxer", OPT_STRING(sub_demuxer_name), .help = demuxer_help},
     {"demuxer-thread", OPT_BOOL(demuxer_thread)},
@@ -634,7 +640,7 @@ static const m_option_t mp_opts[] = {
     {"prefetch-playlist", OPT_BOOL(prefetch_open)},
     {"cache-pause", OPT_BOOL(cache_pause)},
     {"cache-pause-initial", OPT_BOOL(cache_pause_initial)},
-    {"cache-pause-wait", OPT_FLOAT(cache_pause_wait), M_RANGE(0, DBL_MAX)},
+    {"cache-pause-wait", OPT_FLOAT(cache_pause_wait), M_RANGE(0, FLT_MAX)},
 
 #if HAVE_DVBIN
     {"dvbin", OPT_SUBSTRUCT(stream_dvb_opts, stream_dvb_conf)},
@@ -668,6 +674,8 @@ static const m_option_t mp_opts[] = {
     {"", OPT_SUBSTRUCT(dec_wrapper, dec_wrapper_conf)},
     {"", OPT_SUBSTRUCT(vd_lavc_params, vd_lavc_conf)},
     {"ad-lavc", OPT_SUBSTRUCT(ad_lavc_params, ad_lavc_conf)},
+
+    {"", OPT_SUBSTRUCT(hwdec_opts, hwdec_conf)},
 
     {"", OPT_SUBSTRUCT(demux_lavf, demux_lavf_conf)},
     {"demuxer-rawaudio", OPT_SUBSTRUCT(demux_rawaudio, demux_rawaudio_conf)},
@@ -811,6 +819,9 @@ static const m_option_t mp_opts[] = {
     {"watch-later-directory", OPT_ALIAS("watch-later-dir")},
     {"watch-later-options", OPT_STRINGLIST(watch_later_options)},
 
+    {"save-watch-history", OPT_BOOL(save_watch_history)},
+    {"watch-history-path", OPT_STRING(watch_history_path), .flags = M_OPT_FILE},
+
     {"ordered-chapters", OPT_BOOL(ordered_chapters)},
     {"ordered-chapters-files", OPT_STRING(ordered_chapters_files),
         .flags = M_OPT_FILE},
@@ -861,7 +872,9 @@ static const m_option_t mp_opts[] = {
     {"idle", OPT_CHOICE(player_idle_mode,
         {"no",   0}, {"once", 1}, {"yes",  2})},
 
+#ifndef FUZZING_BUILD_MODE_UNSAFE_FOR_PRODUCTION
     {"input-commands", OPT_STRINGLIST(input_commands)},
+#endif
     {"input-terminal", OPT_BOOL(consolecontrols), .flags = UPDATE_TERM},
 
     {"input-ipc-server", OPT_STRING(ipc_path), .flags = M_OPT_FILE},
@@ -986,6 +999,7 @@ static const struct MPOpts mp_default_opts = {
     .sync_max_factor = 5,
     .load_config = true,
     .position_resume = true,
+    .watch_history_path = "~~state/watch_history.jsonl",
     .autoload_files = true,
     .demuxer_thread = true,
     .demux_termination_timeout = 0.1,
@@ -1026,7 +1040,7 @@ static const struct MPOpts mp_default_opts = {
     .osd_bar_visible = true,
     .screenshot_template = "mpv-shot%n",
     .play_dir = 1,
-    .media_controls = 1,
+    .media_controls = true,
     .video_exts = (char *[]){
         "3g2", "3gp", "avi", "flv", "m2ts", "m4v", "mj2", "mkv", "mov", "mp4",
         "mpeg", "mpg", "ogv", "rmvb", "ts", "webm", "wmv", "y4m", NULL

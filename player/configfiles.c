@@ -197,7 +197,7 @@ static bool copy_mtime(const char *f1, const char *f2)
     return true;
 }
 
-static char *mp_get_playback_resume_dir(struct MPContext *mpctx)
+char *mp_get_playback_resume_dir(struct MPContext *mpctx)
 {
     char *wl_dir = mpctx->opts->watch_later_dir;
     if (wl_dir && wl_dir[0]) {
@@ -396,8 +396,7 @@ exit:
 
 void mp_delete_watch_later_conf(struct MPContext *mpctx, const char *file)
 {
-    void *ctx = talloc_new(NULL);
-    char *path = mp_normalize_path(ctx, file ? file : mpctx->filename);
+    char *path = mp_normalize_path(NULL, file ? file : mpctx->filename);
     if (!path)
         goto exit;
 
@@ -424,7 +423,7 @@ void mp_delete_watch_later_conf(struct MPContext *mpctx, const char *file)
     }
 
 exit:
-    talloc_free(ctx);
+    talloc_free(path);
 }
 
 bool mp_load_playback_resume(struct MPContext *mpctx, const char *file)
@@ -472,4 +471,3 @@ struct playlist_entry *mp_check_playlist_resume(struct MPContext *mpctx,
     }
     return NULL;
 }
-

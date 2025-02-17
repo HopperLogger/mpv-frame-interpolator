@@ -1,8 +1,10 @@
 CONSOLE
 =======
 
-The console is a REPL for mpv input commands. It is displayed on the video
-window. It also shows log messages. It can be disabled entirely using the
+This script provides the ability to process the user's textual input to other
+scripts through the ``mp.input`` API. It also has a builtin mode of operation to
+complete and run mpv input commands and print mpv's log. It can be displayed on
+both the video window and the terminal. It can be disabled entirely using the
 ``--load-console=no`` option.
 
 Keybindings
@@ -15,8 +17,8 @@ ESC and Ctrl+[
     Hide the console.
 
 ENTER, Ctrl+j and Ctrl+m
-    Expand the first completion suggestion if present and if none was selected,
-    and run the typed command.
+    Select the first completion if one wasn't already manually selected, and run
+    the typed command.
 
 Shift+ENTER
     Type a literal newline character.
@@ -90,16 +92,13 @@ Shift+INSERT
     Paste text (uses the primary selection on X11 and Wayland).
 
 TAB and Ctrl+i
-    Cycle through completion suggestions.
+    Cycle through completions.
 
 Shift+TAB
     Cycle through the completions backwards.
 
 Ctrl+l
     Clear all log messages from the console.
-
-MBTN_RIGHT
-    Hide the console.
 
 MBTN_MID
     Paste text (uses the primary selection on X11 and Wayland).
@@ -150,8 +149,7 @@ Configurable Options
     Default: a monospace font depending on the platform
 
     Set the font used for the console.
-    A monospaced font is necessary to align completion suggestions correctly in
-    a grid.
+    A monospaced font is necessary to align completions correctly in a grid.
     If the console was opened by calling ``mp.input.select`` and no font was
     configured, ``--osd-font`` is used, as alignment is not necessary in that
     case.
@@ -167,6 +165,32 @@ Configurable Options
     Default: 1.65
 
     Set the font border size used for the REPL and the console.
+
+``background_alpha``
+    Default: 20
+
+    The transparency of the menu's background. Ranges from 0 (opaque) to 255
+    (fully transparent).
+
+``padding``
+    Default: 10
+
+    The padding of the menu.
+
+``menu_outline_size``
+    Default: 0
+
+    The size of the menu's border.
+
+``menu_outline_color``
+    Default: #FFFFFF
+
+    The color of the menu's border.
+
+``corner_radius``
+    Default: 8
+
+    The radius of the menu's corners.
 
 ``margin_x``
     Default: same as ``--osd-margin-x``
@@ -184,6 +208,16 @@ Configurable Options
     Whether to scale the console with the window height. Can be ``yes``, ``no``,
     or ``auto``, which follows the value of ``--osd-scale-by-window``.
 
+``selected_color``
+    Default: ``#222222``
+
+    The color of the selected item.
+
+``selected_back_color``
+    Default: ``#FFFFFF``
+
+    The background color of the selected item.
+
 ``case_sensitive``
     Default: no on Windows, yes on other platforms.
 
@@ -198,5 +232,5 @@ Configurable Options
     Default: auto
 
     The ratio of font height to font width.
-    Adjusts table width of completion suggestions.
+    Adjusts grid width of completions.
     Values in the range 1.8..2.5 make sense for common monospace fonts.

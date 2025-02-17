@@ -57,6 +57,7 @@
 #include "options/options.h"
 #include "options/path.h"
 #include "input/input.h"
+#include "demux/packet_pool.h"
 
 #include "audio/out/ao.h"
 #include "misc/thread_tools.h"
@@ -259,9 +260,7 @@ struct MPContext *mp_create(void)
     }
 
     char *enable_talloc = getenv("MPV_LEAK_REPORT");
-    if (!enable_talloc)
-        enable_talloc = HAVE_TA_LEAK_REPORT ? "1" : "0";
-    if (strcmp(enable_talloc, "1") == 0)
+    if (enable_talloc && strcmp(enable_talloc, "1") == 0)
         talloc_enable_leak_report();
 
     mp_time_init();
@@ -284,6 +283,7 @@ struct MPContext *mp_create(void)
 
     mpctx->global = talloc_zero(mpctx, struct mpv_global);
 
+    demux_packet_pool_init(mpctx->global);
     stats_global_init(mpctx->global);
 
     // Nothing must call mp_msg*() and related before this
@@ -406,9 +406,11 @@ int mp_initialize(struct MPContext *mpctx, char **options)
 #endif
 
 #if HAVE_WIN32_SMTC
-    if (opts->media_controls == 2 || (mpctx->is_cli && opts->media_controls == 1))
+    if (opts->media_controls)
         mp_smtc_init(mp_new_client(mpctx->clients, "SystemMediaTransportControls"));
 #endif
+
+    mpctx->ipc_ctx = mp_init_ipc(mpctx->clients, mpctx->global);
 
     if (opts->encode_opts->file && opts->encode_opts->file[0]) {
         mpctx->encode_lavc_ctx = encode_lavc_init(mpctx->global);

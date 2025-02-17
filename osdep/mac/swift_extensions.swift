@@ -48,8 +48,21 @@ extension NSScreen {
 }
 
 extension NSEvent.ModifierFlags {
-    public static var optionLeft: NSEvent.ModifierFlags = .init(rawValue: UInt(NX_DEVICELALTKEYMASK))
-    public static var optionRight: NSEvent.ModifierFlags = .init(rawValue: UInt(NX_DEVICERALTKEYMASK))
+    public static let optionLeft: NSEvent.ModifierFlags = .init(rawValue: UInt(NX_DEVICELALTKEYMASK))
+    public static let optionRight: NSEvent.ModifierFlags = .init(rawValue: UInt(NX_DEVICERALTKEYMASK))
+}
+
+extension String {
+    func isUrl() -> Bool {
+        guard let regex = try? NSRegularExpression(pattern: "^(https?|ftp)://[^\\s/$.?#].[^\\s]*$",
+                                                   options: .caseInsensitive) else {
+            return false
+        }
+        let isUrl = regex.numberOfMatches(in: self,
+                                     options: [],
+                                       range: NSRange(location: 0, length: self.count))
+        return isUrl > 0
+    }
 }
 
 extension mp_keymap {

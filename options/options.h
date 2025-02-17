@@ -34,10 +34,12 @@ typedef struct mp_vo_opts {
     bool x11_wid_title;
     bool cursor_passthrough;
     bool native_keyrepeat;
+    bool input_ime;
 
     int wl_configure_bounds;
     int wl_content_type;
     bool wl_disable_vsync;
+    int wl_internal_vsync;
     int wl_edge_pixels_pointer;
     int wl_edge_pixels_touch;
     bool wl_present;
@@ -104,6 +106,7 @@ struct mp_subtitle_opts {
     bool ass_scale_with_window;
     struct osd_style_opts *sub_style;
     float sub_scale;
+    bool sub_scale_signs;
     float sub_gauss;
     bool sub_gray;
     bool ass_enabled;
@@ -275,6 +278,8 @@ typedef struct MPOpts {
     bool ignore_path_in_watch_later_config;
     char *watch_later_dir;
     char **watch_later_options;
+    bool save_watch_history;
+    char *watch_history_path;
     bool pause;
     int keep_open;
     bool keep_open_pause;
@@ -337,7 +342,7 @@ typedef struct MPOpts {
     bool osd_bar_visible;
 
     int w32_priority;
-    int media_controls;
+    bool media_controls;
 
     struct bluray_opts *stream_bluray_opts;
     struct cdda_opts *stream_cdda_opts;
@@ -358,6 +363,8 @@ typedef struct MPOpts {
 
     struct vd_lavc_params *vd_lavc_params;
     struct ad_lavc_params *ad_lavc_params;
+
+    struct hwdec_opts *hwdec_opts;
 
     struct input_opts *input_opts;
 

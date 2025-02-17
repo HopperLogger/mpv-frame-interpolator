@@ -43,6 +43,7 @@ const struct m_sub_options clipboard_conf = {
 // backend list
 extern const struct clipboard_backend clipboard_backend_win32;
 extern const struct clipboard_backend clipboard_backend_mac;
+extern const struct clipboard_backend clipboard_backend_wayland;
 extern const struct clipboard_backend clipboard_backend_vo;
 
 static const struct clipboard_backend *const clipboard_backend_list[] = {
@@ -51,6 +52,9 @@ static const struct clipboard_backend *const clipboard_backend_list[] = {
 #endif
 #if HAVE_COCOA
     &clipboard_backend_mac,
+#endif
+#if HAVE_WAYLAND_PROTOCOLS_1_39
+    &clipboard_backend_wayland,
 #endif
     &clipboard_backend_vo,
 };
@@ -61,7 +65,6 @@ struct clipboard_ctx *mp_clipboard_create(struct clipboard_init_params *params,
     struct clipboard_ctx *cl = talloc_ptrtype(NULL, cl);
     *cl = (struct clipboard_ctx) {
         .log = mp_log_new(cl, global->log, "clipboard"),
-        .global = global,
         .monitor = params->flags & CLIPBOARD_INIT_ENABLE_MONITORING,
     };
 
@@ -109,6 +112,11 @@ int mp_clipboard_set_data(struct clipboard_ctx *cl, struct clipboard_access_para
     if (cl && cl->backend->set_data)
         return cl->backend->set_data(cl, params, data);
     return CLIPBOARD_UNAVAILABLE;
+}
+
+const char *mp_clipboard_get_backend_name(struct clipboard_ctx *cl)
+{
+    return cl ? cl->backend->name : NULL;
 }
 
 void reinit_clipboard(struct MPContext *mpctx)

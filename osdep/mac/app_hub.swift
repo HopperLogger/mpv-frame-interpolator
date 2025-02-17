@@ -100,7 +100,7 @@ class AppHub: NSObject {
 
     @objc func stopRemote() {
 #if HAVE_MACOS_MEDIA_PLAYER
-        log.verbose("Stoping RemoteCommandCenter")
+        log.verbose("Stopping RemoteCommandCenter")
         remote?.stop()
 #endif
     }
@@ -133,5 +133,9 @@ class AppHub: NSObject {
 
     func getVoConf() -> UnsafePointer<m_sub_options>? {
         return app_bridge_vo_conf()
+    }
+
+    func getRootConf() -> UnsafePointer<m_sub_options>? {
+        return app_bridge_root_conf()
     }
 }

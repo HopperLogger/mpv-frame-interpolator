@@ -18,6 +18,7 @@
 #ifndef MPLAYER_STHEADER_H
 #define MPLAYER_STHEADER_H
 
+#include <stdatomic.h>
 #include <stdbool.h>
 
 #include "common/common.h"
@@ -70,19 +71,19 @@ struct mp_codec_params {
     enum stream_type type;
 
     // E.g. "h264" (usually corresponds to AVCodecDescriptor.name)
-    const char *codec;
+    const char *_Atomic codec;
 
     // Usually corresponds to AVCodecDescriptor.long_name
-    const char *codec_desc;
+    const char *_Atomic codec_desc;
 
     // Corresponding codec profile
-    const char *codec_profile;
+    const char *_Atomic codec_profile;
 
     // E.g. "h264" (usually corresponds to AVCodec.name)
-    const char *decoder;
+    const char *_Atomic decoder;
 
     // Usually corresponds to AVCodec.long_name
-    const char *decoder_desc;
+    const char *_Atomic decoder_desc;
 
     // Usually a FourCC, exact meaning depends on codec.
     unsigned int codec_tag;
@@ -119,7 +120,7 @@ struct mp_codec_params {
     int rotate;           // intended display rotation, in degrees, [0, 359]
     int stereo_mode;      // mp_stereo3d_mode (0 if none/unknown)
     struct pl_color_space color; // colorspace info where available
-    struct pl_color_repr repr;   // color representaion info where available
+    struct pl_color_repr repr;   // color representation info where available
     struct mp_rect crop;         // crop to be applied
 
     bool dovi;
