@@ -52,6 +52,7 @@ struct priv {
     double playbackSpeed;     // The speed of the playback
     double sourceFrameTime;   // The current time between source frames (1 / sourceFPS)
     bool resync;              // Whether or not the filter should resync
+    bool inconsistentTimings; // Whether or not the timings are inconsistent
 
     // Optical flow calculation
     struct OpticalFlowCalc *ofc;  // Optical flow calculator struct
@@ -445,13 +446,20 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
 
     // Update timestamps and source information
     priv->sourceFrameNum += 1;
-    if (priv->sourceFrameNum <= 2 || priv->resync) {
+    if (priv->sourceFrameNum <= 2 || priv->resync || priv->inconsistentTimings) {
         priv->currentOutputPTS = img->pts;
         priv->resync = false;
     } else {
         priv->currentOutputPTS += priv->targetFrameTime * priv->playbackSpeed;
-        img->pts = priv->currentOutputPTS;
+        if (fabs(img->pts - priv->currentOutputPTS) > 0.05) {
+            MP_WARN(f, "Inconsistent frame timings detected. Using less accurate frame timing method to maintain A/V sync.\n");
+            priv->inconsistentTimings = true;
+            priv->currentOutputPTS = img->pts;
+        } else {
+            img->pts = priv->currentOutputPTS;
+        }
     }
+    
 
     // Calculate the number of interpolated frames
     priv->numIntFrames = (int)max(ceil((1.0 - priv->blendingScalar) / (priv->targetFrameTime / priv->sourceFrameTime)), 1.0);
@@ -666,6 +674,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
     priv->playbackSpeed = 1.0;
     priv->sourceFrameTime = 1001.0 / 24000.0;
     priv->resync = false;
+    priv->inconsistentTimings = false;
 
     // Optical Flow calculation
     priv->blendingScalar = 0.0;
