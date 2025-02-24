@@ -10,64 +10,14 @@ FIFO_PATH = "/tmp/hopperrender" # FIFO used to communicate with the video filter
 BUFFER_SIZE = 512               # Size of the buffer used to read from the FIFO
 UPDATE_INTERVAL = 1/60          # Interval at which the update function will be called
 
-# Slider callback functions
-def on_black_level_slider_change(slider):
-    value = int(slider.get_value())
-    print(value + 100, flush=True)
-
-def on_white_level_slider_change(slider):
-    value = int(slider.get_value())
-    print(value + 400, flush=True)
-
-def delta_slider_change(slider):
-    value = int(slider.get_value())
-    print(value + 700, flush=True)
-
-def neighbor_slider_change(slider):
-    value = int(slider.get_value())
-    print(value + 800, flush=True)
-
-# Callback functions for the radio items
-def on_activation_toggle(widget):
-    if widget.get_active():
-        print(1, flush=True)
-    else:
-        print(0, flush=True)
-
-def on_warped_frame12_activate(widget):
-    if widget.get_active():
-        print(2, flush=True)
-
-def on_warped_frame21_activate(widget):
-    if widget.get_active():
-        print(3, flush=True)
-
-def on_blended_frame_activate(widget):
-    if widget.get_active():
-        print(4, flush=True)
-
-def on_hsvflow_activate(widget):
-    if widget.get_active():
-        print(5, flush=True)
-
-def on_greyscaleflow_activate(widget):
-    if widget.get_active():
-        print(6, flush=True)
-
-def on_sidebyside1_activate(widget):
-    if widget.get_active():
-        print(7, flush=True)
-
-def on_sidebyside2_activate(widget):
-    if widget.get_active():
-        print(8, flush=True)
-
-def quit_app(_):
-    Gtk.main_quit()
-
 # Main class for the AppIndicator
 class HopperRenderSettings:
     def __init__(self):
+        self.black_level = 0
+        self.white_level = 255
+        self.delta_scalar = 8
+        self.neighbor_scalar = 6
+
         self.fd = os.open(FIFO_PATH, os.O_RDONLY | os.O_NONBLOCK)  # Open the FIFO for communication with the HopperRender filter
 
         # Create the AppIndicator
@@ -101,54 +51,78 @@ class HopperRenderSettings:
         level_slider_item.connect("activate", self.open_slider_window)
         main_menu.append(level_slider_item)
 
+        # Shader menu
+        shader_item = Gtk.MenuItem(label="Shader")
+        main_menu.append(shader_item)
+        shader_menu = Gtk.Menu()
+        shader_item.set_submenu(shader_menu)
+
         # Frame output radio items
         frame_output_group = None
 
         warped_frame12_item = Gtk.RadioMenuItem.new_with_label(frame_output_group, "Warped Frame 1 -> 2")
-        warped_frame12_item.connect("activate", on_warped_frame12_activate)
+        warped_frame12_item.connect("activate", self.on_warped_frame12_activate)
         frame_output_menu.append(warped_frame12_item)
         frame_output_group = warped_frame12_item.get_group()
 
         warped_frame21_item = Gtk.RadioMenuItem.new_with_label(frame_output_group, "Warped Frame 2 -> 1")
-        warped_frame21_item.connect("activate", on_warped_frame21_activate)
+        warped_frame21_item.connect("activate", self.on_warped_frame21_activate)
         frame_output_menu.append(warped_frame21_item)
         frame_output_group = warped_frame21_item.get_group()
 
         blended_frame_item = Gtk.RadioMenuItem.new_with_label(frame_output_group, "Blended Frame")
         blended_frame_item.set_active(True)
-        blended_frame_item.connect("activate", on_blended_frame_activate)
+        blended_frame_item.connect("activate", self.on_blended_frame_activate)
         frame_output_menu.append(blended_frame_item)
         frame_output_group = blended_frame_item.get_group()
 
         hsvflow_item = Gtk.RadioMenuItem.new_with_label(frame_output_group, "HSVFlow")
-        hsvflow_item.connect("activate", on_hsvflow_activate)
+        hsvflow_item.connect("activate", self.on_hsvflow_activate)
         frame_output_menu.append(hsvflow_item)
         frame_output_group = hsvflow_item.get_group()
 
         greyscaleflow_item = Gtk.RadioMenuItem.new_with_label(frame_output_group, "GreyFlow")
-        greyscaleflow_item.connect("activate", on_greyscaleflow_activate)
+        greyscaleflow_item.connect("activate", self.on_greyscaleflow_activate)
         frame_output_menu.append(greyscaleflow_item)
         frame_output_group = greyscaleflow_item.get_group()
 
         sidebyside1_item = Gtk.RadioMenuItem.new_with_label(frame_output_group, "SideBySide1")
-        sidebyside1_item.connect("activate", on_sidebyside1_activate)
+        sidebyside1_item.connect("activate", self.on_sidebyside1_activate)
         frame_output_menu.append(sidebyside1_item)
         frame_output_group = sidebyside1_item.get_group()
 
         sidebyside2_item = Gtk.RadioMenuItem.new_with_label(frame_output_group, "SideBySide2")
-        sidebyside2_item.connect("activate", on_sidebyside2_activate)
+        sidebyside2_item.connect("activate", self.on_sidebyside2_activate)
         frame_output_menu.append(sidebyside2_item)
         frame_output_group = sidebyside2_item.get_group()
+
+        # Shader radio items
+        shader_group = None
+
+        no_shader_item = Gtk.RadioMenuItem.new_with_label(shader_group, "Off")
+        no_shader_item.connect("activate", self.on_no_shader_activate)
+        shader_menu.append(no_shader_item)
+        shader_group = no_shader_item.get_group()
+
+        shader1_item = Gtk.RadioMenuItem.new_with_label(shader_group, "10 - 219")
+        shader1_item.connect("activate", self.on_shader1_activate)
+        shader_menu.append(shader1_item)
+        shader_group = shader1_item.get_group()
+
+        shader2_item = Gtk.RadioMenuItem.new_with_label(shader_group, "16 - 219")
+        shader2_item.connect("activate", self.on_shader2_activate)
+        shader_menu.append(shader2_item)
+        shader_group = shader2_item.get_group()
 
         # Activation toggle
         activation_toggle = Gtk.CheckMenuItem(label="Activate")
         activation_toggle.set_active(True)
-        activation_toggle.connect("toggled", on_activation_toggle)
+        activation_toggle.connect("toggled", self.on_activation_toggle)
         main_menu.append(activation_toggle)
         
         # Quit menu item
         quit_item = Gtk.MenuItem(label="Quit")
-        quit_item.connect("activate", quit_app)
+        quit_item.connect("activate", self.quit_app)
         main_menu.append(quit_item)
 
         main_menu.show_all()
@@ -156,6 +130,77 @@ class HopperRenderSettings:
         indicator.set_menu(main_menu)
         GLib.idle_add(self.update)  # Add the update function that will listen on the FIFO for changes
         Gtk.main()
+
+    # Slider callback functions
+    def on_black_level_slider_change(self, slider):
+        self.black_level = int(slider.get_value())
+        print(self.black_level + 100, flush=True)
+
+    def on_white_level_slider_change(self, slider):
+        self.white_level = int(slider.get_value())
+        print(self.white_level + 400, flush=True)
+
+    def delta_slider_change(self, slider):
+        self.delta_scalar = int(slider.get_value())
+        print(self.delta_scalar + 700, flush=True)
+
+    def neighbor_slider_change(self, slider):
+        self.neighbor_scalar = int(slider.get_value())
+        print(self.neighbor_scalar + 800, flush=True)
+
+    # Callback functions for the radio items
+    def on_activation_toggle(self, widget):
+        if widget.get_active():
+            print(1, flush=True)
+        else:
+            print(0, flush=True)
+
+    def on_warped_frame12_activate(self, widget):
+        if widget.get_active():
+            print(2, flush=True)
+
+    def on_warped_frame21_activate(self, widget):
+        if widget.get_active():
+            print(3, flush=True)
+
+    def on_blended_frame_activate(self, widget):
+        if widget.get_active():
+            print(4, flush=True)
+
+    def on_hsvflow_activate(self, widget):
+        if widget.get_active():
+            print(5, flush=True)
+
+    def on_greyscaleflow_activate(self, widget):
+        if widget.get_active():
+            print(6, flush=True)
+
+    def on_sidebyside1_activate(self, widget):
+        if widget.get_active():
+            print(7, flush=True)
+
+    def on_sidebyside2_activate(self, widget):
+        if widget.get_active():
+            print(8, flush=True)
+
+    def on_no_shader_activate(self, widget):
+        if widget.get_active():
+            print(9, flush=True)
+
+    def on_shader1_activate(self, widget):
+        if widget.get_active():
+            print(10, flush=True)
+            self.black_level = 10
+            self.white_level = 219
+
+    def on_shader2_activate(self, widget):
+        if widget.get_active():
+            print(11, flush=True)
+            self.black_level = 16
+            self.white_level = 219
+
+    def quit_app(_):
+        Gtk.main_quit()
 
     # Function to open the level slider window
     def open_slider_window(self, source):
@@ -170,26 +215,26 @@ class HopperRenderSettings:
         # Create the white level slider
         white_level_label = Gtk.Label(label="White Level")
         self.white_level_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 255, 1)
-        self.white_level_slider.set_value(255)
-        self.white_level_slider.connect("value-changed", on_white_level_slider_change)
+        self.white_level_slider.set_value(self.white_level)
+        self.white_level_slider.connect("value-changed", self.on_white_level_slider_change)
 
         # Create the black level slider
         black_level_label = Gtk.Label(label="Black Level")
         self.black_level_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 255, 1)
-        self.black_level_slider.set_value(0)
-        self.black_level_slider.connect("value-changed", on_black_level_slider_change)
+        self.black_level_slider.set_value(self.black_level)
+        self.black_level_slider.connect("value-changed", self.on_black_level_slider_change)
 
         # Create the delta scalar slider
         delta_scalar_label = Gtk.Label(label="Delta Scalar")
         self.delta_scalar_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 31, 1)
-        self.delta_scalar_slider.set_value(8)
-        self.delta_scalar_slider.connect("value-changed", delta_slider_change)
+        self.delta_scalar_slider.set_value(self.delta_scalar)
+        self.delta_scalar_slider.connect("value-changed", self.delta_slider_change)
 
         # Create the neighbor scalar slider
         neighbor_scalar_label = Gtk.Label(label="Neighbor Scalar")
         self.neighbor_scalar_slider = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, 0, 31, 1)
-        self.neighbor_scalar_slider.set_value(6)
-        self.neighbor_scalar_slider.connect("value-changed", neighbor_slider_change)
+        self.neighbor_scalar_slider.set_value(self.neighbor_scalar)
+        self.neighbor_scalar_slider.connect("value-changed", self.neighbor_slider_change)
 
         # Add the slider to the box
         vbox.pack_start(white_level_label, True, True, 0)

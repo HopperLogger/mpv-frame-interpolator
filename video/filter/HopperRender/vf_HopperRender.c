@@ -155,6 +155,18 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv) {
         case 8:
             priv->frameOutputMode = SideBySide2;
             break;
+        case 9:
+            priv->ofc->outputBlackLevel = 0;
+            priv->ofc->outputWhiteLevel = 255;
+            break;
+        case 10:
+            priv->ofc->outputBlackLevel = 10;
+            priv->ofc->outputWhiteLevel = 219;
+            break;
+        case 11:
+            priv->ofc->outputBlackLevel = 16;
+            priv->ofc->outputWhiteLevel = 219;
+            break;
         default:
             // Black and White Levels
             if (code >= 100 && code <= 355) {
