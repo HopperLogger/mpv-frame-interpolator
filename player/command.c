@@ -6223,8 +6223,8 @@ static void cmd_track_add(void *p)
     struct mp_cmd_ctx *cmd = p;
     struct MPContext *mpctx = cmd->mpctx;
     int type = *(int *)cmd->priv;
-    bool is_albumart = type == STREAM_VIDEO &&
-                       cmd->args[4].v.b;
+    bool is_albumart = type == STREAM_VIDEO && cmd->args[4].v.b;
+    bool hearing_impaired = type == STREAM_SUB && cmd->args[4].v.b;
 
     if (mpctx->stop_play) {
         cmd->success = false;
@@ -6244,7 +6244,7 @@ static void cmd_track_add(void *p)
         }
     }
     int first = mp_add_external_file(mpctx, cmd->args[0].v.s, type,
-                                     cmd->abort->cancel, is_albumart);
+                                     cmd->abort->cancel, is_albumart, hearing_impaired);
     if (first < 0) {
         cmd->success = false;
         return;
@@ -6308,9 +6308,10 @@ static void cmd_track_reload(void *p)
     if (t && t->is_external && t->external_filename) {
         char *filename = talloc_strdup(NULL, t->external_filename);
         bool is_albumart = t->attached_picture;
+        bool hearing_impaired = t->hearing_impaired_track;
         mp_remove_track(mpctx, t);
         nt_num = mp_add_external_file(mpctx, filename, type, cmd->abort->cancel,
-                                      is_albumart);
+                                      is_albumart, hearing_impaired);
         talloc_free(filename);
     }
 
@@ -6321,8 +6322,11 @@ static void cmd_track_reload(void *p)
 
     struct track *nt = mpctx->tracks[nt_num];
 
-    if (!nt->lang)
-        nt->lang = bstrto0(nt, mp_guess_lang_from_filename(bstr0(nt->external_filename), NULL));
+    if (!nt->lang) {
+        bstr lang = mp_guess_lang_from_filename(bstr0(nt->external_filename), NULL,
+                                                &nt->hearing_impaired_track);
+        nt->lang = bstrto0(nt, lang);
+    }
 
     mp_switch_track(mpctx, nt->type, nt, 0);
     print_track_list(mpctx, "Reloaded:");
@@ -7157,6 +7161,7 @@ const struct mp_cmd_def mp_cmds[] = {
                 .flags = MP_CMD_OPT_ARG},
             {"title", OPT_STRING(v.s), .flags = MP_CMD_OPT_ARG},
             {"lang", OPT_STRING(v.s), .flags = MP_CMD_OPT_ARG},
+            {"hearing-impaired", OPT_BOOL(v.b), .flags = MP_CMD_OPT_ARG},
         },
         .priv = &(const int){STREAM_SUB},
         .spawn_thread = true,
