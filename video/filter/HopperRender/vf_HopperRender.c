@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <fcntl.h>
 #include <pthread.h>
 #include <sys/stat.h>
@@ -115,7 +116,7 @@ static void vf_HopperRender_process_AppIndicator_command(struct priv *priv) {
     ssize_t bytesRead;
     while ((bytesRead = read(priv->m_tdAppIndicatorThreadData.pipe_fd[0], buffer, sizeof(buffer) - 1)) > 0) {
         buffer[bytesRead] = '\0';
-        if (buffer[0] != '\n') {
+        if (buffer[0] != '\n' && isdigit(buffer[0])) {
             code = atoi(buffer);
             break;
         }
@@ -435,10 +436,13 @@ static void vf_HopperRender_process_new_source_frame(struct mp_filter *f) {
     } else if (priv->interpolationState != Active) {
         goto output;
     }
+    
+    // Keep a reference to the current source frame as the base for the intermediate frames
+    if (priv->referenceImage) mp_image_unrefp(&priv->referenceImage);
+    priv->referenceImage = mp_image_new_ref(img);
 
     // Initialize the filter if needed
     if (!priv->ofc->isInitialized) {
-        priv->referenceImage = mp_image_new_ref(img);
         ERR_CHECK(initOpticalFlowCalc(priv->ofc, img->h, img->stride[0], img->w), f);
     }
 
@@ -678,7 +682,7 @@ static struct mp_filter *vf_HopperRender_create(struct mp_filter *parent, void *
     priv->targetFrameTime = 1.0 / display_fps;
 
     // Video info
-    priv->referenceImage = calloc(1, sizeof(struct mp_image));
+    priv->referenceImage = NULL;
 
     // Timings
     priv->currentOutputPTS = 0.0;
