@@ -8,12 +8,13 @@ unsigned char apply_levelsUV(float value, float white_level) {
 
 // Helper function to mirror the coordinate if it is outside the bounds
 int mirrorCoordinate(int pos, int dim) {
+    int res = pos;
     if (pos >= dim - 1) {
-        return (dim - 1) - (pos - dim + 2);
+        res = pos - ((pos - (dim - 2)) * 2);
     } else if (pos < 1) {
-        return -pos + 1;
+        res = -pos + 1;
     }
-    return pos;
+    return min(max(res, 1), dim - 2);
 }
 
 // Generates a color representation of the flow
