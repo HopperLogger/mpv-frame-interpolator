@@ -332,8 +332,8 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     while (frameHeight >> ofc->opticalFlowResScalar > MAX_CALC_RES) {
         ofc->opticalFlowResScalar++;
     }
-    ofc->opticalFlowFrameWidth = ofc->frameWidth >> ofc->opticalFlowResScalar;
-    ofc->opticalFlowFrameHeight = ofc->frameHeight >> ofc->opticalFlowResScalar;
+    ofc->opticalFlowFrameWidth = ceil(ofc->frameWidth / pow(2, ofc->opticalFlowResScalar));
+    ofc->opticalFlowFrameHeight = ceil(ofc->frameHeight / pow(2, ofc->opticalFlowResScalar));
     ofc->ofcCalcTime = 0.0;
     ofc->warpCalcTime = 0.0;
     ofc->deltaScalar = 8;
