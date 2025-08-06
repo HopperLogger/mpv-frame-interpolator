@@ -114,7 +114,7 @@ unsigned char visualizeFlow(const short offsetX, const short offsetY, const unsi
 __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __global const unsigned char* sourceFrame21,
                               __global const short* offsetArray, __global unsigned char* outputFrame, 
                               const float frameScalar12, const float frameScalar21, const int lowDimY, const int lowDimX, 
-                              const int dimY, const int dimX, const int resolutionScalar, const int frameOutputMode, 
+                              const int dimY, const int dimX, const int actualDimX, const int resolutionScalar, const int frameOutputMode, 
                               const float black_level, const float white_level, const int cz) {
     // Current entry to be computed by the thread
     const int cx = get_global_id(0);
@@ -123,12 +123,12 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
     int adjCx = cx;
     int adjCy = cy;
 
-    if (cy >= (dimY >> cz) || cx >= dimX) {
+    if (cy >= (dimY >> cz) || cx >= actualDimX) {
         return;
     }
     
     // SideBySide1 (Left side)
-    if (frameOutputMode == 5 && cx < (dimX >> 1)) {
+    if (frameOutputMode == 5 && cx < (actualDimX >> 1)) {
         outputFrame[cz * dimY * dimX + cy * dimX + cx] = sourceFrame12[cz * dimY * dimX + cy * dimX + cx];
         return;
     } else if (frameOutputMode == 6) { // SideBySide2
@@ -139,7 +139,7 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
             outputFrame[cz * dimY * dimX + cy * dimX + cx] = sourceFrame12[cz * dimY * dimX + ((cy - (verticalOffset >> cz)) << 1) * dimX + (cx << 1) + (cz ? (cx & 1) : 0)];
             return;
         } else if (isInRightSide) { // Place the warped frame in the right side of the output frame
-            adjCx = (cx - (dimX >> 1)) << 1;
+            adjCx = (cx - (actualDimX >> 1)) << 1;
             adjCy = (cy - (verticalOffset >> cz)) << 1;
         } else { // Fill the surrounding area with black
             outputFrame[cz * dimY * dimX + cy * dimX + cx] = cz ? 128 : 0;
@@ -162,9 +162,9 @@ __kernel void warpFrameKernel(__global const unsigned char* sourceFrame12, __glo
     }
 
     // Get the new pixel position
-    const int newCx12 = mirrorCoordinate(adjCx + (int)round((float)(offsetX12) * frameScalar12), dimX);
+    const int newCx12 = mirrorCoordinate(adjCx + (int)round((float)(offsetX12) * frameScalar12), actualDimX);
     const int newCy12 = mirrorCoordinate(adjCy + (int)round((float)(offsetY12) * frameScalar12 * (cz ? 0.5f : 1.0f)), cz ? (dimY >> 1) : dimY);
-    const int newCx21 = mirrorCoordinate(adjCx - (int)round((float)(offsetX21) * frameScalar21), dimX);
+    const int newCx21 = mirrorCoordinate(adjCx - (int)round((float)(offsetX21) * frameScalar21), actualDimX);
     const int newCy21 = mirrorCoordinate(adjCy - (int)round((float)(offsetY21) * frameScalar21 * (cz ? 0.5f : 1.0f)), cz ? (dimY >> 1) : dimY);
 
     if (frameOutputMode == 0) { // WarpedFrame12

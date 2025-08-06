@@ -221,14 +221,14 @@ bool warpFrames(struct OpticalFlowCalc* ofc, const float blendingScalar, const i
     err |= clSetKernelArg(ofc->warpFrameKernel, 1, sizeof(cl_mem), &ofc->inputFrameArray[1]);
     err |= clSetKernelArg(ofc->warpFrameKernel, 4, sizeof(float), &frameScalar12);
     err |= clSetKernelArg(ofc->warpFrameKernel, 5, sizeof(float), &frameScalar21);
-    err |= clSetKernelArg(ofc->warpFrameKernel, 11, sizeof(int), &frameOutputMode);
-    err |= clSetKernelArg(ofc->warpFrameKernel, 12, sizeof(float), &ofc->outputBlackLevel);
-    err |= clSetKernelArg(ofc->warpFrameKernel, 13, sizeof(float), &ofc->outputWhiteLevel);
-    err |= clSetKernelArg(ofc->warpFrameKernel, 14, sizeof(int), &cz);
+    err |= clSetKernelArg(ofc->warpFrameKernel, 12, sizeof(int), &frameOutputMode);
+    err |= clSetKernelArg(ofc->warpFrameKernel, 13, sizeof(float), &ofc->outputBlackLevel);
+    err |= clSetKernelArg(ofc->warpFrameKernel, 14, sizeof(float), &ofc->outputWhiteLevel);
+    err |= clSetKernelArg(ofc->warpFrameKernel, 15, sizeof(int), &cz);
     CHECK_ERROR(err);
     CHECK_ERROR(clEnqueueNDRangeKernel(ofc->queue, ofc->warpFrameKernel, 2, NULL, ofc->grid16x16x1, ofc->threads16x16x1, 0, NULL, &ofc->warpStartedEvent));
     cz = 1; // UV-Plane
-    CHECK_ERROR(clSetKernelArg(ofc->warpFrameKernel, 14, sizeof(int), &cz));
+    CHECK_ERROR(clSetKernelArg(ofc->warpFrameKernel, 15, sizeof(int), &cz));
     CHECK_ERROR(clEnqueueNDRangeKernel(ofc->queue, ofc->warpFrameKernel, 2, NULL, ofc->halfGrid16x16x1, ofc->threads16x16x1, 0, NULL, NULL));
     return 0;
 }
@@ -349,10 +349,10 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     ofc->lowGrid8x8xL[0] = ceil(ofc->opticalFlowFrameWidth / 8.0) * 8.0;
     ofc->lowGrid8x8xL[1] = ceil(ofc->opticalFlowFrameHeight / 8.0) * 8.0;
     ofc->lowGrid8x8xL[2] = ofc->opticalFlowSearchRadius;
-    ofc->halfGrid16x16x1[0] = ceil(ofc->frameWidth / 16.0) * 16.0;
+    ofc->halfGrid16x16x1[0] = ceil(ofc->actualWidth / 16.0) * 16.0;
     ofc->halfGrid16x16x1[1] = ceil((ofc->frameHeight >> 1) / 16.0) * 16.0;
     ofc->halfGrid16x16x1[2] = 1;
-    ofc->grid16x16x1[0] = ceil(ofc->frameWidth / 16.0) * 16.0;
+    ofc->grid16x16x1[0] = ceil(ofc->actualWidth / 16.0) * 16.0;
     ofc->grid16x16x1[1] = ceil(ofc->frameHeight / 16.0) * 16.0;
     ofc->grid16x16x1[2] = 1;
 
@@ -429,7 +429,8 @@ bool initOpticalFlowCalc(struct OpticalFlowCalc* ofc, const int frameHeight, con
     err |= clSetKernelArg(ofc->warpFrameKernel, 7, sizeof(int), &ofc->opticalFlowFrameWidth);
     err |= clSetKernelArg(ofc->warpFrameKernel, 8, sizeof(int), &ofc->frameHeight);
     err |= clSetKernelArg(ofc->warpFrameKernel, 9, sizeof(int), &ofc->frameWidth);
-    err |= clSetKernelArg(ofc->warpFrameKernel, 10, sizeof(int), &ofc->opticalFlowResScalar);
+    err |= clSetKernelArg(ofc->warpFrameKernel, 10, sizeof(int), &ofc->actualWidth);
+    err |= clSetKernelArg(ofc->warpFrameKernel, 11, sizeof(int), &ofc->opticalFlowResScalar);
     err |= clSetKernelArg(ofc->blurFlowKernel, 0, sizeof(cl_mem), &ofc->offsetArray);
     err |= clSetKernelArg(ofc->blurFlowKernel, 1, sizeof(cl_mem), &ofc->blurredOffsetArray);
     err |= clSetKernelArg(ofc->blurFlowKernel, 2, sizeof(int), &ofc->opticalFlowFrameHeight);
