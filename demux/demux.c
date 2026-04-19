@@ -63,6 +63,9 @@ extern const demuxer_desc_t demuxer_desc_directory;
 extern const demuxer_desc_t demuxer_desc_disc;
 extern const demuxer_desc_t demuxer_desc_rar;
 extern const demuxer_desc_t demuxer_desc_libarchive;
+#if HAVE_SUBRANDR
+extern const demuxer_desc_t demuxer_desc_sbr;
+#endif
 extern const demuxer_desc_t demuxer_desc_null;
 extern const demuxer_desc_t demuxer_desc_timeline;
 
@@ -76,6 +79,9 @@ static const demuxer_desc_t *const demuxer_list[] = {
     &demuxer_desc_matroska,
 #if HAVE_LIBARCHIVE
     &demuxer_desc_libarchive,
+#endif
+#if HAVE_SUBRANDR
+    &demuxer_desc_sbr,
 #endif
     &demuxer_desc_lavf,
     &demuxer_desc_mf,
@@ -2519,8 +2525,14 @@ static void update_opts(struct demuxer *demuxer)
 // Make demuxing progress. Return whether progress was made.
 static bool thread_work(struct demux_internal *in)
 {
-    if (m_config_cache_update(in->d_user->opts_cache))
+    struct demux_opts *opts = in->d_user->opts;
+    size_t old_max_bytes = opts->max_bytes;
+    size_t old_max_bytes_bw = opts->max_bytes_bw;
+    if (m_config_cache_update(in->d_user->opts_cache)) {
         update_opts(in->d_user);
+        if (opts->max_bytes + opts->max_bytes_bw < old_max_bytes + old_max_bytes_bw)
+            demux_packet_pool_clear(in->packet_pool);
+    }
     if (in->tracks_switched) {
         execute_trackswitch(in);
         return true;
@@ -3188,7 +3200,7 @@ static void demux_init_cuesheet(struct demuxer *demuxer)
     struct cue_file *f = mp_parse_cue(bstr0(cue));
     if (f) {
         if (mp_check_embedded_cue(f) < 0) {
-            MP_WARN(demuxer, "Embedded cue sheet references more than one file. "
+            MP_WARN(demuxer, "Embedded cue sheet references zero or multiple files. "
                     "Ignoring it.\n");
         } else {
             for (int n = 0; n < f->num_tracks; n++) {

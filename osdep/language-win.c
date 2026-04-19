@@ -39,21 +39,13 @@ char **mp_get_user_langs(void)
     char **ret = NULL;
     size_t ret_count = 0;
     wchar_t *buf = NULL;
-    ULONG size, count;
+    ULONG size = 0, count;
 
     if (!GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &count, NULL, &size))
         goto done;
 
     MP_TARRAY_GROW(NULL, buf, size);
     if (GetUserPreferredUILanguages(MUI_LANGUAGE_NAME, &count, buf, &size))
-        apppend_langs(&ret, &ret_count, buf, count);
-
-    size = 0;
-    if (!GetSystemPreferredUILanguages(MUI_LANGUAGE_NAME, &count, NULL, &size))
-        goto done;
-
-    MP_TARRAY_GROW(NULL, buf, size);
-    if (GetSystemPreferredUILanguages(MUI_LANGUAGE_NAME, &count, buf, &size))
         apppend_langs(&ret, &ret_count, buf, count);
 
 done:

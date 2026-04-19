@@ -78,7 +78,6 @@ struct cmd_bind_section {
 };
 
 #define MP_MAX_SOURCES 10
-#define MP_MAX_TABLET_PAD_BUTTONS 10
 
 struct active_section {
     bstr name;
@@ -1134,11 +1133,14 @@ void mp_input_tablet_tool_up(struct input_ctx *ictx)
 
 void mp_input_tablet_tool_button(struct input_ctx *ictx, int button, int state)
 {
-    char *key = mp_input_get_key_name(button);
-    MP_TRACE(ictx, "tablet tool button %s %s%s \n",
-             key,
-             (state & MP_KEY_STATE_DOWN) ? "pressed" : "",
-             (state & MP_KEY_STATE_UP) ? "released" : "");
+    if (mp_msg_test(ictx->log, MSGL_TRACE)) {
+        char *key = mp_input_get_key_name(button);
+        MP_TRACE(ictx, "tablet tool button %s %s%s \n",
+                 key,
+                 (state & MP_KEY_STATE_DOWN) ? "pressed" : "",
+                 (state & MP_KEY_STATE_UP) ? "released" : "");
+        talloc_free(key);
+    }
 
     input_lock(ictx);
 
@@ -1176,7 +1178,7 @@ void mp_input_set_tablet_pad_focus(struct input_ctx *ictx, bool focus, int butto
         for (int i = 0; i < ictx->tablet_pad_buttons; i++)
             ictx->tablet_pad_buttons_pressed[i] = false;
     }
-    ictx->tablet_pad_buttons = buttons;
+    ictx->tablet_pad_buttons = MPMIN(buttons, MP_MAX_TABLET_PAD_BUTTONS);
     notify_tablet_update(ictx);
     input_unlock(ictx);
 }
@@ -1218,7 +1220,7 @@ void mp_input_get_tablet_pos(struct input_ctx *ictx, int *x, int *y,
                              bool *tool_stylus_btn2_pressed,
                              bool *tool_stylus_btn3_pressed,
                              bool *pad_focus,
-                             bool **pad_buttons_pressed,
+                             bool *pad_buttons_pressed,
                              int *pad_buttons)
 {
     input_lock(ictx);
@@ -1230,7 +1232,8 @@ void mp_input_get_tablet_pos(struct input_ctx *ictx, int *x, int *y,
     *tool_stylus_btn2_pressed = ictx->tablet_tool_stylus_btn2_pressed;
     *tool_stylus_btn3_pressed = ictx->tablet_tool_stylus_btn3_pressed;
     *pad_focus = ictx->tablet_pad_focus;
-    *pad_buttons_pressed = ictx->tablet_pad_buttons_pressed;
+    for (int i = 0; i < ictx->tablet_pad_buttons; i++)
+        pad_buttons_pressed[i] = ictx->tablet_pad_buttons_pressed[i];
     *pad_buttons = ictx->tablet_pad_buttons;
     input_unlock(ictx);
 }

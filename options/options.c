@@ -70,6 +70,9 @@ extern const struct m_sub_options demux_rawvideo_conf;
 extern const struct m_sub_options demux_playlist_conf;
 extern const struct m_sub_options demux_lavf_conf;
 extern const struct m_sub_options demux_mkv_conf;
+#if HAVE_SUBRANDR
+extern const struct m_sub_options demux_sbr_conf;
+#endif
 extern const struct m_sub_options vd_lavc_conf;
 extern const struct m_sub_options ad_lavc_conf;
 extern const struct m_sub_options hwdec_conf;
@@ -106,6 +109,8 @@ extern const struct m_sub_options vaapi_conf;
 extern const struct m_sub_options egl_conf;
 
 extern const struct m_sub_options mp_sub_filter_opts;
+
+extern const struct m_sub_options w32_register_conf;
 
 static const struct m_sub_options screenshot_conf = {
     .opts = image_writer_opts,
@@ -168,7 +173,7 @@ static const m_option_t mp_vo_opt_list[] = {
     {"video-unscaled", OPT_CHOICE(unscaled,
         {"no", 0}, {"yes", 1}, {"downscale-big", 2})},
     {"video-recenter", OPT_BOOL(recenter)},
-    {"wid", OPT_INT64(WinID)},
+    {"wid", OPT_INT64(WinID), .flags = UPDATE_VO},
     {"screen", OPT_CHOICE(screen_id, {"default", -1}), M_RANGE(0, 32)},
     {"screen-name", OPT_STRING(screen_name)},
     {"fs-screen", OPT_CHOICE(fsscreen_id, {"all", -2}, {"current", -1}),
@@ -243,6 +248,9 @@ static const m_option_t mp_vo_opt_list[] = {
 #if HAVE_EGL_ANDROID
     {"android-surface-size", OPT_SIZE_BOX(android_surface_size)},
 #endif
+#if HAVE_D3D11
+    {"d3d11-composition-size", OPT_SIZE_BOX(d3d11_composition_size)},
+#endif
     {"swapchain-depth", OPT_INT(swapchain_depth), M_RANGE(1, VO_MAX_SWAPCHAIN_DEPTH)},
     {"override-display-fps", OPT_REPLACED("display-fps-override")},
     {0}
@@ -282,7 +290,7 @@ const struct m_sub_options vo_sub_opts = {
         .mmcss_profile = "Playback",
         .ontop_level = -1,
         .timing_offset = 0.050,
-        .swapchain_depth = 3,
+        .swapchain_depth = 2,
         .focus_on = 1,
     },
 };
@@ -299,6 +307,8 @@ const struct m_sub_options mp_subtitle_sub_opts = {
         {"stretch-image-subs-to-screen", OPT_BOOL(stretch_image_subs)},
         {"image-subs-video-resolution", OPT_BOOL(image_subs_video_res)},
         {"sub-fix-timing", OPT_BOOL(sub_fix_timing)},
+        {"sub-fix-timing-threshold", OPT_INT(sub_fix_timing_threshold)},
+        {"sub-fix-timing-keep", OPT_INT(sub_fix_timing_keep)},
         {"sub-stretch-durations", OPT_BOOL(sub_stretch_durations)},
         {"sub-gauss", OPT_FLOAT(sub_gauss), M_RANGE(0.0, 3.0)},
         {"sub-gray", OPT_BOOL(sub_gray)},
@@ -346,6 +356,8 @@ const struct m_sub_options mp_subtitle_sub_opts = {
     .defaults = &(OPT_BASE_STRUCT){
         .sub_speed = 1.0,
         .ass_enabled = true,
+        .sub_fix_timing_threshold = 210,
+        .sub_fix_timing_keep = 400,
         .sub_scale_by_window = true,
         .sub_use_margins = true,
         .sub_scale_with_window = true,
@@ -503,7 +515,7 @@ static const m_option_t mp_opts[] = {
         {"cplayer", 0}, {"pseudo-gui", 1}),
         .flags = M_OPT_PRE_PARSE | M_OPT_NOPROP},
 
-    {"shuffle", OPT_BOOL(shuffle)},
+    {"shuffle", OPT_BOOL(shuffle), .flags = M_OPT_PRE_PARSE},
 
 // ------------------------- common options --------------------
     {"quiet", OPT_BOOL(quiet)},
@@ -522,6 +534,7 @@ static const m_option_t mp_opts[] = {
     {"msg-module", OPT_BOOL(msg_module), .flags = UPDATE_TERM},
     {"msg-time", OPT_BOOL(msg_time), .flags = UPDATE_TERM},
 #if HAVE_WIN32_DESKTOP
+    {"", OPT_SUBSTRUCT(w32_register_opts, w32_register_conf)},
     {"priority", OPT_CHOICE(w32_priority,
         {"no",          0},
         {"realtime",    REALTIME_PRIORITY_CLASS},
@@ -553,7 +566,6 @@ static const m_option_t mp_opts[] = {
     {"ytdl", OPT_BOOL(lua_load_ytdl), .flags = UPDATE_BUILTIN_SCRIPTS},
     {"ytdl-format", OPT_STRING(lua_ytdl_format)},
     {"ytdl-raw-options", OPT_KEYVALUELIST(lua_ytdl_raw_options)},
-    {"ytdl-extract-chapters", OPT_BOOL(lua_ytdl_extract_chapters)},
     {"load-stats-overlay", OPT_BOOL(lua_load_stats),
         .flags = UPDATE_BUILTIN_SCRIPTS},
     {"load-console", OPT_BOOL(lua_load_console),
@@ -565,6 +577,7 @@ static const m_option_t mp_opts[] = {
     {"load-select", OPT_BOOL(lua_load_select), .flags = UPDATE_BUILTIN_SCRIPTS},
     {"load-positioning", OPT_BOOL(lua_load_positioning), .flags = UPDATE_BUILTIN_SCRIPTS},
     {"load-commands", OPT_BOOL(lua_load_commands), .flags = UPDATE_BUILTIN_SCRIPTS},
+    {"load-context-menu", OPT_BOOL(lua_load_context_menu), .flags = UPDATE_BUILTIN_SCRIPTS},
 #endif
 
 // ------------------------- stream options --------------------
@@ -693,6 +706,9 @@ static const m_option_t mp_opts[] = {
     {"demuxer-rawvideo", OPT_SUBSTRUCT(demux_rawvideo, demux_rawvideo_conf)},
     {"", OPT_SUBSTRUCT(demux_playlist, demux_playlist_conf)},
     {"demuxer-mkv", OPT_SUBSTRUCT(demux_mkv, demux_mkv_conf)},
+#if HAVE_SUBRANDR
+    {"demuxer-sbr", OPT_SUBSTRUCT(demux_sbr, demux_sbr_conf)},
+#endif
 
 // ------------------------- subtitles options --------------------
 
@@ -993,13 +1009,15 @@ static const struct MPOpts mp_default_opts = {
     .lua_load_ytdl = true,
     .lua_ytdl_format = NULL,
     .lua_ytdl_raw_options = NULL,
-    .lua_ytdl_extract_chapters = true,
     .lua_load_stats = true,
     .lua_load_console = true,
     .lua_load_auto_profiles = -1,
     .lua_load_select = true,
     .lua_load_positioning = true,
     .lua_load_commands = true,
+#ifndef _WIN32
+    .lua_load_context_menu = true,
+#endif
 #endif
     .auto_load_scripts = true,
     .loop_times = 1,
@@ -1057,11 +1075,13 @@ static const struct MPOpts mp_default_opts = {
     .media_controls = true,
     .video_exts = (char *[]){
         "3g2", "3gp", "avi", "flv", "ivf", "m2ts", "m4v", "mj2", "mkv", "mov",
-        "mp4", "mpeg", "mpg", "ogv", "rmvb", "ts", "webm", "wmv", "y4m", NULL
+        "mp4", "mpeg", "mpg", "mxf", "ogv", "rmvb", "ts", "webm", "wmv", "y4m",
+        NULL
     },
     .audio_exts = (char *[]){
         "aac", "ac3", "aiff", "ape", "au", "dts", "eac3", "flac", "m4a", "mka",
-        "mp3", "oga", "ogg", "ogm", "opus", "thd", "wav", "wav", "wma", "wv", NULL
+        "mp1", "mp2", "mp3", "mpc", "oga", "ogg", "ogm", "opus", "tak", "thd",
+        "tta", "wav", "wma", "wv", NULL
     },
     .image_exts = (char *[]){
         "avif", "bmp", "gif", "heic", "heif", "j2k", "jp2", "jpeg", "jpg",
@@ -1085,6 +1105,7 @@ static const struct MPOpts mp_default_opts = {
         "scc",
         "smi",
         "srt",
+        "srv3",
         "ssa",
         "sub",
         "sup",
@@ -1092,6 +1113,7 @@ static const struct MPOpts mp_default_opts = {
         "utf-8",
         "utf8",
         "vtt",
+        "ytt",
         NULL
     },
 

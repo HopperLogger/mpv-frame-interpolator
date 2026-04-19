@@ -502,15 +502,6 @@ _G.print = mp.msg.info
 package.loaded["mp"] = mp
 package.loaded["mp.msg"] = mp.msg
 
-function mp.wait_event(t)
-    local r = mp.raw_wait_event(t)
-    if r and r.file_error and not r.error then
-        -- compat; deprecated
-        r.error = r.file_error
-    end
-    return r
-end
-
 _G.mp_event_loop = function()
     mp.dispatch_events(true)
 end
@@ -679,7 +670,7 @@ function overlay_mt.update(ov)
     for k, v in pairs(ov) do
         cmd[k] = v
     end
-    cmd.name = "osd-overlay"
+    cmd._name = "osd-overlay"
     cmd.res_x = math.floor(cmd.res_x)
     cmd.res_y = math.floor(cmd.res_y)
     return mp.command_native(cmd)
@@ -687,7 +678,7 @@ end
 
 function overlay_mt.remove(ov)
     mp.command_native {
-        name = "osd-overlay",
+        _name = "osd-overlay",
         id = ov.id,
         format = "none",
         data = "",
@@ -794,7 +785,7 @@ end
 
 function mp_utils.subprocess(t)
     local cmd = {}
-    cmd.name = "subprocess"
+    cmd._name = "subprocess"
     cmd.capture_stdout = true
     for k, v in pairs(t) do
         if k == "cancellable" then

@@ -36,9 +36,15 @@
 
 extern const struct sd_functions sd_ass;
 extern const struct sd_functions sd_lavc;
+#if HAVE_SUBRANDR
+extern const struct sd_functions sd_sbr;
+#endif
 
 static const struct sd_functions *const sd_list[] = {
     &sd_lavc,
+#if HAVE_SUBRANDR
+    &sd_sbr,
+#endif
     &sd_ass,
     NULL
 };
@@ -69,6 +75,7 @@ struct dec_sub {
 
     struct mp_codec_params *codec;
     double start, end;
+    char *lang;
 
     double last_vo_pts;
     struct sd *sd;
@@ -165,6 +172,7 @@ static struct sd *init_decoder(struct dec_sub *sub)
             .order = sub->order,
             .attachments = sub->attachments,
             .codec = sub->codec,
+            .lang = sub->lang,
             .preload_ok = true,
         };
 
@@ -198,6 +206,7 @@ struct dec_sub *sub_create(struct mpv_global *global, struct track *track,
         .shared_opts_cache = m_config_cache_alloc(sub, global, &mp_subtitle_shared_sub_opts),
         .sh = track->stream,
         .codec = track->stream->codec,
+        .lang = track->lang,
         .attachments = talloc_steal(sub, attachments),
         .play_dir = 1,
         .order = order,

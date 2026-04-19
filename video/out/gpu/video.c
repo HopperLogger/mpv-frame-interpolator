@@ -409,9 +409,11 @@ static const struct gl_video_opts gl_video_opts_def = {
     .early_flush = -1,
     .shader_cache = true,
     .hwdec_interop = "auto",
+    .treat_srgb_as_power22 = 1|2|4, // auto
 };
 
 static OPT_STRING_VALIDATE_FUNC(validate_error_diffusion_opt);
+static OPT_STRING_VALIDATE_FUNC(validate_target_gamut);
 
 #define OPT_BASE_STRUCT struct gl_video_opts
 
@@ -443,9 +445,15 @@ const struct m_sub_options gl_video_conf = {
         {"target-trc", OPT_CHOICE_C(target_trc, pl_csp_trc_names)},
         {"target-peak", OPT_CHOICE(target_peak, {"auto", 0}),
             M_RANGE(10, 10000)},
+        {"hdr-reference-white", OPT_CHOICE(hdr_reference_white, {"auto", 0}),
+            M_RANGE(10, 10000)},
+        {"sdr-adjust-gamma", OPT_CHOICE(sdr_adjust_gamma,
+            {"auto", 0}, {"yes", 1}, {"no", -1})},
+        {"treat-srgb-as-power22", OPT_CHOICE(treat_srgb_as_power22,
+            {"no", 0}, {"input", 1}, {"output", 2}, {"both", 1|2}, {"auto", 1|2|4})},
         {"target-contrast", OPT_CHOICE(target_contrast, {"auto", 0}, {"inf", -1}),
-            M_RANGE(10, 1000000)},
-        {"target-gamut", OPT_CHOICE_C(target_gamut, pl_csp_prim_names)},
+            M_RANGE(10, 10 / PL_COLOR_HDR_BLACK)},
+        {"target-gamut", OPT_STRING_VALIDATE(target_gamut, validate_target_gamut)},
         {"tone-mapping", OPT_CHOICE(tone_map.curve,
             {"auto",     TONE_MAPPING_AUTO},
             {"clip",     TONE_MAPPING_CLIP},
@@ -1147,7 +1155,7 @@ static void pass_record(struct gl_video *p, const struct mp_pass_perf *perf)
     p->pass_idx++;
 }
 
-PRINTF_ATTRIBUTE(2, 3)
+MP_PRINTF_ATTRIBUTE(2, 3)
 static void pass_describe(struct gl_video *p, const char *textf, ...)
 {
     if (!p->pass || p->pass_idx == VO_PASS_PERF_MAX)
@@ -1765,21 +1773,50 @@ static bool scaler_conf_eq(struct scaler_config a, struct scaler_config b)
            a.clamp == b.clamp;
 }
 
+void scaler_conf_merge(struct scaler_config *dst, const struct scaler_config *src,
+                       enum scaler_unit unit)
+{
+    if (dst->kernel.function != SCALER_INHERIT)
+        return;
+    mp_assert(src->kernel.function != SCALER_INHERIT);
+    dst->kernel.function = src->kernel.function;
+
+    const struct scaler_config *def = &gl_video_opts_def.scaler[unit];
+    for (int i = 0; i < MP_ARRAY_SIZE(dst->kernel.params); i++) {
+        if (isnan(dst->kernel.params[i]) || dst->kernel.params[i] == def->kernel.params[i])
+            dst->kernel.params[i] = src->kernel.params[i];
+        if (isnan(dst->window.params[i]) || dst->window.params[i] == def->window.params[i])
+            dst->window.params[i] = src->window.params[i];
+    }
+    if (dst->kernel.blur == def->kernel.blur)
+        dst->kernel.blur = src->kernel.blur;
+    if (dst->kernel.taper == def->kernel.taper)
+        dst->kernel.taper = src->kernel.taper;
+    if (dst->window.taper == def->window.taper)
+        dst->window.taper = src->window.taper;
+    if (dst->clamp == def->clamp)
+        dst->clamp = src->clamp;
+    if (dst->radius == def->radius)
+        dst->radius = src->radius;
+    if (dst->antiring == def->antiring)
+        dst->antiring = src->antiring;
+    if (dst->window.function == def->window.function)
+        dst->window.function = src->window.function;
+}
+
 static void reinit_scaler(struct gl_video *p, struct scaler *scaler,
                           const struct scaler_config *conf,
                           double scale_factor,
                           int sizes[])
 {
     mp_assert(conf);
+    mp_assert(conf->kernel.function != SCALER_INHERIT);
     if (scaler_conf_eq(scaler->conf, *conf) &&
         scaler->scale_factor == scale_factor &&
         scaler->initialized)
         return;
 
     uninit_scaler(p, scaler);
-
-    if (conf->kernel.function == SCALER_INHERIT)
-        conf = &p->opts.scaler[SCALER_SCALE];
 
     struct filter_kernel bare_window;
     const struct filter_kernel *t_kernel = mp_find_filter_kernel(conf->kernel.function);
@@ -2362,9 +2399,12 @@ static void pass_read_video(struct gl_video *p)
             continue;
 
         const struct scaler_config *conf = &p->opts.scaler[scaler_id];
-
-        if (conf->kernel.function == SCALER_INHERIT)
-            conf = &p->opts.scaler[SCALER_SCALE];
+        struct scaler_config tmp;
+        if (conf->kernel.function == SCALER_INHERIT) {
+            tmp = *conf;
+            scaler_conf_merge(&tmp, &p->opts.scaler[SCALER_SCALE], scaler_id);
+            conf = &tmp;
+        }
 
         struct scaler *scaler = &p->scaler[scaler_id];
 
@@ -2538,10 +2578,10 @@ static void pass_scale_main(struct gl_video *p)
         p->texture_offset.t[0] = roundf(p->texture_offset.t[0]);
         p->texture_offset.t[1] = roundf(p->texture_offset.t[1]);
     }
-    if (downscaling &&
-        p->opts.scaler[SCALER_DSCALE].kernel.function != SCALER_INHERIT) {
+    if (downscaling) {
         scaler_conf = p->opts.scaler[SCALER_DSCALE];
         scaler = &p->scaler[SCALER_DSCALE];
+        scaler_conf_merge(&scaler_conf, &p->opts.scaler[SCALER_SCALE], SCALER_DSCALE);
     }
 
     // When requesting correct-downscaling and the clip is anamorphic, and
@@ -3740,15 +3780,13 @@ static bool pass_upload_image(struct gl_video *p, struct mp_image *mpi, uint64_t
 
         vimg->hwdec_mapped = true;
         if (ok) {
-            struct mp_image layout = {0};
-            mp_image_set_params(&layout, &p->image_params);
             struct ra_tex **tex = p->hwdec_mapper->tex;
             for (int n = 0; n < p->plane_count; n++) {
                 vimg->planes[n] = (struct texplane){
-                    .w = mp_image_plane_w(&layout, n),
-                    .h = mp_image_plane_h(&layout, n),
+                    .w = tex[n]->params.w,
+                    .h = tex[n]->params.h,
                     .tex = tex[n],
-                    .flipped = layout.params.vflip,
+                    .flipped = p->image_params.vflip,
                 };
             }
         } else {
@@ -4290,6 +4328,13 @@ static int validate_error_diffusion_opt(struct mp_log *log, const m_option_t *op
             mp_fatal(log, "No error diffusion kernel named '%s' found!\n", s);
     }
     return r;
+}
+
+static int validate_target_gamut(struct mp_log *log, const m_option_t *opt,
+                                 struct bstr name, const char **value)
+{
+    struct pl_raw_primaries tmp;
+    return mp_parse_raw_primaries(log, *value, &tmp);
 }
 
 void gl_video_set_ambient_lux(struct gl_video *p, double lux)

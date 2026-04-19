@@ -465,11 +465,13 @@ struct vo {
     struct mp_log *log; // Using e.g. "[vo/vdpau]" as prefix
     void *priv;
     struct mpv_global *global;
-    struct vo_x11_state *x11;
-    struct vo_w32_state *w32;
-    struct vo_wayland_state *wl;
-    struct vo_android_state *android;
-    struct vo_drm_state *drm;
+    union {
+        struct vo_x11_state *x11;
+        struct vo_w32_state *w32;
+        struct vo_wayland_state *wl;
+        struct vo_android_state *android;
+        struct vo_drm_state *drm;
+    };
     struct mp_hwdec_devices *hwdec_devs;
     struct input_ctx *input_ctx;
     struct osd_state *osd;
@@ -504,10 +506,9 @@ struct vo {
 
     struct m_config_cache *opts_cache; // cache for ->opts
     struct mp_vo_opts *opts;
-    struct m_config_cache *gl_opts_cache;
-    struct m_config_cache *eq_opts_cache;
 
     bool want_redraw;   // redraw as soon as possible
+    int64_t previous_redraw_time;
 
     // current window state
     int dwidth;
@@ -532,6 +533,7 @@ bool vo_is_ready_for_frame(struct vo *vo, int64_t next_pts);
 bool vo_is_visible(struct vo *vo);
 void vo_queue_frame(struct vo *vo, struct vo_frame *frame);
 void vo_wait_frame(struct vo *vo);
+void vo_wait_on_vo(struct vo *vo, bool wait);
 bool vo_still_displaying(struct vo *vo);
 void vo_request_wakeup_on_done(struct vo *vo);
 bool vo_has_frame(struct vo *vo);

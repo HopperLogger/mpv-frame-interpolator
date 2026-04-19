@@ -175,8 +175,7 @@ Configurable Options
     Default: bottombar
 
     The layout for the OSC. Currently available are: box, slimbox,
-    bottombar, topbar, slimbottombar and slimtopbar. Default pre-0.21.0 was
-    'box'.
+    bottombar, topbar, slimbottombar, slimtopbar and floating.
 
 ``seekbarstyle``
     Default: bar
@@ -230,7 +229,7 @@ Configurable Options
     Set to ``no`` to disable any special mouse wheel behavior.
 
 ``deadzonesize``
-    Default: 0.5
+    Default: 0.75
 
     Size of the deadzone. The deadzone is an area that makes the mouse act
     like leaving the window. Movement there won't make the OSC show up and
@@ -238,13 +237,13 @@ Configurable Options
     at the window border opposite to the OSC and the size controls how much
     of the window it will span. Values between 0.0 and 1.0, where 0 means the
     OSC will always popup with mouse movement in the window, and 1 means the
-    OSC will only show up when the mouse hovers it. Default pre-0.21.0 was 0.
+    OSC will only show up when the mouse hovers it. Default pre-0.42.0 was 0.5.
 
 ``minmousemove``
     Default: 0
 
     Minimum amount of pixels the mouse has to move between ticks to make
-    the OSC show up. Default pre-0.21.0 was 3.
+    the OSC show up.
 
 ``showwindowed``
     Default: yes
@@ -260,6 +259,11 @@ Configurable Options
     Default: yes
 
     Show the mpv logo and message when idle
+
+``audioonlyscreen``
+    Default: no
+
+    Show the mpv logo when no video track is present or selected.
 
 ``scalewindowed``
     Default: 1.0
@@ -379,27 +383,50 @@ Configurable Options
     within the areas not covered by the osc (``yes``). If this option is set,
     the osc may overwrite the ``--video-margin-ratio-*`` options, even if the
     user has set them. (It will not overwrite them if all of them are set to
-    default values.) Additionally, ``visibility`` must be set to ``always``.
-    Otherwise, this option does nothing.
+    default values.) By default, ``visibility`` must be set to ``always``.
+    Use ``dynamic_margins`` to allow margins to update with OSC visibility
+    instead.
 
     Currently, this is supported for the ``bottombar``, ``slimbottombar``,
     ``topbar`` and ``slimtopbar`` layouts only. The other layouts do not change
     if this option is set. Separately, if window controls are present (see
     below), they will be affected regardless of which osc layout is in use.
 
-    The border is static and appears even if the OSC is configured to appear
-    only on mouse interaction. If the OSC is invisible, the border is simply
-    filled with the background color (black by default).
-
-    This currently still makes the OSC overlap with subtitles (if the
-    ``--sub-use-margins`` option is set to ``yes``, the default). This may be
-    fixed later.
+    Subtitles may still overlap with the OSC when ``--sub-use-margins`` is set
+    to ``yes`` (the default), as they are allowed to extend into the margin
+    area. Setting ``--sub-use-margins=no`` confines subtitles to the video
+    area.
 
     This does not work correctly with video outputs like ``--vo=xv``, which
     render OSD into the unscaled video.
 
+``dynamic_margins``
+    Default: no
+
+    When set to ``yes``, margins follow the actual OSC visibility: they are
+    applied when the OSC appears and removed when it hides. Without this
+    option, margins are only applied when ``visibility`` is set to ``always``.
+
+``sub_margins``
+    Default: no
+
+    Whether to adjust the subtitle margin so that subtitles do not overlap
+    with the OSC. Requires ``dynamic_margins`` or ``visibility=always`` to
+    take effect. Uses ``--sub-margin-y-offset`` to apply the adjustment.
+
+    With ``boxvideo`` enabled and ``--sub-use-margins=no``, subtitles are
+    already confined to the video area and this option has no additional
+    effect.
+
+``osd_margins``
+    Default: yes
+
+    Whether to adjust the OSD margin so that OSD text does not overlap
+    with the OSC. Requires ``dynamic_margins`` or ``visibility=always`` to
+    take effect. Uses ``--osd-margin-y-offset`` to apply the adjustment.
+
 ``windowcontrols``
-    Default: auto (Show window controls if there is no window border)
+    Default: auto (Show window controls if there is no window border/title-bar)
 
     Whether to show window management controls over the video, and if so,
     which side of the window to place them. This may be desirable when the
@@ -410,6 +437,12 @@ Configurable Options
     The set of window controls is fixed, offering ``minimize``, ``maximize``,
     and ``quit``. Not all platforms implement ``minimize`` and ``maximize``,
     but ``quit`` will always work.
+
+``windowcontrols_independent``
+    Default: yes
+
+    Whether to show window controls independently of the OSC, or show them
+    together.
 
 ``windowcontrols_alignment``
     Default: right
@@ -426,6 +459,30 @@ Configurable Options
     String that supports property expansion that will be displayed as the
     windowcontrols title.
     ASS tags are escaped, and newlines and trailing slashes are stripped.
+
+``floatingtitle``
+    Default: yes
+
+    Whether to show the title row in the ``floating`` layout. When enabled,
+    window controls are rendered as compact buttons without a full-width
+    background bar.
+
+``floatingwidth``
+    Default: 700
+
+    Width of the ``floating`` layout.
+
+``floatingalpha``
+    Default: 130
+
+    Alpha of the ``floating`` layout background, 0 (opaque) to 255 (fully
+    transparent).
+
+``tracknumberswidth``
+    Default: 35
+
+    Width of the track number labels next to the audio/subtitle track selector
+    icons. Set to ``0`` to hide track numbers and show only the icons.
 
 ``greenandgrumpy``
     Default: no
@@ -450,6 +507,19 @@ Configurable Options
 
     Use a Unicode minus sign instead of an ASCII hyphen when displaying
     the remaining playback time.
+
+``icon_style``
+    Default: layout
+
+    Selects the icon set used for OSC buttons. Both sets are bundled in the
+    mpv-osd-symbols font.
+
+    ``layout``
+        Select the icon set based on the current layout.
+    ``classic``
+        The original mpv icon set.
+    ``fluent``
+        Icons based on Microsoft's Fluent UI System Icons.
 
 ``background_color``
     Default: #000000

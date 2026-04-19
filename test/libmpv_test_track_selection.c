@@ -82,40 +82,12 @@ static bool have_english_locale(void)
     if (any_starts_with(buf, count, L"en"))
         return true;
 
-    size = _countof(buf);
-    if (!GetSystemPreferredUILanguages(MUI_LANGUAGE_NAME, &count, buf, &size))
-        fail("GetSystemPreferredUILanguages failed: %#lx\n", GetLastError());
-
     if (any_starts_with(buf, count, L"en"))
         return true;
 
     return false;
 #endif
     return true;
-}
-
-static void check_string(const char *property, const char *expect)
-{
-    char *result_string;
-    check_api_error(mpv_get_property(ctx, property, MPV_FORMAT_STRING, &result_string));
-    if (strcmp(expect, result_string) != 0)
-        fail("String: expected '%s' but got '%s'!\n", expect, result_string);
-    mpv_free(result_string);
-}
-
-static void reload_file(const char *path)
-{
-    const char *cmd[] = {"loadfile", path, NULL};
-    check_api_error(mpv_command(ctx, cmd));
-    bool loaded = false;
-    while (!loaded) {
-        mpv_event *event = wrap_wait_event();
-        switch (event->event_id) {
-        case MPV_EVENT_FILE_LOADED:
-            loaded = true;
-            break;
-        }
-    }
 }
 
 static void test_track_selection(char *file, char *path)
@@ -130,12 +102,12 @@ static void test_track_selection(char *file, char *path)
         check_string("current-tracks/sub/selected", "yes");
 
         // --subs-falback=no
-        check_api_error(mpv_set_property_string(ctx, "subs-fallback", "no"));
+        set_property_string("subs-fallback", "no");
         reload_file(path);
         check_string("track-list/2/selected", "no");
     } else if (strcmp(file, "eng_default_forced.mkv") == 0) {
         // --subs-fallback-forced=no
-        check_api_error(mpv_set_property_string(ctx, "subs-fallback-forced", "no"));
+        set_property_string("subs-fallback-forced", "no");
         reload_file(path);
         check_string("current-tracks/sub/selected", "yes");
     } else if (strcmp(file, "eng_forced_matching_audio.mkv") == 0 ||
@@ -149,7 +121,7 @@ static void test_track_selection(char *file, char *path)
         check_string("track-list/2/selected", "no");
     } else if (strcmp(file, "eng_forced_always_audio.mkv") == 0) {
         // forced track should be selected anyway despite no matching audio
-        check_api_error(mpv_set_property_string(ctx, "subs-fallback-forced", "always"));
+        set_property_string("subs-fallback-forced", "always");
         reload_file(path);
         check_string("current-tracks/sub/selected", "yes");
     } else if (strcmp(file, "eng_no_default.mkv") == 0) {
@@ -158,35 +130,90 @@ static void test_track_selection(char *file, char *path)
         check_string("track-list/2/selected", "no");
 
         // --subs-fallback=yes
-        check_api_error(mpv_set_property_string(ctx, "subs-fallback", "yes"));
+        set_property_string("subs-fallback", "yes");
         reload_file(path);
         check_string("current-tracks/sub/selected", "yes");
-    } else if (strcmp(file, "locale.mkv") == 0) {
+    } else if (strcmp(file, "locale.mkv") == 0 ||
+               strcmp(file, "locale_forced.mkv") == 0) {
         // default english subs
         reload_file(path);
         check_string("current-tracks/sub/lang", "eng");
 
         // default german subs
-        check_api_error(mpv_set_property_string(ctx, "subs-match-os-language", "no"));
+        set_property_string("subs-match-os-language", "no");
         reload_file(path);
         check_string("current-tracks/sub/lang", "ger");
+    } else if (strcmp(file, "locale_complex.mkv") == 0) {
+        set_property_string("subs-fallback", "yes");
+        set_property_string("subs-match-os-language", "yes");
+
+        // default+forced eng subs to match audio
+        set_property_string("alang", "eng");
+        reload_file(path);
+        check_string("current-tracks/audio/lang", "eng");
+        check_string("current-tracks/sub/lang", "eng");
+        // among all eng subs, track 4 should be selected
+        check_int("current-tracks/sub/id", 4);
+
+        // forced jpn subs to match audio
+        set_property_string("alang", "jpn");
+        reload_file(path);
+        check_string("current-tracks/audio/lang", "jpn");
+        check_string("current-tracks/sub/lang", "jpn");
+
+        // default, non-forced ger subs
+        set_property_string("alang", "ger");
+        reload_file(path);
+        check_string("current-tracks/audio/lang", "ger");
+        check_string("current-tracks/sub/lang", "ger");
+
+        // default+forced pol subs to match audio
+        set_property_string("alang", "pol");
+        reload_file(path);
+        check_string("current-tracks/audio/lang", "pol");
+        check_string("current-tracks/sub/lang", "pol");
+
+        // default+forced pol subs (first default track)
+        set_property_string("subs-match-os-language", "no");
+        set_property_string("subs-fallback-forced", "always");
+        reload_file(path);
+        check_string("current-tracks/sub/lang", "pol");
+
+        // default+forced eng subs to match OS lang
+        set_property_string("subs-match-os-language", "yes");
+        reload_file(path);
+        check_string("current-tracks/sub/lang", "eng");
+        // among all eng subs, track 4 should be selected
+        check_int("current-tracks/sub/id", 4);
+
+        // default, non-forced ger subs
+        set_property_string("subs-fallback-forced", "no");
+        reload_file(path);
+        check_string("current-tracks/sub/lang", "ger");
+
+        // default+forced eng subs to match slang
+        set_property_string("slang", "eng");
+        reload_file(path);
+        check_string("current-tracks/sub/lang", "eng");
+        // among all eng subs, track 4 should be selected
+        check_int("current-tracks/sub/id", 4);
     } else if (strcmp(file, "multilang.mkv") == 0) {
         // --alang=jpn should select forced jpn subs
-        check_api_error(mpv_set_property_string(ctx, "alang", "jpn"));
+        set_property_string("alang", "jpn");
         reload_file(path);
         check_string("current-tracks/audio/lang", "jpn");
         check_string("current-tracks/sub/lang", "jpn");
 
         // --alang=pol should select default, non-forced ger subs
-        check_api_error(mpv_set_property_string(ctx, "alang", "pol"));
+        set_property_string("alang", "pol");
         reload_file(path);
         check_string("current-tracks/audio/lang", "pol");
         check_string("current-tracks/sub/lang", "ger");
 
         // --slang=eng and --subs-with-matching-audio should not pick any subs
-        check_api_error(mpv_set_property_string(ctx, "alang", "eng"));
-        check_api_error(mpv_set_property_string(ctx, "slang", "eng"));
-        check_api_error(mpv_set_property_string(ctx, "subs-with-matching-audio", "no"));
+        set_property_string("alang", "eng");
+        set_property_string("slang", "eng");
+        set_property_string("subs-with-matching-audio", "no");
         reload_file(path);
         check_string("current-tracks/audio/lang", "eng");
         check_string("track-list/5/selected", "no");
@@ -195,65 +222,74 @@ static void test_track_selection(char *file, char *path)
         check_string("track-list/8/selected", "no");
 
         // --subs-with-matching-audio=forced checks
-        check_api_error(mpv_set_property_string(ctx, "subs-with-matching-audio", "forced"));
+        set_property_string("subs-with-matching-audio", "forced");
         reload_file(path);
         check_string("current-tracks/audio/lang", "eng");
         check_string("current-tracks/sub/lang", "eng");
 
         // forced jpn subs should be selected
-        check_api_error(mpv_set_property_string(ctx, "alang", "jpn"));
-        check_api_error(mpv_set_property_string(ctx, "slang", "jpn"));
+        set_property_string("alang", "jpn");
+        set_property_string("slang", "jpn");
         reload_file(path);
         check_string("current-tracks/audio/lang", "jpn");
         check_string("current-tracks/sub/lang", "jpn");
 
         // default+forced eng subs should be selected
-        check_api_error(mpv_set_property_string(ctx, "alang", "ger"));
-        check_api_error(mpv_set_property_string(ctx, "slang", "ger"));
+        set_property_string("alang", "ger");
+        set_property_string("slang", "ger");
         reload_file(path);
         check_string("current-tracks/audio/lang", "ger");
         check_string("current-tracks/sub/lang", "eng");
 
         // eng audio and pol subs should be selected
-        check_api_error(mpv_set_property_string(ctx, "alang", "it"));
-        check_api_error(mpv_set_property_string(ctx, "slang", "pt,it,pol,ger"));
+        set_property_string("alang", "it");
+        set_property_string("slang", "pt,it,pol,ger");
         reload_file(path);
         check_string("current-tracks/audio/lang", "eng");
         check_string("current-tracks/sub/lang", "pol");
 
         // forced jpn subs should be selected
-        check_api_error(mpv_set_property_string(ctx, "alang", "ger"));
-        check_api_error(mpv_set_property_string(ctx, "slang", "jpn,pol"));
-        check_api_error(mpv_set_property_string(ctx, "subs-with-matching-audio", "yes"));
-        check_api_error(mpv_set_property_string(ctx, "subs-fallback-forced", "always"));
+        set_property_string("alang", "ger");
+        set_property_string("slang", "jpn,pol");
+        set_property_string("subs-with-matching-audio", "yes");
+        set_property_string("subs-fallback-forced", "always");
         reload_file(path);
         check_string("current-tracks/audio/lang", "ger");
         check_string("current-tracks/sub/lang", "jpn");
+
+        // default+forced eng subs should be selected
+        set_property_string("alang", "jpn");
+        set_property_string("slang", "");
+        set_property_string("subs-with-matching-audio", "yes");
+        set_property_string("subs-fallback-forced", "always");
+        reload_file(path);
+        check_string("current-tracks/audio/lang", "jpn");
+        check_string("current-tracks/sub/lang", "eng");
     } else if (strcmp(file, "multilang2.mkv") == 0) {
         // default jpn subs
-        check_api_error(mpv_set_property_string(ctx, "subs-match-os-language", "no"));
-        check_api_error(mpv_set_property_string(ctx, "alang", "jpn"));
+        set_property_string("subs-match-os-language", "no");
+        set_property_string("alang", "jpn");
         reload_file(path);
         check_string("track-list/3/selected", "yes");
 
         // forced eng subs
-        check_api_error(mpv_set_property_string(ctx, "alang", "eng"));
+        set_property_string("alang", "eng");
         reload_file(path);
         check_string("track-list/4/selected", "yes");
 
         // default jpn subs
-        check_api_error(mpv_set_property_string(ctx, "subs-fallback-forced", "no"));
+        set_property_string("subs-fallback-forced", "no");
         reload_file(path);
         check_string("track-list/3/selected", "yes");
 
         // default eng subs
-        check_api_error(mpv_set_property_string(ctx, "slang", "eng"));
+        set_property_string("slang", "eng");
         reload_file(path);
         check_string("track-list/6/selected", "yes");
 
         // no subs
-        check_api_error(mpv_set_property_string(ctx, "slang", ""));
-        check_api_error(mpv_set_property_string(ctx, "subs-fallback", "no"));
+        set_property_string("slang", "");
+        set_property_string("subs-fallback", "no");
         reload_file(path);
         check_string("track-list/3/selected", "no");
         check_string("track-list/4/selected", "no");
@@ -261,9 +297,32 @@ static void test_track_selection(char *file, char *path)
         check_string("track-list/6/selected", "no");
 
         // untagged eng subs
-        check_api_error(mpv_set_property_string(ctx, "sid", "3"));
+        set_property_string("sid", "3");
         reload_file(path);
         check_string("track-list/5/selected", "yes");
+    } else if (strcmp(file, "multiprogram.ts") == 0) {
+        set_property_string("subs-match-os-language", "no");
+        set_property_string("vid", "2");
+
+        // no subs are selected by default
+        reload_file(path);
+        check_string("track-list/1/selected", "no");
+        check_string("track-list/3/selected", "no");
+
+        // the eng track cannot be selected due to having the wrong program ID
+        // because subs-fallback=default, the jpn track cannot be chosen either
+        // so we get no subs
+        set_property_string("slang", "eng");
+        reload_file(path);
+        check_string("track-list/1/selected", "no");
+        check_string("track-list/3/selected", "no");
+
+        // the jpn track is selected to match video program ID
+        // even though the user requested eng subtitles
+        set_property_string("subs-fallback", "yes");
+        reload_file(path);
+        check_string("current-tracks/sub/lang", "jpn");
+        check_string("track-list/3/selected", "yes");
     }
 }
 
@@ -272,7 +331,9 @@ int main(int argc, char *argv[])
     if (argc < 3)
         return 1;
 
-    if (!strcmp(argv[1], "locale.mkv") && !have_english_locale()) {
+    const char *locale_test_prefix = "locale";
+    if (strncmp(argv[1], locale_test_prefix, strlen(locale_test_prefix)) == 0 &&
+        !have_english_locale()) {
         printf("Non English language detected. Skipping locale test.\n");
         return 77;
     }
@@ -290,7 +351,7 @@ int main(int argc, char *argv[])
     test_track_selection(argv[1], argv[2]);
     printf("================ SHUTDOWN ================\n");
 
-    mpv_command_string(ctx, "quit");
+    command_string("quit");
     while (wrap_wait_event()->event_id != MPV_EVENT_SHUTDOWN) {}
 
     return 0;

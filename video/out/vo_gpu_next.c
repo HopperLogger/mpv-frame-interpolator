@@ -30,6 +30,7 @@
 
 #include "config.h"
 #include "common/common.h"
+#include "common/stats.h"
 #include "misc/io_utils.h"
 #include "options/m_config.h"
 #include "options/options.h"
@@ -44,6 +45,7 @@
 #include "placebo/utils.h"
 #include "gpu/context.h"
 #include "gpu/hwdec.h"
+#include "gpu/utils.h"
 #include "gpu/video.h"
 #include "gpu/video_shaders.h"
 #include "sub/osd.h"
@@ -105,10 +107,15 @@ struct cache {
 struct priv {
     struct mp_log *log;
     struct mpv_global *global;
+    struct stats_ctx *stats;
     struct ra_ctx *ra_ctx;
     struct gpu_ctx *context;
     struct ra_hwdec_ctx hwdec_ctx;
     struct ra_hwdec_mapper *hwdec_mapper;
+    struct timer_pool *hwdec_timer;
+    struct mp_pass_perf hwdec_perf;
+    struct timer_pool *sw_upload_timer;
+    struct mp_pass_perf sw_upload_perf;
 
     // Allocated DR buffers
     mp_mutex dr_lock;
@@ -168,6 +175,7 @@ struct gl_next_opts {
     int sub_hdr_peak;
     int image_subs_hdr_peak;
     int border_background;
+    float background_blur_radius;
     float corner_rounding;
     bool inter_preserve;
     struct user_lut lut;
@@ -175,6 +183,7 @@ struct gl_next_opts {
     struct user_lut target_lut;
     int target_hint;
     int target_hint_mode;
+    bool target_hint_strict;
     char **raw_opts;
 };
 
@@ -197,7 +206,9 @@ const struct m_sub_options gl_next_conf = {
         {"border-background", OPT_CHOICE(border_background,
             {"none",  BACKGROUND_NONE},
             {"color", BACKGROUND_COLOR},
-            {"tiles", BACKGROUND_TILES})},
+            {"tiles", BACKGROUND_TILES}
+            ,{"blur", BACKGROUND_BLUR})},
+        {"background-blur-radius", OPT_FLOAT(background_blur_radius)},
         {"corner-rounding", OPT_FLOAT(corner_rounding), M_RANGE(0, 1)},
         {"interpolation-preserve", OPT_BOOL(inter_preserve)},
         {"lut", OPT_STRING(lut.opt), .flags = M_OPT_FILE},
@@ -207,16 +218,19 @@ const struct m_sub_options gl_next_conf = {
         {"target-lut", OPT_STRING(target_lut.opt), .flags = M_OPT_FILE},
         {"target-colorspace-hint", OPT_CHOICE(target_hint, {"auto", -1}, {"no", 0}, {"yes", 1})},
         {"target-colorspace-hint-mode", OPT_CHOICE(target_hint_mode, {"target", 0}, {"source", 1}, {"source-dynamic", 2})},
+        {"target-colorspace-hint-strict", OPT_BOOL(target_hint_strict)},
         // No `target-lut-type` because we don't support non-RGB targets
         {"libplacebo-opts", OPT_KEYVALUELIST(raw_opts)},
         {0},
     },
     .defaults = &(struct gl_next_opts) {
         .border_background = BACKGROUND_COLOR,
+        .background_blur_radius = 16.0f,
         .inter_preserve = true,
         .sub_hdr_peak = PL_COLOR_SDR_WHITE,
         .image_subs_hdr_peak = PL_COLOR_SDR_WHITE,
         .target_hint = -1,
+        .target_hint_strict = true,
     },
     .size = sizeof(struct gl_next_opts),
     .change_flags = UPDATE_VIDEO,
@@ -299,10 +313,14 @@ static struct mp_image *get_image(struct vo *vo, int imgfmt, int w, int h,
 static void update_overlays(struct vo *vo, struct mp_osd_res res,
                             int flags, enum pl_overlay_coords coords,
                             struct osd_state *state, struct pl_frame *frame,
-                            struct mp_image *src)
+                            struct mp_image *src, int stereo_mode)
 {
     struct priv *p = vo->priv;
     double pts = src ? src->pts : 0;
+    int div[2];
+    mp_get_3d_side_by_side(stereo_mode, div);
+    res.w /= div[0];
+    res.h /= div[1];
     struct sub_bitmap_list *subs = osd_render(vo->osd, res, pts, flags, mp_draw_sub_formats);
 
     frame->overlays = state->overlays;
@@ -402,6 +420,29 @@ static void update_overlays(struct vo *vo, struct mp_osd_res res,
             ol->repr.alpha = PL_ALPHA_INDEPENDENT;
             break;
         }
+
+        // Duplicate overlay parts for each eye in stereo 3D modes
+        if (div[0] > 1 || div[1] > 1) {
+            int orig_num = entry->num_parts;
+            for (int x = 0; x < div[0]; x++) {
+                for (int y = 0; y < div[1]; y++) {
+                    if (x == 0 && y == 0)
+                        continue;
+                    float off_x = res.w * x;
+                    float off_y = res.h * y;
+                    for (int i = 0; i < orig_num; i++) {
+                        struct pl_overlay_part duped = entry->parts[i];
+                        duped.dst.x0 += off_x;
+                        duped.dst.x1 += off_x;
+                        duped.dst.y0 += off_y;
+                        duped.dst.y1 += off_y;
+                        MP_TARRAY_APPEND(p, entry->parts, entry->num_parts, duped);
+                    }
+                }
+            }
+            ol->parts = entry->parts;
+            ol->num_parts = entry->num_parts;
+        }
     }
 
     talloc_free(subs);
@@ -416,7 +457,7 @@ struct frame_priv {
 
 static int plane_data_from_imgfmt(struct pl_plane_data out_data[4],
                                   struct pl_bit_encoding *out_bits,
-                                  enum mp_imgfmt imgfmt)
+                                  enum mp_imgfmt imgfmt, bool use_uint)
 {
     struct mp_imgfmt_desc desc = mp_imgfmt_get_desc(imgfmt);
     if (!desc.num_planes || !(desc.flags & MP_IMGFLAG_HAS_COMPS))
@@ -498,7 +539,7 @@ static int plane_data_from_imgfmt(struct pl_plane_data out_data[4],
         data->pixel_stride = desc.bpp[p] / 8;
         data->type = (desc.flags & MP_IMGFLAG_TYPE_FLOAT)
                             ? PL_FMT_FLOAT
-                            : PL_FMT_UNORM;
+                            : (use_uint ? PL_FMT_UINT : PL_FMT_UNORM);
     }
 
     if (any_padded && !out_bits)
@@ -519,6 +560,8 @@ static bool hwdec_reconfig(struct priv *p, struct ra_hwdec *hwdec,
             return p->hwdec_mapper;
         } else {
             ra_hwdec_mapper_free(&p->hwdec_mapper);
+            timer_pool_destroy(p->hwdec_timer);
+            p->hwdec_timer = NULL;
         }
     }
 
@@ -527,6 +570,7 @@ static bool hwdec_reconfig(struct priv *p, struct ra_hwdec *hwdec,
         MP_ERR(p, "Initializing texture for hardware decoding failed.\n");
         return NULL;
     }
+    p->hwdec_timer = timer_pool_create(p->ra_ctx->ra);
 
     return p->hwdec_mapper;
 }
@@ -581,15 +625,26 @@ static bool hwdec_acquire(pl_gpu gpu, struct pl_frame *frame)
     if (!hwdec_reconfig(p, fp->hwdec, &mpi->params))
         return false;
 
+    stats_time_start(p->stats, "hwdec-map");
+    timer_pool_start(p->hwdec_timer);
     if (ra_hwdec_mapper_map(p->hwdec_mapper, mpi) < 0) {
         MP_ERR(p, "Mapping hardware decoded surface failed.\n");
+        timer_pool_stop(p->hwdec_timer);
+        stats_time_end(p->stats, "hwdec-map");
         return false;
     }
 
     for (int n = 0; n < frame->num_planes; n++) {
-        if (!(frame->planes[n].texture = hwdec_get_tex(p, n)))
+        if (!(frame->planes[n].texture = hwdec_get_tex(p, n))) {
+            timer_pool_stop(p->hwdec_timer);
+            stats_time_end(p->stats, "hwdec-map");
             return false;
+        }
     }
+
+    timer_pool_stop(p->hwdec_timer);
+    p->hwdec_perf = timer_pool_measure(p->hwdec_timer);
+    stats_time_end(p->stats, "hwdec-map");
 
     return true;
 }
@@ -605,6 +660,23 @@ static void hwdec_release(pl_gpu gpu, struct pl_frame *frame)
     }
 
     ra_hwdec_mapper_unmap(p->hwdec_mapper);
+}
+
+static bool format_supported(struct vo *vo, int format, bool use_uint)
+{
+    struct priv *p = vo->priv;
+    struct pl_bit_encoding bits;
+    struct pl_plane_data data[4] = {0};
+    int planes = plane_data_from_imgfmt(data, &bits, format, use_uint);
+    if (!planes)
+        return false;
+
+    for (int i = 0; i < planes; i++) {
+        if (!pl_plane_find_fmt(p->gpu, NULL, &data[i]))
+            return false;
+    }
+
+    return true;
 }
 
 static bool map_frame(pl_gpu gpu, pl_tex *tex, const struct pl_source_frame *src,
@@ -643,7 +715,19 @@ static bool map_frame(pl_gpu gpu, pl_tex *tex, const struct pl_source_frame *src
         .user_data = mpi,
     };
 
+    const struct gl_video_opts *opts = p->opts_cache->opts;
+    if (opts->hdr_reference_white && !pl_color_transfer_is_hdr(frame->color.transfer))
+        frame->color.hdr.max_luma = opts->hdr_reference_white;
+
+
+    if (opts->treat_srgb_as_power22 & 1 && frame->color.transfer == PL_COLOR_TRC_SRGB) {
+        // The sRGB EOTF is a pure gamma 2.2 function. See reference display in
+        // IEC 61966-2-1-1999. Linearize sRGB to display light.
+        frame->color.transfer = PL_COLOR_TRC_GAMMA22;
+    }
+
     if (fp->hwdec) {
+        p->sw_upload_perf.count = 0;
 
         struct mp_imgfmt_desc desc = mp_imgfmt_get_desc(par.imgfmt);
         frame->acquire = hwdec_acquire;
@@ -668,9 +752,22 @@ static bool map_frame(pl_gpu gpu, pl_tex *tex, const struct pl_source_frame *src
         }
 
     } else { // swdec
+        p->hwdec_perf.count = 0;
+
+        if (!p->sw_upload_timer)
+            p->sw_upload_timer = timer_pool_create(p->ra_ctx->ra);
 
         struct pl_plane_data data[4] = {0};
-        frame->num_planes = plane_data_from_imgfmt(data, &frame->repr.bits, mpi->imgfmt);
+        bool use_uint = false;
+
+        // At this point, we know that the format is supported, query_format()
+        // makes sure of that. Just check if we should use UINT as a fallback.
+        if (!format_supported(vo, mpi->imgfmt, false))
+            use_uint = true;
+
+        frame->num_planes = plane_data_from_imgfmt(data, &frame->repr.bits, mpi->imgfmt, use_uint);
+        stats_time_start(p->stats, "swdec-upload");
+        timer_pool_start(p->sw_upload_timer);
         for (int n = 0; n < frame->num_planes; n++) {
             struct pl_plane *plane = &frame->planes[n];
             data[n].width = mp_image_plane_w(mpi, n);
@@ -696,11 +793,16 @@ static bool map_frame(pl_gpu gpu, pl_tex *tex, const struct pl_source_frame *src
 
             if (!pl_upload_plane(gpu, plane, &tex[n], &data[n])) {
                 MP_ERR(vo, "Failed uploading frame!\n");
+                timer_pool_stop(p->sw_upload_timer);
+                stats_time_end(p->stats, "swdec-upload");
                 talloc_free(data[n].priv);
                 talloc_free(mpi);
                 return false;
             }
         }
+        timer_pool_stop(p->sw_upload_timer);
+        p->sw_upload_perf = timer_pool_measure(p->sw_upload_timer);
+        stats_time_end(p->stats, "swdec-upload");
 
     }
 
@@ -802,6 +904,7 @@ static void apply_target_contrast(struct priv *p, struct pl_color_space *color, 
     // Infinite contrast
     if (opts->target_contrast == -1) {
         color->hdr.min_luma = 1e-7;
+        mp_assert(color->hdr.min_luma > 0);
         return;
     }
 
@@ -827,7 +930,7 @@ static void apply_target_options(struct priv *p, struct pl_frame *target,
     // Colorspace overrides
     const struct gl_video_opts *opts = p->opts_cache->opts;
     // If swapchain returned a value use this, override is used in hint
-    if (p->output_levels && (!target->repr.levels || !hint))
+    if (p->output_levels)
         target->repr.levels = p->output_levels;
     if (opts->target_prim && (!target->color.primaries || !hint))
         target->color.primaries = opts->target_prim;
@@ -835,23 +938,18 @@ static void apply_target_options(struct priv *p, struct pl_frame *target,
         target->color.transfer = opts->target_trc;
     if (opts->target_peak && (!target->color.hdr.max_luma || !hint))
         target->color.hdr.max_luma = opts->target_peak;
+    if (opts->hdr_reference_white && (!target->color.hdr.max_luma || !hint) &&
+        !pl_color_transfer_is_hdr(target->color.transfer)) {
+        target->color.hdr.max_luma = opts->hdr_reference_white;
+    }
     if ((!target->color.hdr.min_luma || !hint))
         apply_target_contrast(p, &target->color, min_luma);
-    if (opts->target_gamut) {
-        // Ensure resulting gamut still fits inside container
-        const struct pl_raw_primaries *gamut, *container;
-        gamut = pl_raw_primaries_get(opts->target_gamut);
-        container = pl_raw_primaries_get(target->color.primaries);
-        target->color.hdr.prim = pl_primaries_clip(gamut, container);
-    }
+    if (opts->target_gamut)
+        mp_parse_raw_primaries(mp_null_log, opts->target_gamut, &target->color.hdr.prim);
     int dither_depth = opts->dither_depth;
     if (dither_depth == 0) {
         struct ra_swapchain *sw = p->ra_ctx->swapchain;
-        if (sw->fns->color_depth && sw->fns->color_depth(sw) != -1) {
-            dither_depth = sw->fns->color_depth(sw);
-        } else if (!pl_color_transfer_is_hdr(target->color.transfer)) {
-            dither_depth = 8;
-        }
+        dither_depth = sw->fns->color_depth ? sw->fns->color_depth(sw) : 0;
     }
     if (dither_depth > 0) {
         struct pl_bit_encoding *tbits = &target->repr.bits;
@@ -897,6 +995,29 @@ static void apply_crop(struct pl_frame *frame, struct mp_rect crop,
     }
 }
 
+static bool set_colorspace_hint(struct priv *p, struct pl_color_space *hint)
+{
+    struct ra_swapchain *sw = p->ra_ctx->swapchain;
+
+    struct mp_image_params params = {
+        .color = hint ? *hint : pl_color_space_srgb,
+        .repr = {
+            .sys = PL_COLOR_SYSTEM_RGB,
+            .levels = p->output_levels ? p->output_levels : PL_COLOR_LEVELS_FULL,
+            .alpha = p->ra_ctx->opts.want_alpha ? PL_ALPHA_INDEPENDENT : PL_ALPHA_NONE,
+        },
+    };
+
+    if (sw->fns->set_color && sw->fns->set_color(sw, hint ? &params : NULL)) {
+        if (hint) {
+            *hint = params.color;
+            return true;
+        }
+    }
+    pl_swapchain_colorspace_hint(p->sw, hint);
+    return false;
+}
+
 static void update_tm_viz(struct pl_color_map_params *params,
                           const struct pl_frame *target)
 {
@@ -916,36 +1037,6 @@ static void update_tm_viz(struct pl_color_map_params *params,
 
     // Visualize red-blue plane
     params->visualize_hue = M_PI / 4.0;
-}
-
-static enum pl_color_primaries get_best_prim_container(const struct pl_raw_primaries *gamut)
-{
-    enum pl_color_primaries container = PL_COLOR_PRIM_UNKNOWN;
-
-    if (!pl_primaries_valid(gamut))
-        return container;
-
-    const struct pl_raw_primaries *best = NULL;
-    for (enum pl_color_primaries prim = 1; prim < PL_COLOR_PRIM_COUNT; prim++) {
-        const struct pl_raw_primaries *raw = pl_raw_primaries_get(prim);
-        if (pl_raw_primaries_similar(raw, gamut)) {
-            container = prim;
-            best = raw;
-            break;
-        }
-
-        if (pl_primaries_superset(raw, gamut) &&
-            (!best || pl_primaries_superset(best, raw)))
-        {
-            container = prim;
-            best = raw;
-        }
-    }
-
-    if (!best)
-        container = PL_COLOR_PRIM_BT_2020;
-
-    return container;
 }
 
 static void update_hook_opts_dynamic(struct priv *p, const struct pl_hook *hook,
@@ -1035,41 +1126,47 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
 
     struct ra_swapchain *sw = p->ra_ctx->swapchain;
 
-    bool pass_colorspace = false;
     struct pl_color_space target_csp = {0};
     // TODO: Implement this for all backends
     if (sw->fns->target_csp)
         target_csp = sw->fns->target_csp(sw);
     if (target_csp.primaries == PL_COLOR_PRIM_UNKNOWN)
-        target_csp.primaries = get_best_prim_container(&target_csp.hdr.prim);
+        target_csp.primaries = mp_get_best_prim_container(&target_csp.hdr.prim);
     if (!pl_color_transfer_is_hdr(target_csp.transfer)) {
-        // Don't use reported display peak in SDR mode. Mostly because libplacebo
-        // forcefully switches to PQ if hinting hdr metadata, ignoring the transfer
-        // set in the hint. But also because setting target peak in SDR mode is
-        // very specific usecase, needs proper calibration, users can set it manually.
-        target_csp.hdr.max_luma = 0;
-        target_csp.hdr.min_luma = 0;
-        target_csp.hdr.max_cll = 0;
-        target_csp.hdr.max_fall = 0;
+        // limit min_luma to 1000:1 contrast ratio in SDR mode
+        if (target_csp.hdr.min_luma > PL_COLOR_SDR_WHITE / PL_COLOR_SDR_CONTRAST)
+            target_csp.hdr.min_luma = 0;
     }
+    // maxFALL in display metadata is in fact MaxFullFrameLuminance. Wayland
+    // reports it as maxFALL directly, but this doesn't mean the same thing.
+    target_csp.hdr.max_fall = 0;
 
-    struct pl_color_space hint;
+    struct pl_color_space hint = {0};
     bool target_hint = p->next_opts->target_hint == 1 ||
                        (p->next_opts->target_hint == -1 &&
                         target_csp.transfer != PL_COLOR_TRC_UNKNOWN);
     // Assume HDR is supported, if target_csp() is not available
-    if (target_csp.transfer == PL_COLOR_TRC_UNKNOWN) {
+    // TODO: Remove this fallback when all backends support target_csp()
+    bool target_unknown = target_csp.transfer == PL_COLOR_TRC_UNKNOWN;
+    if (target_unknown) {
         target_csp = (struct pl_color_space){
             .transfer = opts->target_trc ? opts->target_trc : pl_color_space_hdr10.transfer };
     }
+    bool external_params = false;
     if (target_hint && frame->current) {
         const struct pl_color_space *source = &frame->current->params.color;
         const struct pl_color_space *target = &target_csp;
         hint = *source;
+        // Apply target contrast to the hint, this is important for SDR, because
+        // libplacebo defaults to 1000:1 contrast ratio otherwise.
+        if (!hint.hdr.min_luma)
+            hint.hdr.min_luma = target->hdr.min_luma;
         if (p->next_opts->target_hint_mode == 0) {
             hint = *target;
             if (pl_color_transfer_is_hdr(hint.transfer) && !pl_primaries_valid(&hint.hdr.prim))
                 pl_color_space_merge(&hint, source);
+            if (target_unknown && !opts->target_trc && !pl_color_transfer_is_hdr(source->transfer))
+                hint = *source;
             // Restore target luminance if it was present, note that we check
             // max_luma only, this make sure that max_cll/max_fall is not take
             // from source.
@@ -1085,9 +1182,16 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
                 .color      = &hint,
                 .metadata   = PL_HDR_METADATA_ANY,
                 .scaling    = PL_HDR_NITS,
-                .out_min    = &hint.hdr.min_luma,
+                .out_min    = !hint.hdr.min_luma ? &hint.hdr.min_luma : NULL,
                 .out_max    = &hint.hdr.max_luma,
             ));
+            // Set maxCLL to dynamic max luminance. Note that libplacebo uses
+            // max luminace as maxCLL in practice.
+            hint.hdr.max_cll = hint.hdr.max_luma;
+            // Keep maxFALL from static metadata, unless its value is too high.
+            // Could be set to 0, but let's keep it for now.
+            if (hint.hdr.max_fall > hint.hdr.max_cll)
+                hint.hdr.max_fall = 0;
         }
         // Infer missing bits now. This is important so that we don't lose
         // information after user option overrides. For example, if the user
@@ -1103,19 +1207,52 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
             hint.hdr.max_cll  = target->hdr.max_cll;
             hint.hdr.max_fall = target->hdr.max_fall;
         }
-        if (p->ra_ctx->fns->pass_colorspace && p->ra_ctx->fns->pass_colorspace(p->ra_ctx))
-            pass_colorspace = true;
         if (opts->target_prim)
             hint.primaries = opts->target_prim;
+        if (opts->target_gamut)
+            mp_parse_raw_primaries(mp_null_log, opts->target_gamut, &hint.hdr.prim);
         if (opts->target_trc)
             hint.transfer = opts->target_trc;
         if (opts->target_peak)
             hint.hdr.max_luma = opts->target_peak;
+        if (opts->hdr_reference_white && !pl_color_transfer_is_hdr(hint.transfer))
+            hint.hdr.max_luma = opts->hdr_reference_white;
+        // Always set maxCLL, display uses this metadata and we shouldn't let it
+        // fallback to default value.
+        if (!hint.hdr.max_cll)
+            hint.hdr.max_cll = hint.hdr.max_luma;
+        // If tone mapping is required, adjust maxCLL and maxFALL
+        if (source->hdr.max_luma > hint.hdr.max_luma || opts->tone_map.inverse) {
+            // Set maxCLL to the target luminance if it's not already lower
+            if (!hint.hdr.max_cll || hint.hdr.max_luma < hint.hdr.max_cll || opts->tone_map.inverse)
+                hint.hdr.max_cll = hint.hdr.max_luma;
+            // There's no reliable way to estimate maxFALL here
+            hint.hdr.max_fall = 0;
+        }
+        if (hint.hdr.max_cll && hint.hdr.max_fall > hint.hdr.max_cll)
+            hint.hdr.max_fall = 0;
         apply_target_contrast(p, &hint, hint.hdr.min_luma);
-        if (!pass_colorspace)
-            pl_swapchain_colorspace_hint(p->sw, &hint);
+        if (p->icc_profile)
+            hint = p->icc_profile->csp;
+        if (opts->icc_opts->icc_use_luma) {
+            p->icc_params.max_luma = 0.0f;
+        } else {
+            pl_color_space_nominal_luma_ex(pl_nominal_luma_params(
+                .color    = &hint,
+                .metadata = PL_HDR_METADATA_HDR10, // use only static HDR nits
+                .scaling  = PL_HDR_NITS,
+                .out_max  = &p->icc_params.max_luma,
+            ));
+        }
+        pl_icc_update(p->pllog, &p->icc_profile, NULL, &p->icc_params);
+        // Update again after possible max_luma change
+        if (p->icc_profile)
+            hint = p->icc_profile->csp;
+        external_params = set_colorspace_hint(p, &hint);
     } else if (!target_hint) {
-        pl_swapchain_colorspace_hint(p->sw, NULL);
+        if (!hint.hdr.min_luma)
+            hint.hdr.min_luma = target_csp.hdr.min_luma;
+        external_params = set_colorspace_hint(p, NULL);
     }
 
     struct pl_swapchain_frame swframe;
@@ -1127,10 +1264,8 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
                 .pts = frame->current->pts + pts_offset,
                 .radius = pl_frame_mix_radius(&params),
                 .vsync_duration = can_interpolate ? frame->ideal_frame_vsync_duration : 0,
+                .drift_compensation = 0,
             );
-#if PL_API_VER >= 340
-            qparams.drift_compensation = 0;
-#endif
             pl_queue_update(p->queue, NULL, &qparams);
         }
         return VO_FALSE;
@@ -1142,10 +1277,64 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
     // Calculate target
     struct pl_frame target;
     pl_frame_from_swapchain(&target, &swframe);
-    apply_target_options(p, &target, hint.hdr.min_luma, target_hint && !pass_colorspace);
+    if (external_params)
+        target.color = hint;
+    bool strict_sw_params = target_hint && p->next_opts->target_hint_strict;
+    apply_target_options(p, &target, hint.hdr.min_luma, strict_sw_params);
+    bool clip_gamut = pl_primaries_valid(&target.color.hdr.prim);
+#if PL_API_VER >= 362
+    clip_gamut = clip_gamut && target.color.transfer != PL_COLOR_TRC_SCRGB;
+#endif
+    if (clip_gamut) {
+        // Ensure resulting gamut still fits inside container
+        target.color.hdr.prim = pl_primaries_clip(&target.color.hdr.prim,
+                                    pl_raw_primaries_get(target.color.primaries));
+    }
+    if (target.color.transfer == PL_COLOR_TRC_SRGB && frame->current &&
+        ((opts->sdr_adjust_gamma == 0 && opts->target_trc == PL_COLOR_TRC_UNKNOWN) ||
+         opts->sdr_adjust_gamma == -1))
+    {
+        switch (frame->current->params.color.transfer) {
+        case PL_COLOR_TRC_BT_1886:
+        case PL_COLOR_TRC_GAMMA22:
+        case PL_COLOR_TRC_SRGB:
+            target.color.transfer = frame->current->params.color.transfer;
+        }
+    }
+    if (target.color.transfer == PL_COLOR_TRC_SRGB) {
+        // sRGB reference display is pure 2.2 power function, see IEC 61966-2-1-1999.
+        if (opts->treat_srgb_as_power22 & 2)
+            target.color.transfer = PL_COLOR_TRC_GAMMA22;
+
+        // TODO: Vulkan on Wayland currently interprets VK_COLOR_SPACE_SRGB_NONLINEAR_KHR
+        // in ambiguous way, depending if compositor advertises sRGB support.
+        // There is currently no clear path forward to resolve this ambiguity.
+        // Depending how it's resolved in Wayland Protocol, Mesa, things will
+        // change.
+        // See: <https://gitlab.freedesktop.org/wayland/wayland-protocols/-/merge_requests/456>
+#ifdef _WIN32
+        // Windows uses the sRGB piecewise function. Send piecewise sRGB to
+        // Windows in HDR mode so that it can be converted to PQ, the same way
+        // as mpv does internally. Note that in SDR mode, even with ACM enabled,
+        // Windows assumes the display is sRGB. It doesn't perform gamma
+        // conversion, or any conversions would roundtrip back to sRGB.
+        // In which case the EOTF depends on the display.
+        // Ideally, compositors would agree on how to handle sRGB, but I’ll
+        // leave that part of the story for the reader to explore.
+        // Note: Older Windows versions, without ACM, were not able to convert
+        // sRGB to PQ output. We are not concerned about this case, as it would
+        // look wrong anyway.
+        bool target_pq = !target_unknown && target_csp.transfer == PL_COLOR_TRC_PQ;
+        if (opts->treat_srgb_as_power22 & 4 && target_pq)
+            target.color.transfer = PL_COLOR_TRC_SRGB;
+#endif
+    }
+    stats_time_start(p->stats, "osd-update");
     update_overlays(vo, p->osd_res,
                     (frame->current && opts->blend_subs) ? OSD_DRAW_OSD_ONLY : 0,
-                    PL_OVERLAY_COORDS_DST_FRAME, &p->osd_state, &target, frame->current);
+                    PL_OVERLAY_COORDS_DST_FRAME, &p->osd_state, &target, frame->current,
+                    frame->current ? frame->current->params.stereo3d : 0);
+    stats_time_end(p->stats, "osd-update");
     apply_crop(&target, p->dst, swframe.fbo->params.w, swframe.fbo->params.h);
     update_tm_viz(&pars->color_map_params, &target);
 
@@ -1157,10 +1346,8 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
             .radius = pl_frame_mix_radius(&params),
             .vsync_duration = can_interpolate ? frame->ideal_frame_vsync_duration : 0,
             .interpolation_threshold = opts->interpolation_threshold,
+            .drift_compensation = 0,
         );
-#if PL_API_VER >= 340
-        qparams.drift_compensation = 0;
-#endif
 
         // Depending on the vsync ratio, we may be up to half of the vsync
         // duration before the current frame time. This works fine because
@@ -1218,8 +1405,11 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
                     };
                     enum pl_overlay_coords rel = opts->blend_subs == BLEND_SUBS_VIDEO
                         ? PL_OVERLAY_COORDS_SRC_CROP : PL_OVERLAY_COORDS_DST_CROP;
+                    stats_time_start(p->stats, "osd-blend-update");
                     update_overlays(vo, res, OSD_DRAW_SUB_ONLY,
-                                    rel, &fp->subs, image, mpi);
+                                    rel, &fp->subs, image, mpi,
+                                    mpi->params.stereo3d);
+                    stats_time_end(p->stats, "osd-blend-update");
                     fp->osd_sync = p->osd_sync;
                 }
             } else {
@@ -1244,7 +1434,10 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
     }
 
     // Render frame
-    if (!pl_render_image_mix(p->rr, &mix, &target, &params)) {
+    stats_time_start(p->stats, "render");
+    bool render_ok = pl_render_image_mix(p->rr, &mix, &target, &params);
+    stats_time_end(p->stats, "render");
+    if (!render_ok) {
         MP_ERR(vo, "Failed rendering frame!\n");
         goto done;
     }
@@ -1258,7 +1451,7 @@ static bool draw_frame(struct vo *vo, struct vo_frame *frame)
                         ? swframe.fbo->params.format->name : NULL,
         .w = mp_rect_w(p->dst),
         .h = mp_rect_h(p->dst),
-        .color = pass_colorspace ? hint : target.color,
+        .color = target.color,
         .repr = target.repr,
         .rotate = target.rotation,
     };
@@ -1311,18 +1504,11 @@ static int query_format(struct vo *vo, int format)
     if (ra_hwdec_get(&p->hwdec_ctx, format))
         return true;
 
-    struct pl_bit_encoding bits;
-    struct pl_plane_data data[4] = {0};
-    int planes = plane_data_from_imgfmt(data, &bits, format);
-    if (!planes)
-        return false;
+    bool supported = format_supported(vo, format, false);
+    if (!supported)
+        supported = format_supported(vo, format, true);
 
-    for (int i = 0; i < planes; i++) {
-        if (!pl_plane_find_fmt(p->gpu, NULL, &data[i]))
-            return false;
-    }
-
-    return true;
+    return supported;
 }
 
 static void resize(struct vo *vo)
@@ -1427,10 +1613,8 @@ static void video_screenshot(struct vo *vo, struct voctrl_screenshot *args)
     enum pl_queue_status status;
     struct pl_queue_params qparams = *pl_queue_params(
         .pts = p->last_pts,
+        .drift_compensation = 0,
     );
-#if PL_API_VER >= 340
-        qparams.drift_compensation = 0;
-#endif
     status = pl_queue_update(p->queue, &mix, &qparams);
     mp_assert(status != PL_QUEUE_EOF);
     if (status == PL_QUEUE_ERR) {
@@ -1527,6 +1711,17 @@ static void video_screenshot(struct vo *vo, struct voctrl_screenshot *args)
         target.color = pl_color_space_srgb;
     }
 
+    // sRGB reference display is pure 2.2 power function, see IEC 61966-2-1-1999.
+    // Round-trip back to sRGB if the source is also sRGB. In other cases, we
+    // use piecewise sRGB transfer function, as this is likely the be expected
+    // for file encoding.
+    if (opts->treat_srgb_as_power22 & 1 &&
+        target.color.transfer == PL_COLOR_TRC_SRGB &&
+        mpi->params.color.transfer == PL_COLOR_TRC_SRGB)
+    {
+        target.color.transfer = PL_COLOR_TRC_GAMMA22;
+    }
+
     apply_crop(&image, src, mpi->params.w, mpi->params.h);
     apply_crop(&target, dst, fbo->params.w, fbo->params.h);
     update_tm_viz(&pars->color_map_params, &target);
@@ -1555,11 +1750,13 @@ static void video_screenshot(struct vo *vo, struct voctrl_screenshot *args)
         enum pl_overlay_coords rel = opts->blend_subs == BLEND_SUBS_VIDEO
             ? PL_OVERLAY_COORDS_SRC_CROP : PL_OVERLAY_COORDS_DST_CROP;
         update_overlays(vo, res, osd_flags,
-                        rel, &fp->subs, &image, mpi);
+                        rel, &fp->subs, &image, mpi,
+                        mpi->params.stereo3d);
     } else {
         // Disable overlays when blend_subs is disabled
         update_overlays(vo, osd, osd_flags, PL_OVERLAY_COORDS_DST_FRAME,
-                        &p->osd_state, &target, mpi);
+                        &p->osd_state, &target, mpi,
+                        mpi->params.stereo3d);
         image.num_overlays = 0;
     }
 
@@ -1594,27 +1791,48 @@ done:
 }
 
 static inline void copy_frame_info_to_mp(struct frame_info *pl,
-                                         struct mp_frame_perf *mp) {
+                                         struct mp_frame_perf *mp,
+                                         struct mp_pass_perf *hwdec_perf,
+                                         struct mp_pass_perf *sw_upload_perf)
+{
     static_assert(MP_ARRAY_SIZE(pl->info) == MP_ARRAY_SIZE(mp->perf), "");
     mp_assert(pl->count <= VO_PASS_PERF_MAX);
-    mp->count = MPMIN(pl->count, VO_PASS_PERF_MAX);
 
-    for (int i = 0; i < mp->count; ++i) {
+    struct mp_pass_perf *perf = mp->perf;
+    char (*desc)[VO_PASS_DESC_MAX_LEN] = mp->desc;
+    struct mp_pass_perf *perf_end = perf + VO_PASS_PERF_MAX;
+
+    if (hwdec_perf && hwdec_perf->count > 0) {
+        *perf++ = *hwdec_perf;
+        snprintf(*desc, sizeof(*desc), "map frame (hwdec)");
+        desc++;
+    }
+
+    if (sw_upload_perf && sw_upload_perf->count > 0) {
+        *perf++ = *sw_upload_perf;
+        snprintf(*desc, sizeof(*desc), "upload frame");
+        desc++;
+    }
+
+    for (int i = 0; i < pl->count && perf < perf_end; ++i) {
         const struct pl_dispatch_info *pass = &pl->info[i];
 
         static_assert(VO_PERF_SAMPLE_COUNT >= MP_ARRAY_SIZE(pass->samples), "");
         mp_assert(pass->num_samples <= MP_ARRAY_SIZE(pass->samples));
 
-        struct mp_pass_perf *perf = &mp->perf[i];
         perf->count = MPMIN(pass->num_samples, VO_PERF_SAMPLE_COUNT);
         memcpy(perf->samples, pass->samples, perf->count * sizeof(pass->samples[0]));
         perf->last = pass->last;
         perf->peak = pass->peak;
         perf->avg = pass->average;
 
-        strncpy(mp->desc[i], pass->shader->description, sizeof(mp->desc[i]) - 1);
-        mp->desc[i][sizeof(mp->desc[i]) - 1] = '\0';
+        strncpy(*desc, pass->shader->description, sizeof(*desc) - 1);
+        (*desc)[sizeof(*desc) - 1] = '\0';
+        perf++;
+        desc++;
     }
+
+    mp->count = perf - mp->perf;
 }
 
 static void update_ra_ctx_options(struct vo *vo, struct ra_ctx_opts *ctx_opts)
@@ -1673,8 +1891,8 @@ static int control(struct vo *vo, uint32_t request, void *data)
 
     case VOCTRL_PERFORMANCE_DATA: {
         struct voctrl_performance_data *perf = data;
-        copy_frame_info_to_mp(&p->perf_fresh, &perf->fresh);
-        copy_frame_info_to_mp(&p->perf_redraw, &perf->redraw);
+        copy_frame_info_to_mp(&p->perf_fresh, &perf->fresh, &p->hwdec_perf, &p->sw_upload_perf);
+        copy_frame_info_to_mp(&p->perf_redraw, &perf->redraw, NULL, NULL);
         return true;
     }
 
@@ -1924,8 +2142,11 @@ static void uninit(struct vo *vo)
     for (int i = 0; i < p->num_user_hooks; i++)
         pl_mpv_user_shader_destroy(&p->user_hooks[i].hook);
 
+    timer_pool_destroy(p->sw_upload_timer);
+
     if (vo->hwdec_devs) {
         ra_hwdec_mapper_free(&p->hwdec_mapper);
+        timer_pool_destroy(p->hwdec_timer);
         ra_hwdec_ctx_uninit(&p->hwdec_ctx);
         hwdec_devices_set_loader(vo->hwdec_devs, NULL, NULL);
         hwdec_devices_destroy(vo->hwdec_devs);
@@ -1972,6 +2193,7 @@ static int preinit(struct vo *vo)
     p->video_eq = mp_csp_equalizer_create(p, vo->global);
     p->global = vo->global;
     p->log = vo->log;
+    p->stats = stats_ctx_create(p, vo->global, "vo/gpu-next");
 
     struct gl_video_opts *gl_opts = p->opts_cache->opts;
     struct ra_ctx_opts *ctx_opts = mp_get_config_group(vo, vo->global, &ra_ctx_conf);
@@ -2039,8 +2261,13 @@ static const struct pl_filter_config *map_scaler(struct priv *p,
 
     const struct gl_video_opts *opts = p->opts_cache->opts;
     const struct scaler_config *cfg = &opts->scaler[unit];
-    if (cfg->kernel.function == SCALER_INHERIT)
-        cfg = &opts->scaler[SCALER_SCALE];
+    struct scaler_config tmp;
+    if (cfg->kernel.function == SCALER_INHERIT) {
+        tmp = *cfg;
+        scaler_conf_merge(&tmp, &opts->scaler[SCALER_SCALE], unit);
+        cfg = &tmp;
+    }
+
     const char *kernel_name = m_opt_choice_str(cfg->kernel.functions,
                                                cfg->kernel.function);
 
@@ -2168,7 +2395,7 @@ static void update_icc_opts(struct priv *p, const struct mp_icc_opts *opts)
 
 static void update_lut(struct priv *p, struct user_lut *lut)
 {
-    if (!lut->opt) {
+    if (!lut->opt || !lut->opt[0]) {
         pl_lut_free(&lut->lut);
         TA_FREEP(&lut->path);
         return;
@@ -2239,6 +2466,11 @@ static void update_hook_opts_dynamic(struct priv *p, const struct pl_hook *hook,
 static void update_hook_opts(struct priv *p, char **opts, const char *shaderpath,
                              const struct pl_hook *hook)
 {
+    for (int i = 0; i < hook->num_parameters; i++) {
+        const struct pl_hook_par *hp = &hook->parameters[i];
+        memcpy(hp->data, &hp->initial, sizeof(*hp->data));
+    }
+
     if (!opts)
         return;
 
@@ -2246,11 +2478,6 @@ static void update_hook_opts(struct priv *p, char **opts, const char *shaderpath
     struct bstr shadername;
     if (!mp_splitext(basename, &shadername))
         shadername = bstr0(basename);
-
-    for (int i = 0; i < hook->num_parameters; i++) {
-        const struct pl_hook_par *hp = &hook->parameters[i];
-        memcpy(hp->data, &hp->initial, sizeof(*hp->data));
-    }
 
     for (int n = 0; opts[n * 2]; n++) {
         struct bstr k = bstr0(opts[n * 2 + 0]);
@@ -2322,17 +2549,15 @@ static void update_render_options(struct vo *vo)
     pars->params.disable_linear_scaling = !opts->linear_downscaling && !opts->linear_upscaling;
     pars->params.disable_fbos = opts->dumb_mode == 1;
 
-#if PL_API_VER >= 346
-    int map_background_types[3] = {
-        PL_CLEAR_SKIP,  // BACKGROUND_NONE
-        PL_CLEAR_COLOR, // BACKGROUND_COLOR
-        PL_CLEAR_TILES, // BACKGROUND_TILES
+    static const int map_background_types[] = {
+        [BACKGROUND_NONE]  = PL_CLEAR_SKIP,
+        [BACKGROUND_COLOR] = PL_CLEAR_COLOR,
+        [BACKGROUND_TILES] = PL_CLEAR_TILES,
+        [BACKGROUND_BLUR]  = PL_CLEAR_BLUR,
     };
     pars->params.background = map_background_types[opts->background];
     pars->params.border = map_background_types[p->next_opts->border_background];
-#else
-    pars->params.blend_against_tiles = opts->background == BACKGROUND_TILES;
-#endif
+    pars->params.blur_radius = p->next_opts->background_blur_radius;
     pars->params.tile_size = opts->background_tile_size * 2;
     for (int i = 0; i < 2; ++i) {
         pars->params.tile_colors[i][0] = opts->background_tile_color[i].r / 255.0f;

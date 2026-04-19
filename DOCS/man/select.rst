@@ -7,6 +7,8 @@ providing script bindings that gather and format the data to be selected in the
 console and do operations on the selected item. It can be disabled using the
 ``--load-select=no`` option.
 
+This script is also used to populate the context menu.
+
 Key bindings
 ------------
 
@@ -28,6 +30,12 @@ PGUP and Ctrl+b
 PGDN and Ctrl+f
     Scroll down one page.
 
+Shift+LEFT
+    Scroll left.
+
+Shift+RIGHT
+    Scroll right.
+
 Ctrl+y
     Copy the focused item to the clipboard.
 
@@ -40,6 +48,12 @@ WHEEL_UP
 
 WHEEL_DOWN
     Scroll down.
+
+WHEEL_LEFT and Shift+WHEEL_DOWN
+    Scroll left.
+
+WHEEL_RIGHT and Shift+WHEEL_UP
+    Scroll right.
 
 Typing printable characters does a fuzzy search of the presented items.
 
@@ -127,8 +141,25 @@ Available script bindings are:
     print its value on the OSD, which is useful for long values that get
     clipped.
 
+``edit-config-file``
+    Open ``mpv.conf`` in the system text editor, creating it if it doesn't
+    already exist.
+
+``edit-input-conf``
+    Open ``input.conf`` in the system text editor, creating it if it doesn't
+    already exist.
+
+``open-docs``
+    Open mpv's online documentation in the browser.
+
+``open-chat``
+    Open mpv's chat in the browser.
+
 ``menu``
     Show a menu with miscellaneous entries.
+
+``context-menu``
+    Show the context menu.
 
 Configuration
 -------------
@@ -150,3 +181,20 @@ Configurable options
     Default: yes
 
     Whether to show only the last of history entries with the same path.
+
+``menu_conf_path``
+    Default: ~~/menu.conf (see `FILES`_).
+
+    The path from which to read the custom context menu definition (see `CONTEXT
+    MENU`_).
+
+``max_playlist_items``
+    Default: 25
+
+    The maximum number of playlist entries in the context menu.
+
+``populate_menu_data``
+    Default: yes, except for libmpv
+
+    Whether observe the properties referenced in ``menu.conf`` and update
+    ``menu-data`` with suitable menu items after mpv's window is created.

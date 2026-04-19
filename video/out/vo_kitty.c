@@ -135,7 +135,7 @@ static inline void append_passthrough(struct priv *p, bstr *bs, bstr append)
     bstr_xappend(p, bs, p->dcs_suffix);
 }
 
-PRINTF_ATTRIBUTE(3, 4)
+MP_PRINTF_ATTRIBUTE(3, 4)
 static inline void append_asprintf_passthrough(struct priv *p, bstr *bs,
                                                      const char *fmt, ...)
 {
@@ -472,6 +472,7 @@ static void uninit(struct vo *vo)
 #endif
 
     write_bstr_passthrough(p, KITTY_ESC_DELETE_ALL);
+    write_bstr_passthrough(p, KITTY_ESC_END);
 
     write_str(TERM_ESC_RESTORE_CURSOR);
     terminal_set_mouse_input(false);

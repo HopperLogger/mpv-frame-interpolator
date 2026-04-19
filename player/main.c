@@ -77,6 +77,10 @@ static const char def_config[] =
 #include "osdep/win32/smtc.h"
 #endif
 
+#if HAVE_WIN32_DESKTOP
+#include "osdep/w32_register.h"
+#endif
+
 #if HAVE_COCOA
 #include "osdep/mac/app_bridge.h"
 #endif
@@ -304,6 +308,7 @@ struct MPContext *mp_create(void)
     m_config_parse(mpctx->mconfig, "", bstr0(def_config), NULL, 0);
 
     mpctx->input = mp_input_init(mpctx->global, mp_wakeup_core_cb, mpctx);
+    clipboard_init(mpctx);
     screenshot_init(mpctx);
     command_init(mpctx);
     init_libav(mpctx->global);
@@ -386,6 +391,11 @@ int mp_initialize(struct MPContext *mpctx, char **options)
 
     if (handle_help_options(mpctx))
         return 1; // help
+
+#if HAVE_WIN32_DESKTOP
+    if (mp_w32_handle_register(mpctx))
+        return 1; // register/unregister
+#endif
 
     check_library_versions(mp_null_log, 0);
 

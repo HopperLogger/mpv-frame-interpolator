@@ -205,9 +205,6 @@ static const struct format_hack format_hacks[] = {
 
     // Useless non-sense, sometimes breaks MLP2 subreader.c fallback
     BLACKLIST("tty"),
-    // Let's open files with extremely generic extensions (.bin) with a
-    // demuxer that doesn't have a probe function! NO.
-    BLACKLIST("bin"),
     // Useless, does not work with custom streams.
     BLACKLIST("image2"),
     {0}
@@ -746,6 +743,7 @@ static void handle_new_stream(demuxer_t *demuxer, int i)
 
         sh->codec->disp_w = codec->width;
         sh->codec->disp_h = codec->height;
+        sh->codec->bitrate = codec->bit_rate;
         sh->codec->format_name = talloc_strdup(sh, av_get_pix_fmt_name(codec->format));
         if (st->avg_frame_rate.num)
             sh->codec->fps = av_q2d(st->avg_frame_rate);
@@ -822,13 +820,14 @@ static void handle_new_stream(demuxer_t *demuxer, int i)
 
     if (sh) {
         sh->ff_index = st->index;
-        sh->codec->codec = mp_codec_from_av_codec_id(codec->codec_id);
+        mp_codec_info_from_avcodecpar(codec, sh->codec);
         sh->codec->codec_tag = codec->codec_tag;
         sh->codec->lav_codecpar = avcodec_parameters_alloc();
         if (sh->codec->lav_codecpar)
             avcodec_parameters_copy(sh->codec->lav_codecpar, codec);
         sh->codec->native_tb_num = st->time_base.num;
         sh->codec->native_tb_den = st->time_base.den;
+        sh->codec->duration = st->duration * av_q2d(st->time_base);
 
         if (st->disposition & AV_DISPOSITION_DEFAULT)
             sh->default_track = true;
@@ -840,6 +839,10 @@ static void handle_new_stream(demuxer_t *demuxer, int i)
             sh->visual_impaired_track = true;
         if (st->disposition & AV_DISPOSITION_HEARING_IMPAIRED)
             sh->hearing_impaired_track = true;
+        if (st->disposition & AV_DISPOSITION_ORIGINAL)
+            sh->original_track = true;
+        if (st->disposition & AV_DISPOSITION_COMMENT)
+            sh->commentary_track = true;
         if (st->disposition & AV_DISPOSITION_STILL_IMAGE)
             sh->still_image = true;
         if (priv->format_hack.use_stream_ids)
@@ -851,6 +854,10 @@ static void handle_new_stream(demuxer_t *demuxer, int i)
             sh->title = talloc_asprintf(sh, "visual impaired");
         if (!sh->title && st->disposition & AV_DISPOSITION_HEARING_IMPAIRED)
             sh->title = talloc_asprintf(sh, "hearing impaired");
+        if (!sh->title && st->disposition & AV_DISPOSITION_ORIGINAL)
+            sh->title = talloc_asprintf(sh, "original");
+        if (!sh->title && st->disposition & AV_DISPOSITION_COMMENT)
+            sh->title = talloc_asprintf(sh, "commentary");
         AVDictionaryEntry *lang = av_dict_get(st->metadata, "language", NULL, 0);
         if (lang && lang->value && strcmp(lang->value, "und") != 0)
             sh->lang = talloc_strdup(sh, lang->value);
@@ -1271,6 +1278,11 @@ static bool demux_lavf_read_packet(struct demuxer *demux,
     dp->pos = pkt->pos;
     dp->keyframe = pkt->flags & AV_PKT_FLAG_KEY;
     dp->is_wrapped_avframe = st->codecpar->codec_id == AV_CODEC_ID_WRAPPED_AVFRAME;
+    if (dp->is_wrapped_avframe) {
+        mp_require(dp->buffer);
+        const AVFrame *frame = (AVFrame *)dp->buffer;
+        dp->keyframe |= frame->flags & AV_FRAME_FLAG_KEY;
+    }
     av_packet_free(&pkt);
 
     if (priv->format_hack.clear_filepos)

@@ -28,9 +28,23 @@ struct priv {
     bool use_fifo;
 };
 
+static int wayland_vk_color_depth(struct ra_ctx *ctx)
+{
+    struct vo_wayland_state *wl = ctx->vo->wl;
+    // If compositor supports color management, assume it is capable of
+    // dithering on its own. Otherwise fallback to 8-bit color depth.
+    return wl->color_manager ? 0 : 8;
+}
+
 static bool wayland_vk_check_visible(struct ra_ctx *ctx)
 {
     return vo_wayland_check_visible(ctx->vo);
+}
+
+static bool wayland_vk_set_color(struct ra_ctx *ctx, struct mp_image_params *params)
+{
+    vo_wayland_handle_color(ctx->vo->wl, params);
+    return true;
 }
 
 static pl_color_space_t wayland_vk_preferred_csp(struct ra_ctx *ctx)
@@ -42,8 +56,6 @@ static void wayland_vk_swap_buffers(struct ra_ctx *ctx)
 {
     struct vo_wayland_state *wl = ctx->vo->wl;
     struct priv *p = ctx->priv;
-
-    vo_wayland_handle_color(wl);
 
     if ((!p->use_fifo && wl->opts->wl_internal_vsync == 1) || wl->opts->wl_internal_vsync == 2)
         vo_wayland_wait_frame(wl);
@@ -87,8 +99,10 @@ static bool wayland_vk_init(struct ra_ctx *ctx)
     };
 
     struct ra_ctx_params params = {
+        .color_depth = wayland_vk_color_depth,
         .check_visible = wayland_vk_check_visible,
         .preferred_csp = wayland_vk_preferred_csp,
+        .set_color    = wayland_vk_set_color,
         .swap_buffers = wayland_vk_swap_buffers,
         .get_vsync = wayland_vk_get_vsync,
     };

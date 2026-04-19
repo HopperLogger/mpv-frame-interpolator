@@ -62,6 +62,10 @@ DECLARE_DLL_FUNCTION(D3D11CreateDevice, L"d3d11.dll", PFN_D3D11_CREATE_DEVICE)
 DECLARE_DLL_FUNCTION(CreateDXGIFactory1, L"dxgi.dll", PFN_CREATE_DXGI_FACTORY)
 DECLARE_DLL_FUNCTION(DXGIGetDebugInterface, L"dxgidebug.dll", PFN_DXGI_GET_DEBUG_INTERFACE)
 
+#if PL_API_VER < 362
+#define PL_COLOR_TRC_SCRGB PL_COLOR_TRC_LINEAR
+#endif
+
 #define D3D11_DXGI_ENUM(prefix, define) { case prefix ## define: return #define; }
 
 static const char *d3d11_get_format_name(DXGI_FORMAT fmt)
@@ -192,7 +196,7 @@ static const char *d3d11_get_format_name(DXGI_FORMAT fmt)
     }
 }
 
-static const char *d3d11_get_csp_name(DXGI_COLOR_SPACE_TYPE csp)
+const char *d3d11_get_csp_name(DXGI_COLOR_SPACE_TYPE csp)
 {
     switch (csp) {
     D3D11_DXGI_ENUM(DXGI_COLOR_SPACE_, RGB_FULL_G22_NONE_P709);
@@ -1088,7 +1092,7 @@ struct pl_color_space mp_dxgi_desc_to_color_space(const DXGI_OUTPUT_DESC1 *desc)
             break;
         case DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709:
             ret.primaries = PL_COLOR_PRIM_BT_709;
-            ret.transfer = PL_COLOR_TRC_LINEAR;
+            ret.transfer = PL_COLOR_TRC_SCRGB;
             break;
         case DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020:
             ret.primaries = PL_COLOR_PRIM_BT_2020;
@@ -1102,6 +1106,15 @@ struct pl_color_space mp_dxgi_desc_to_color_space(const DXGI_OUTPUT_DESC1 *desc)
             ret.primaries = PL_COLOR_PRIM_UNKNOWN;
             ret.transfer = PL_COLOR_TRC_UNKNOWN;
             break;
+    }
+
+    if (!pl_color_transfer_is_hdr(ret.transfer)) {
+        // Don't use reported display peak in SDR mode, setting target peak in
+        // SDR mode is very specific usecase, needs proper calibration, users
+        // can set it manually.
+        ret.hdr.max_luma = 0;
+        ret.hdr.max_cll = 0;
+        ret.hdr.max_fall = 0;
     }
 
     return ret;
@@ -1138,5 +1151,92 @@ void mp_d3d11_get_debug_interfaces(struct mp_log *log, IDXGIDebug **debug,
     if (FAILED(hr)) {
         mp_fatal(log, "Failed to get debug device: %s\n", mp_HRESULT_to_str(hr));
         return;
+    }
+}
+
+DXGI_COLOR_SPACE_TYPE mp_params_to_dxgi_colorspace(struct mp_log *log,
+                                                   const struct mp_image_params *params)
+{
+    bool is_rgb  = params->repr.sys == PL_COLOR_SYSTEM_RGB;
+    bool full    = params->repr.levels == PL_COLOR_LEVELS_FULL;
+    bool topleft = params->chroma_location == PL_CHROMA_TOP_LEFT;
+    bool p601    = params->color.primaries == PL_COLOR_PRIM_BT_601_525 ||
+                   params->color.primaries == PL_COLOR_PRIM_BT_601_625;
+    bool p2020   = params->color.primaries == PL_COLOR_PRIM_BT_2020;
+
+    if (is_rgb) {
+        switch (params->color.transfer) {
+        case PL_COLOR_TRC_SCRGB:
+            return DXGI_COLOR_SPACE_RGB_FULL_G10_NONE_P709;
+        case PL_COLOR_TRC_PQ:
+            if (!p2020) {
+                mp_warn(log, "PQ transfer with non-BT.2020 primaries is not "
+                            "supported by DXGI, using P2020 entry.\n");
+            }
+            return full ? DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020
+                        : DXGI_COLOR_SPACE_RGB_STUDIO_G2084_NONE_P2020;
+        case PL_COLOR_TRC_GAMMA24:
+            return p2020 ? DXGI_COLOR_SPACE_RGB_STUDIO_G24_NONE_P2020
+                         : DXGI_COLOR_SPACE_RGB_STUDIO_G24_NONE_P709;
+        case PL_COLOR_TRC_HLG:
+            mp_warn(log, "HLG RGB is not supported by DXGI, "
+                        "falling back to G22.\n");
+            MP_FALLTHROUGH;
+        default:
+            if (p2020) {
+                return full ? DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P2020
+                            : DXGI_COLOR_SPACE_RGB_STUDIO_G22_NONE_P2020;
+            }
+            return full ? DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P709
+                        : DXGI_COLOR_SPACE_RGB_STUDIO_G22_NONE_P709;
+        }
+    }
+
+    switch (params->color.transfer) {
+    case PL_COLOR_TRC_PQ:
+        if (!p2020) {
+            mp_warn(log, "PQ transfer with non-BT.2020 primaries is not "
+                         "supported by DXGI, using P2020 entry.\n");
+        }
+        if (full) {
+            mp_warn(log, "Full-range PQ YCbCr is not supported by DXGI, "
+                         "using studio entry.\n");
+        }
+        return topleft ? DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_TOPLEFT_P2020
+                       : DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_LEFT_P2020;
+    case PL_COLOR_TRC_HLG:
+        if (!p2020) {
+            mp_warn(log, "HLG transfer with non-BT.2020 primaries is not "
+                         "supported by DXGI, using P2020 entry.\n");
+        }
+        return full ? DXGI_COLOR_SPACE_YCBCR_FULL_GHLG_TOPLEFT_P2020
+                    : DXGI_COLOR_SPACE_YCBCR_STUDIO_GHLG_TOPLEFT_P2020;
+    case PL_COLOR_TRC_GAMMA24:
+        if (full) {
+            mp_warn(log, "Full-range G24 YCbCr is not supported by DXGI, "
+                         "using studio entry.\n");
+        }
+        if (p2020) {
+            return topleft ? DXGI_COLOR_SPACE_YCBCR_STUDIO_G24_TOPLEFT_P2020
+                           : DXGI_COLOR_SPACE_YCBCR_STUDIO_G24_LEFT_P2020;
+        }
+        return DXGI_COLOR_SPACE_YCBCR_STUDIO_G24_LEFT_P709;
+    default:
+        if (p601) {
+            return full ? DXGI_COLOR_SPACE_YCBCR_FULL_G22_LEFT_P601
+                        : DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P601;
+        }
+        if (p2020) {
+            if (topleft) {
+                if (full)
+                    mp_warn(log, "Full-range top-left chroma BT.2020 G22 is not "
+                                 "supported by DXGI, using studio entry.\n");
+                return DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_TOPLEFT_P2020;
+            }
+            return full ? DXGI_COLOR_SPACE_YCBCR_FULL_G22_LEFT_P2020
+                        : DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P2020;
+        }
+        return full ? DXGI_COLOR_SPACE_YCBCR_FULL_G22_LEFT_P709
+                    : DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P709;
     }
 }

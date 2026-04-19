@@ -955,9 +955,11 @@ static void schedule_frame(struct MPContext *mpctx, struct vo_frame *frame)
     }
 
     if (!mpctx->display_sync_active) {
-        mpctx->speed_factor_a = 1.0;
-        mpctx->speed_factor_v = 1.0;
-        update_playback_speed(mpctx);
+        if (mpctx->num_past_frames > 1 && mpctx->past_frames[1].num_vsyncs >= 0) {
+            mpctx->speed_factor_a = 1.0;
+            mpctx->speed_factor_v = 1.0;
+            update_playback_speed(mpctx);
+        }
 
         update_av_diff(mpctx, mpctx->time_frame > 0 ?
             mpctx->time_frame * mpctx->video_speed : 0);
@@ -1106,7 +1108,7 @@ void write_video(struct MPContext *mpctx)
             get_relative_time(mpctx);
             if (vo_c->is_sparse && !mpctx->ao_chain) {
                 MP_VERBOSE(mpctx, "assuming this is an image\n");
-                mpctx->time_frame += opts->image_display_duration;
+                mpctx->time_frame += opts->image_display_duration / opts->playback_speed;
             } else if (mpctx->last_frame_duration > 0) {
                 MP_VERBOSE(mpctx, "using demuxer frame duration for last frame\n");
                 mpctx->time_frame += mpctx->last_frame_duration;

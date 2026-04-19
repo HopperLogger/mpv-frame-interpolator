@@ -86,6 +86,8 @@ typedef struct mp_vo_opts {
 
     struct m_geometry android_surface_size;
 
+    struct m_geometry d3d11_composition_size;
+
     int swapchain_depth;  // max number of images to render ahead
 
     struct m_geometry video_crop;
@@ -100,6 +102,8 @@ struct mp_subtitle_opts {
     bool stretch_image_subs;
     bool image_subs_video_res;
     bool sub_fix_timing;
+    int sub_fix_timing_threshold;
+    int sub_fix_timing_keep;
     bool sub_stretch_durations;
     bool sub_scale_by_window;
     bool sub_scale_with_window;
@@ -154,6 +158,11 @@ struct mp_osd_render_opts {
     int osd_shaper;
 };
 
+struct mp_bluray_opts {
+    char *bluray_device;
+    int angle;
+};
+
 typedef struct MPOpts {
     bool property_print_help;
     bool use_terminal;
@@ -176,13 +185,13 @@ typedef struct MPOpts {
     bool lua_load_ytdl;
     char *lua_ytdl_format;
     char **lua_ytdl_raw_options;
-    bool lua_ytdl_extract_chapters;
     bool lua_load_stats;
     bool lua_load_console;
     int lua_load_auto_profiles;
     bool lua_load_select;
     bool lua_load_positioning;
     bool lua_load_commands;
+    bool lua_load_context_menu;
 
     bool auto_load_scripts;
 
@@ -350,21 +359,23 @@ typedef struct MPOpts {
     char **playlist_exts;
     bool osd_bar_visible;
 
+    struct w32_register_opts *w32_register_opts;
     int w32_priority;
     bool media_controls;
 
-    struct bluray_opts *stream_bluray_opts;
+    struct mp_bluray_opts *stream_bluray_opts;
     struct cdda_opts *stream_cdda_opts;
     struct dvb_opts *stream_dvb_opts;
     struct lavf_opts *stream_lavf_opts;
-
-    char *bluray_device;
 
     struct demux_rawaudio_opts *demux_rawaudio;
     struct demux_rawvideo_opts *demux_rawvideo;
     struct demux_playlist_opts *demux_playlist;
     struct demux_lavf_opts *demux_lavf;
     struct demux_mkv_opts *demux_mkv;
+#if HAVE_SUBRANDR
+    struct demux_sbr_opts *demux_sbr;
+#endif
 
     struct demux_opts *demux_opts;
     struct demux_cache_opts *demux_cache_opts;

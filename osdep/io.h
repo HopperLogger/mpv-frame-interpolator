@@ -75,6 +75,7 @@ static inline int mp_fseeko(FILE* fp, off64_t offset, int whence) {
 #endif
 
 bool mp_set_cloexec(int fd);
+int mp_dup_cloexec(int fd);
 int mp_make_cloexec_pipe(int pipes[2]);
 int mp_make_wakeup_pipe(int pipes[2]);
 void mp_flush_wakeup_pipe(int pipe_end);
@@ -111,8 +112,8 @@ char *mp_to_utf8(void *talloc_ctx, const wchar_t *s);
 
 size_t mp_fwrite(const void *restrict buffer, size_t size, size_t count,
                  FILE *restrict stream);
-int mp_printf(const char *format, ...) PRINTF_ATTRIBUTE(1, 2);
-int mp_fprintf(FILE *stream, const char *format, ...) PRINTF_ATTRIBUTE(2, 3);
+int mp_printf(const char *format, ...) MP_PRINTF_ATTRIBUTE(1, 2);
+int mp_fprintf(FILE *stream, const char *format, ...) MP_PRINTF_ATTRIBUTE(2, 3);
 int mp_open(const char *filename, int oflag, ...);
 int mp_creat(const char *filename, int mode);
 int mp_rename(const char *oldpath, const char *newpath);
