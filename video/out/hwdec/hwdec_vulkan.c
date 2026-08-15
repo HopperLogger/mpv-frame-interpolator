@@ -124,6 +124,12 @@ static int vulkan_init(struct ra_hwdec *hw)
     device_hwctx->enabled_dev_extensions = vk->vulkan->extensions;
     device_hwctx->nb_enabled_dev_extensions = vk->vulkan->num_extensions;
 
+#if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(60, 32, 100) && PL_API_VER >= 365
+    // libplacebo uses the same flags for all queues, so grab them from the
+    // queue we know we'll have
+    device_hwctx->queue_flags = vk->vulkan->queue_graphics.flags;
+#endif
+
 #if LIBAVUTIL_VERSION_INT >= AV_VERSION_INT(59, 34, 100)
     device_hwctx->nb_qf = 0;
     device_hwctx->qf[device_hwctx->nb_qf++] = (AVVulkanDeviceQueueFamily) {
@@ -296,6 +302,7 @@ static int mapper_map(struct ra_hwdec_mapper *mapper)
     for (num_images = 0; (vkf->img[num_images] != VK_NULL_HANDLE); num_images++);
     const VkFormat *vk_fmt = av_vkfmt_from_pixfmt(hwfc->sw_format);
 
+    p->vkf = vkf;
     vkfc->lock_frame(hwfc, vkf);
 
     for (int i = 0; i < p->layout.num_planes; i++) {
@@ -354,11 +361,10 @@ static int mapper_map(struct ra_hwdec_mapper *mapper)
         mapper->tex[i] = ratex;
     }
 
-    p->vkf = vkf;
     return 0;
 
  error:
-    vkfc->unlock_frame(hwfc, vkf);
+    // unmap will unlock the frame and clear p->vkf
     mapper_unmap(mapper);
     return -1;
 }

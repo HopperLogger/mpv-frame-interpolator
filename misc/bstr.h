@@ -81,15 +81,41 @@ double bstrtod(struct bstr str, struct bstr *rest);
 void bstr_lower(struct bstr str);
 int bstr_sscanf(struct bstr str, const char *format, ...) MP_SCANF_ATTRIBUTE(2, 3);
 
+int bstr_find_in_list0(bstr str, char **list, bool case_sensitive);
+bool bstr_in_list0(struct bstr str, char **list);
+
 // Decode a string containing hexadecimal data. All whitespace will be silently
 // ignored. When successful, this allocates a new array to store the output.
 bool bstr_decode_hex(void *talloc_ctx, struct bstr hex, struct bstr *out);
+
+#define BSTR_DECODE_OUT_OF_RANGE -1
+#define BSTR_DECODE_TRUNCATED_SEQUENCE -2
+#define BSTR_DECODE_OVERLONG_ENCODING -3
+
+// Decode the UTF-8 code point at the start of the string, and return the
+// character.
+//
+// Unlike `bstr_decode_utf8`, this function will modify `str` directly
+// and will advance it even if the sequence at the start of the string
+// is ill-formed.
+//
+// On error, returns an error code depending on what type of ill-formed
+// sequence was encountered.
+// - `BSTR_DECODE_OUT_OF_RANGE` is returned if the first byte starts a
+//   five or six byte sequence or if the consumed sequence resulted in
+//   a value that is not a valid code point.
+// - `BSTR_DECODE_TRUNCATED_SEQUENCE` if an initially valid sequence
+//   was interrupted by an invalid continuation or the end of the string.
+//   Note that the consumed prefix may additionally be overlong.
+// - `BSTR_DECODE_OVERLONG_ENCODING` if a non-shortest-form sequence
+//   was fully decoded and rejected.
+int bstr_decode_partial_utf8(struct bstr *str);
 
 // Decode the UTF-8 code point at the start of the string, and return the
 // character.
 // After calling this function, *out_next will point to the next character.
 // out_next can be NULL.
-// On error, -1 is returned, and *out_next is not modified.
+// On error, a negative value is returned, and *out_next is not modified.
 int bstr_decode_utf8(struct bstr str, struct bstr *out_next);
 
 // Return the UTF-8 code point at the start of the string.
@@ -196,8 +222,6 @@ bool bstr_eatend(struct bstr *s, struct bstr prefix);
 
 bool bstr_case_startswith(struct bstr s, struct bstr prefix);
 bool bstr_case_endswith(struct bstr s, struct bstr suffix);
-struct bstr bstr_strip_ext(struct bstr str);
-struct bstr bstr_get_ext(struct bstr s);
 
 static inline struct bstr bstr_cut(struct bstr str, int n)
 {

@@ -17,6 +17,7 @@
 
 #include <windows.h>
 #include <sddl.h>
+#include <stdint.h>
 
 #include "osdep/io.h"
 #include "osdep/threads.h"
@@ -55,7 +56,7 @@ static char *get_user_sid(void)
 {
     char *ssid = NULL;
     TOKEN_USER *info = NULL;
-    HANDLE t;
+    HANDLE t = INVALID_HANDLE_VALUE;
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &t))
         goto done;
 
@@ -72,7 +73,7 @@ static char *get_user_sid(void)
 
     ConvertSidToStringSidA(info->User.Sid, &ssid);
 done:
-    if (t)
+    if (t != INVALID_HANDLE_VALUE)
         CloseHandle(t);
     talloc_free(info);
     return ssid;
@@ -83,7 +84,7 @@ static char *get_integrity_sid(void)
 {
     char *ssid = NULL;
     TOKEN_MANDATORY_LABEL *info = NULL;
-    HANDLE t;
+    HANDLE t = INVALID_HANDLE_VALUE;
     if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &t))
         goto done;
 
@@ -100,7 +101,7 @@ static char *get_integrity_sid(void)
 
     ConvertSidToStringSidA(info->Label.Sid, &ssid);
 done:
-    if (t)
+    if (t != INVALID_HANDLE_VALUE)
         CloseHandle(t);
     talloc_free(info);
     return ssid;
@@ -311,16 +312,21 @@ done:
 
 static void ipc_start_client(struct mp_ipc_ctx *ctx, struct client_arg *client)
 {
-    client->client = mp_new_client(ctx->client_api, client->client_name),
-    client->log    = mp_client_get_log(client->client);
+    client->client = mp_new_client(ctx->client_api, client->client_name);
+    if (!client->client)
+        goto err;
+    client->log = mp_client_get_log(client->client);
 
     mp_thread client_thr;
-    if (mp_thread_create(&client_thr, client_thread, client)) {
-        mpv_destroy(client->client);
-        CloseHandle(client->client_h);
-        talloc_free(client);
-    }
+    if (mp_thread_create(&client_thr, client_thread, client))
+        goto err;
     mp_thread_detach(client_thr);
+    return;
+
+err:
+    mpv_destroy(client->client);
+    CloseHandle(client->client_h);
+    talloc_free(client);
 }
 
 static void ipc_start_client_json(struct mp_ipc_ctx *ctx, int id, HANDLE h)
@@ -466,21 +472,23 @@ struct mp_ipc_ctx *mp_init_ipc(struct mp_client_api *client_api,
     };
 
     if (opts->ipc_client && opts->ipc_client[0]) {
-        int fd = -1;
+        HANDLE h = INVALID_HANDLE_VALUE;
+
         bstr str = bstr0(opts->ipc_client);
         if (bstr_eatstart0(&str, "fd://") && str.len) {
-            long long ll = bstrtoll(str, &str, 0);
-            if (!str.len && ll >= 0 && ll <= INT_MAX)
-                fd = ll;
+            long long fd = bstrtoll(str, &str, 0);
+            if (!str.len && fd >= 0 && fd <= INT_MAX)
+                h = (HANDLE)_get_osfhandle(fd);
+        } else if (bstr_eatstart0(&str, "handle://") && str.len) {
+            long long handle = bstrtoll(str, &str, 0);
+            if (!str.len && handle >= 0 && handle <= UINT32_MAX)
+                h = (HANDLE)(uintptr_t)handle;
         }
-        if (fd < 0) {
-            MP_ERR(arg, "Invalid IPC client argument: '%s'\n", opts->ipc_client);
+
+        if (h && h != INVALID_HANDLE_VALUE && (intptr_t)h != -2) {
+            ipc_start_client_json(arg, -1, h);
         } else {
-            HANDLE h = (HANDLE)_get_osfhandle(fd);
-            if (h && h != INVALID_HANDLE_VALUE && (intptr_t)h != -2)
-                ipc_start_client_json(arg, -1, h);
-            else
-                MP_ERR(arg, "Invalid IPC client fd: '%d'\n", fd);
+            MP_ERR(arg, "Invalid IPC client argument: '%s'\n", opts->ipc_client);
         }
     }
 

@@ -28,6 +28,7 @@ typedef struct mp_vo_opts {
     char *fsscreen_name;
     char *winname;
     char *appid;
+    char *wayland_session;
     int x11_netwm;
     int x11_bypass_compositor;
     int x11_present;
@@ -109,7 +110,6 @@ struct mp_subtitle_opts {
     bool sub_scale_with_window;
     bool ass_scale_with_window;
     struct osd_style_opts *sub_style;
-    float sub_scale;
     bool sub_scale_signs;
     float sub_gauss;
     bool sub_gray;
@@ -138,8 +138,9 @@ struct mp_subtitle_opts {
 
 // Options for both primary and secondary subs.
 struct mp_subtitle_shared_opts {
-    float sub_delay[2];
+    double sub_delay[2];
     float sub_pos[2];
+    float sub_scale[2];
     bool sub_visibility[2];
     int ass_style_override[2];
 };
@@ -253,6 +254,8 @@ typedef struct MPOpts {
     bool use_filedir_conf;
     int hls_bitrate;
     int edition_id;
+    bool flatten_editions;
+    bool show_dependent_tracks;
     bool initial_audio_sync;
     double sync_max_video_change;
     double sync_max_audio_change;
@@ -260,7 +263,7 @@ typedef struct MPOpts {
     int hr_seek;
     float hr_seek_demuxer_offset;
     bool hr_seek_framedrop;
-    float audio_delay;
+    double audio_delay;
     float default_max_pts_correction;
     int autosync;
     int frame_dropping;
@@ -280,6 +283,7 @@ typedef struct MPOpts {
     char **input_commands;
     bool consolecontrols;
     int playlist_pos;
+    int playlist_inherit_options;
     struct m_rel_time play_start;
     struct m_rel_time play_end;
     struct m_rel_time play_length;
@@ -366,7 +370,8 @@ typedef struct MPOpts {
     struct mp_bluray_opts *stream_bluray_opts;
     struct cdda_opts *stream_cdda_opts;
     struct dvb_opts *stream_dvb_opts;
-    struct lavf_opts *stream_lavf_opts;
+    struct mp_network_opts *network_opts;
+    struct stream_lavf_opts *stream_lavf_opts;
 
     struct demux_rawaudio_opts *demux_rawaudio;
     struct demux_rawvideo_opts *demux_rawvideo;
@@ -387,8 +392,11 @@ typedef struct MPOpts {
     struct hwdec_opts *hwdec_opts;
 
     struct input_opts *input_opts;
+    bool builtin_dnd;
 
     struct clipboard_opts *clipboard_opts;
+
+    struct curl_opts *curl_opts;
 
     struct encode_opts *encode_opts;
 

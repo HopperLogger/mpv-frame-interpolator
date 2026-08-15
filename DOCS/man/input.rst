@@ -1986,14 +1986,14 @@ The following hooks are currently defined:
     For example, you could read and write the ``stream-open-filename``
     property to redirect an URL to something else (consider support for
     streaming sites which rarely give the user a direct media URL), or
-    you could set per-file options with by setting the property
+    you could set file-local options by setting the property
     ``file-local-options/<option name>``. The player will wait until all
     hooks are run.
 
     Ordered after ``start-file`` and before ``playback-restart``.
 
 ``on_load_fail``
-    Called after after a file has been opened, but failed to. This can be
+    Called after a file has been opened, but failed to. This can be
     used to provide a fallback in case native demuxers failed to recognize
     the file, instead of always running before the native demuxers like
     ``on_load``. Demux will only be retried if ``stream-open-filename``
@@ -2411,6 +2411,7 @@ Property list
     restart playback. The number of the first edition is 0.
 
     For Matroska files, this is the edition. For DVD/Blu-ray, this is the title.
+    For MPEG-TS, HLS, and EDL streams, this maps to the underlying program/variant.
 
     This strictly returns the user-set option or property value, and the
     ``current-edition`` property returns the runtime selected edition (this
@@ -2447,6 +2448,9 @@ Property list
     ``edition-list/N/title``
         Edition title as stored in the file. Not always available.
 
+    ``edition-list/N/metadata``
+        Per-edition metadata key/value pairs.
+
     When querying the property with the client API using ``MPV_FORMAT_NODE``,
     or with Lua ``mp.get_property_native``, this will return a mpv_node with
     the following contents:
@@ -2458,6 +2462,7 @@ Property list
                 "id"                MPV_FORMAT_INT64
                 "title"             MPV_FORMAT_STRING
                 "default"           MPV_FORMAT_FLAG
+                "metadata"          MPV_FORMAT_NODE_MAP
 
 ``metadata``
     Metadata key/value pairs.
@@ -2472,7 +2477,7 @@ Property list
 
     This has a number of sub-properties:
 
-    ``metadata/by-key/<key>``
+    ``metadata/by-key/<key>`` (RW)
         Value of metadata entry ``<key>``.
 
     ``metadata/list/count``
@@ -3153,8 +3158,15 @@ Property list
 
     ``mouse-pos/hover``
         Boolean - whether the mouse pointer hovers the video window. The
-        coordinates should be ignored when this value is false, because the
-        video backends update them only when the pointer hovers the window.
+        coordinates should be ignored when this value is false if no mouse
+        button is being pressed, because the video backends update them only
+        when the pointer hovers the window in this case.
+
+        If a mouse button is pressed while the pointer hovers the video window
+        and then the mouse pointer moves out of window region without releasing
+        the button, some video backends "capture" the pointer and still report
+        the coordinates. In this case, the value of this property may be true or
+        false depending on the video backend.
 
 ``touch-pos``
     Read-only - last known touch point positions, normalized to OSD dimensions.
@@ -3219,6 +3231,38 @@ Property list
             "pad-btns"           MPV_FORMAT_NODE_MAP
                (key and string value for each pad-btn entry)
 
+``dropped-files``
+    Information of the most recent drag-and-drop event mpv received.
+    A client can observe this property to detect when a drag-and-drop event
+    happens. This property is unavailable if no drag-and-drop event has
+    happened.
+
+    Has the following sub-properties:
+
+    ``dropped-files/time``
+        The timestamp of the last drag-and-drop event mpv received, in
+        nanoseconds. This uses the same clock as ``mpv_get_time_ns()``.
+
+    ``dropped-files/action``
+        The action of the drag-and-drop event. This is normally ``replace``.
+        Depending on the platform, this can also be ``append`` in some cases,
+        such as shift key being held while files are dropped.
+
+    ``dropped-files/files``
+        The dropped file names of the drag-and-drop event.
+
+    When querying the property with the client API using ``MPV_FORMAT_NODE``,
+    or with Lua ``mp.get_property_native``, this will return a mpv_node with
+    the following contents:
+
+    ::
+
+        MPV_FORMAT_NODE_MAP
+            "time"    MPV_FORMAT_INT64
+            "action"  MPV_FORMAT_STRING
+            "files"   MPV_FORMAT_NODE_ARRAY
+                MPV_FORMAT_STRING
+
 ``sub-ass-extradata``
     The current ASS subtitle track's extradata. There is no formatting done.
     The extradata is returned as a string as-is. This property is not
@@ -3277,6 +3321,29 @@ Property list
 
 ``secondary-sub-end``
     Same as ``sub-end``, but for the secondary subtitles.
+
+``sub-lines``
+    The list of subtitle lines in memory. Not available if the subtitle is not
+    text-based (i.e. DVD/BD subtitles).
+
+    When querying the property with the client API using ``MPV_FORMAT_NODE``,
+    or with Lua ``mp.get_property_native``, this will return a mpv_node with
+    the following contents:
+
+    ::
+
+        MPV_FORMAT_NODE_ARRAY
+            MPV_FORMAT_NODE_MAP (for each subtitle line)
+                "text"  MPV_FORMAT_STRING
+                "start" MPV_FORMAT_DOUBLE
+                "end"   MPV_FORMAT_DOUBLE
+
+    ASS tags are stripped from ``text``.
+
+    ``end`` is absent if unknown.
+
+``secondary-sub-lines``
+    Same as ``sub-lines``, but for the secondary subtitles.
 
 ``playlist-pos`` (RW)
     Current position on playlist. The first entry is on position 0. Writing to
@@ -3392,7 +3459,8 @@ Property list
                 "playlist-path" MPV_FORMAT_STRING (optional)
 
 ``track-list``
-    List of audio/video/sub tracks, current entry marked.
+    List of audio/video/sub tracks, current entry marked. When the file has
+    editions, only tracks belonging to the currently selected edition are listed.
 
     This has a number of sub-properties. Replace ``N`` with the 0-based track
     index.
@@ -3466,7 +3534,13 @@ Property list
         The bitrate of the HLS stream, if available.
 
     ``track-list/N/program-id``
-        The program ID of the HLS stream, if available.
+        The first program ID this stream belongs to, if any. Deprecated,
+        use ``track-list/N/program-ids``.
+
+    ``track-list/N/program-ids``
+        A list of all program IDs this stream belongs to. A stream can belong
+        to more than one program (e.g. in MPEG-TS or HLS). Unavailable if the
+        stream does not belong to any program.
 
     ``track-list/N/codec``
         The codec name used by this track, for example ``h264``. Unavailable
@@ -3502,7 +3576,7 @@ Property list
         this can be potentially wrong if a demuxer other than libavformat
         (``--demuxer=lavf``) is used. For mkv files, the index will usually
         match even if the default (builtin) demuxer is used, but there is
-        no hard guarantee.
+        no hard guarantee. May be unavailable if no known mapping exists.
 
     ``track-list/N/decoder``
         If this track is being decoded, the short decoder name,
@@ -3593,6 +3667,7 @@ Property list
                 "hearing-impaired"  MPV_FORMAT_FLAG
                 "hls-bitrate"       MPV_FORMAT_INT64
                 "program-id"        MPV_FORMAT_INT64
+                "program-ids"       MPV_FORMAT_NODE_ARRAY[MPV_FORMAT_INT64]
                 "selected"          MPV_FORMAT_FLAG
                 "main-selection"    MPV_FORMAT_INT64
                 "external"          MPV_FORMAT_FLAG
@@ -3918,6 +3993,10 @@ Property list
         the left, right, top, and bottom margins respectively.
         Values are between 0.0 and 1.0, normalized to window width/height.
 
+    ``user-data/osc/draw-preview``
+        Used to communicate between osc and compatible thumbnailer (if
+        installed). See `OSC Preview API`_ section for more details.
+
     ``user-data/mpv/ytdl``
         Data shared by the builtin ytdl hook script.
 
@@ -3933,6 +4012,9 @@ Property list
 
     ``user-data/mpv/console/open``
         Whether the console is open.
+
+    ``user-data/mpv/context-menu/open``
+        Whether the context menu script is open.
 
 ``menu-data`` (RW)
     This property stores the raw menu definition. See `Context Menu`_ section for details.
@@ -4080,9 +4162,14 @@ Property list
 
 ``file-local-options/<name>`` (RW)
     Similar to ``options/<name>``, but when setting an option through this
-    property, the option is reset to its old value once the current file has
-    stopped playing. Trying to write an option while no file is playing (or
-    is being loaded) results in an error.
+    property, the option is marked as file-local, which causes it to reset to
+    its old value once the current file has stopped playing. Trying to write
+    an option while no file is playing (or is being loaded) results in an error.
+
+    If an option is applied through a file specific mechanism such as per-file
+    options, watch later, ``options`` parameter of the ``loadfile`` command,
+    or file-specific configuration files, the option is similarly marked as
+    file-local.
 
     (Note that if an option is marked as file-local, even ``options/`` will
     access the local value, and the ``old`` value, which will be restored on
@@ -4303,6 +4390,11 @@ Property list
 ``current-clipboard-backend``
     A string containing the currently active clipboard backend.
     See ``--clipboard-backends`` option for the list of available backends.
+
+``player-operation-mode``
+    A read-only string of the current player operation mode, mirroring the
+    ``--player-operation-mode`` option. To set operation mode, set the option
+    at startup instead.
 
 ``clock``
     The current local time in hour:minutes format.

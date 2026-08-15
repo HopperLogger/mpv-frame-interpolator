@@ -104,8 +104,8 @@ static MP_THREAD_VOID script_thread(void *p)
 
 static int64_t mp_load_script(struct MPContext *mpctx, const char *fname)
 {
-    char *ext = mp_splitext(fname, NULL);
-    if (ext && strcasecmp(ext, "disable") == 0)
+    bstr ext = mp_get_ext(bstr0(fname));
+    if (bstrcasecmp0(ext, "disable") == 0)
         return 0;
 
     void *tmp = talloc_new(NULL);
@@ -144,7 +144,7 @@ static int64_t mp_load_script(struct MPContext *mpctx, const char *fname)
     } else {
         for (int n = 0; scripting_backends[n]; n++) {
             const struct mp_scripting *b = scripting_backends[n];
-            if (ext && strcasecmp(ext, b->file_ext) == 0) {
+            if (bstrcasecmp0(ext, b->file_ext) == 0) {
                 backend = b;
                 break;
             }
@@ -212,7 +212,7 @@ static int compare_filename(const void *pa, const void *pb)
 {
     char *a = (char *)pa;
     char *b = (char *)pb;
-    return strcmp(a, b);
+    return strcasecmp(a, b);
 }
 
 static char **list_script_files(void *talloc_ctx, char *path)

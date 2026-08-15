@@ -46,6 +46,7 @@ struct vo_wayland_state {
     struct wl_display       *display;
     struct wl_registry      *registry;
     struct wl_shm           *shm;
+    struct wl_fixes         *fixes;
     struct wl_surface       *surface;
     struct wl_surface       *osd_surface;
     struct wl_subsurface    *osd_subsurface;
@@ -83,6 +84,7 @@ struct vo_wayland_state {
     bool state_change;
     bool tiled;
     bool toplevel_configured;
+    bool surface_configured;
     int display_fd;
     int mouse_x;
     int mouse_y;
@@ -198,6 +200,11 @@ struct vo_wayland_state {
     bool                    cursor_visible;
     int                     allocated_cursor_scale;
     struct vo_wayland_seat *last_button_seat;
+
+    /* Session Management */
+    char *session_file;
+    struct xdg_session_v1 *xdg_session;
+    struct xdg_toplevel_session_v1 *xdg_toplevel_session;
 };
 
 bool vo_wayland_check_visible(struct vo *vo);

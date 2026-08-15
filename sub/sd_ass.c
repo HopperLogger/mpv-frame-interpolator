@@ -60,14 +60,13 @@ struct sd_ass_priv {
     struct mp_osd_res osd;
     struct seen_packet *seen_packets;
     int num_seen_packets;
-    int *packets_animated;
-    int num_packets_animated;
     bool check_animated;
 };
 
 struct seen_packet {
     int64_t pos;
     double pts;
+    int animated; // -1 is unknown
 };
 
 #undef OPT_BASE_STRUCT
@@ -386,8 +385,8 @@ static void filter_and_add(struct sd *sd, struct demux_packet *pkt)
     }
 
     ass_process_chunk(ctx->ass_track, pkt->buffer, pkt->len,
-                      llrint(pkt->pts * 1000),
-                      llrint(pkt->duration * 1000));
+                      floor(pkt->pts * 1000 + 1e-6),
+                      floor(pkt->duration * 1000 + 1e-6));
 
     // This bookkeeping only has any practical use for ASS subs
     // over a VO with no video.
@@ -402,18 +401,18 @@ static void filter_and_add(struct sd *sd, struct demux_packet *pkt)
                 if (ctx->check_animated && pkt->animated != 1)
                     pkt->animated = is_animated(event->Text);
             }
-            MP_TARRAY_APPEND(ctx, ctx->packets_animated, ctx->num_packets_animated, pkt->animated);
+            ctx->seen_packets[pkt->seen_pos].animated = pkt->animated;
         } else {
-            if (ctx->check_animated && ctx->packets_animated[pkt->seen_pos] == -1) {
+            if (ctx->check_animated && ctx->seen_packets[pkt->seen_pos].animated == -1) {
                 for (int n = track->n_events - 1; n >= 0; n--) {
                     if (n + 1 == old_n_events || pkt->animated == 1)
                         break;
                     ASS_Event *event = &track->events[n];
-                    ctx->packets_animated[pkt->seen_pos] = is_animated(event->Text);
-                    pkt->animated = ctx->packets_animated[pkt->seen_pos];
+                    ctx->seen_packets[pkt->seen_pos].animated = is_animated(event->Text);
+                    pkt->animated = ctx->seen_packets[pkt->seen_pos].animated;
                 }
             } else {
-                pkt->animated = ctx->packets_animated[pkt->seen_pos];
+                pkt->animated = ctx->seen_packets[pkt->seen_pos].animated;
             }
         }
     }
@@ -446,7 +445,7 @@ static bool check_packet_seen(struct sd *sd, struct demux_packet *packet)
     }
     packet->seen_pos = a;
     MP_TARRAY_INSERT_AT(priv, priv->seen_packets, priv->num_seen_packets, a,
-                        (struct seen_packet){packet->pos, packet->pts});
+                        (struct seen_packet){packet->pos, packet->pts, -1});
     return false;
 }
 
@@ -540,6 +539,7 @@ static void configure_ass(struct sd *sd, struct mp_osd_res *dim,
     bool set_scale_with_window = false;
     bool set_scale_by_window = true;
     bool total_override = false;
+
     // With forced overrides, apply the --sub-* specific options
     if (converted || shared_opts->ass_style_override[sd->order] == ASS_STYLE_OVERRIDE_FORCE) {
         set_scale_with_window = opts->sub_scale_with_window;
@@ -556,7 +556,7 @@ static void configure_ass(struct sd *sd, struct mp_osd_res *dim,
         set_hinting = opts->sub_hinting;
     }
     if (total_override || shared_opts->ass_style_override[sd->order] == ASS_STYLE_OVERRIDE_SCALE) {
-        set_font_scale = opts->sub_scale;
+        set_font_scale = shared_opts->sub_scale[sd->order];
     }
     if (set_scale_with_window) {
         set_font_scale *= dim->h / MPMAX(get_libass_scale_height(dim, set_use_margins), 1);
@@ -663,7 +663,7 @@ static long long find_timestamp(struct sd *sd, double pts)
     if (pts == MP_NOPTS_VALUE)
         return 0;
 
-    long long ts = llrint(pts * 1000);
+    long long ts = floor(pts * 1000 + 1e-6);
 
     if (!sd->opts->sub_fix_timing ||
         sd->shared_opts->ass_style_override[sd->order] == ASS_STYLE_OVERRIDE_NONE)
@@ -998,7 +998,6 @@ static void reset(struct sd *sd)
     if (sd->opts->sub_clear_on_seek || ctx->clear_once) {
         ass_flush_events(ctx->ass_track);
         ctx->num_seen_packets = 0;
-        ctx->num_packets_animated = 0;
         sd->preload_ok = false;
         ctx->clear_once = false;
     }
@@ -1017,13 +1016,51 @@ static void uninit(struct sd *sd)
     talloc_free(ctx->copy_cache);
 }
 
+static struct sub_lines *get_lines(struct sd *sd)
+{
+    struct sd_ass_priv *ctx = sd->priv;
+    ASS_Track *track = ctx->ass_track;
+    struct sub_lines *res = talloc_zero(NULL, struct sub_lines);
+
+    for (int i = 0; i < track->n_events; i++) {
+        ASS_Event *event = &track->events[i];
+        if (!event->Text)
+            continue;
+
+        char *plain = NULL;
+        bstr result = sd_ass_to_plaintext(&plain, event->Text);
+
+        // ASS subtitle lines can have many empty lines after stripping tags,
+        // but empty lines are useful in LRC.
+        if (is_whitespace_only(result)) {
+            talloc_free(plain);
+            if (!strcmp(sd->codec->codec, "ass"))
+                continue;
+            plain = talloc_strdup(res, "");
+        } else {
+            talloc_steal(res, plain);
+        }
+
+        struct sub_line line = {
+            .text  = plain,
+            .start = event->Start / 1000.0,
+            .end   = event->Duration == UNKNOWN_DURATION * 1000
+                         ? MP_NOPTS_VALUE
+                         : (event->Start + event->Duration) / 1000.0,
+        };
+        MP_TARRAY_APPEND(res, res->entries, res->num_entries, line);
+    }
+
+    return res;
+}
+
 static int control(struct sd *sd, enum sd_ctrl cmd, void *arg)
 {
     struct sd_ass_priv *ctx = sd->priv;
     switch (cmd) {
     case SD_CTRL_SUB_STEP: {
         double *a = arg;
-        long long ts = llrint(a[0] * 1000.0);
+        long long ts = floor(a[0] * 1000.0 + 1e-6);
         long long res = ass_step_sub(ctx->ass_track, ts, a[1]);
         if (!res)
             return false;
@@ -1072,6 +1109,7 @@ const struct sd_functions sd_ass = {
     .get_bitmaps = get_bitmaps,
     .get_text = get_text,
     .get_times = get_times,
+    .get_lines = get_lines,
     .control = control,
     .reset = reset,
     .select = enable_output,

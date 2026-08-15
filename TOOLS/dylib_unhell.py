@@ -6,7 +6,6 @@ import re
 import shutil
 import subprocess
 import sys
-from functools import partial
 
 sys_re = re.compile("^/System")
 usr_re = re.compile("^/usr/lib/")
@@ -25,9 +24,16 @@ def is_user_lib(objfile, libname):
            "libswift" not in libname
 
 def otool(objfile, rapths):
-    command = f"otool -L '{objfile}' | grep -e '\t' | awk '{{ print $1 }}'"
-    output  = subprocess.check_output(command, shell=True, universal_newlines=True)
-    libs = set(filter(partial(is_user_lib, objfile), output.split()))
+    output = subprocess.check_output(
+        ["otool", "-L", objfile], universal_newlines=True,
+    )
+    libs = set()
+    for line in output.splitlines():
+        if not line.startswith("\t"):
+            continue
+        lib = line.split()[0]
+        if is_user_lib(objfile, lib):
+            libs.add(lib)
 
     libs_resolved = set()
     libs_relative = set()
@@ -39,41 +45,27 @@ def otool(objfile, rapths):
 
     return libs_resolved, libs_relative
 
-def get_rapths(objfile):
-    rpaths: list[str] = []
-    command = f"otool -l '{objfile}' | grep -A2 LC_RPATH | grep path"
+def iter_rpaths(objfile):
+    output = subprocess.check_output(
+        ["otool", "-l", objfile], universal_newlines=True,
+    )
     path_re = re.compile(r"^\s*path (.*) \(offset \d*\)$")
+    for line in output.splitlines():
+        if match := path_re.match(line):
+            yield match.group(1).strip()
 
-    try:
-        result = subprocess.check_output(command, shell=True, universal_newlines=True)
-    except Exception:
-        return rpaths
-
-    for line in result.splitlines():
-        match = path_re.search(line)
-        if match is None:
-            continue
-        line_clean = match.group(1).strip()
+def get_rapths(objfile):
+    loader_path = os.path.dirname(objfile)
+    return [
         # resolve @loader_path
-        if line_clean.startswith("@loader_path/"):
-            line_clean = line_clean[len("@loader_path/"):]
-            line_clean = os.path.join(os.path.dirname(objfile), line_clean)
-            line_clean = os.path.normpath(line_clean)
-        rpaths.append(line_clean)
-
-    return rpaths
+        os.path.normpath(rpath.replace("@loader_path", loader_path, 1))
+        for rpath in iter_rpaths(objfile)
+    ]
 
 def get_rpaths_dev_tools(binary):
-    command = (
-        f"otool -l '{binary}' | grep -A2 LC_RPATH | grep path | "
-        'grep "Xcode\\|CommandLineTools"'
-    )
-    result  = subprocess.check_output(command, shell = True, universal_newlines=True)
-    path_re = re.compile(r"^\s*path (.*) \(offset \d*\)$")
     return [
-        match.group(1).strip()
-        for line in result.splitlines()
-        if (match := path_re.search(line)) is not None
+        rpath for rpath in iter_rpaths(binary)
+        if "Xcode" in rpath or "CommandLineTools" in rpath
     ]
 
 def resolve_lib_path(objfile, lib, rapths):
@@ -97,8 +89,7 @@ def resolve_lib_path(objfile, lib, rapths):
 def check_vulkan_max_version(version):
     try:
         subprocess.check_output(
-            f"pkg-config vulkan --max-version={version}",
-            shell=True,
+            ["pkg-config", "vulkan", f"--max-version={version}"],
         )
         return True
     except Exception:
@@ -227,29 +218,31 @@ def process_vulkan_loader(binary, loader_name, loader_relative_folder, library_n
         os.path.join("/etc", loader_relative_folder),
         os.path.join(os.path.expanduser("~"), ".local/share", loader_relative_folder),
         os.path.join("/usr/local/share", loader_relative_folder),
-        os.path.join("/usr/share/vulkan", loader_relative_folder),
+        os.path.join("/usr/share", loader_relative_folder),
         os.path.join(get_homebrew_prefix(), "etc", loader_relative_folder),
         os.path.join(get_homebrew_prefix(), "share", loader_relative_folder), # old location
     ]
 
     loader_system_folder = ""
+    loader_system_path = ""
     for loader_system_search_folder in loader_system_search_folders:
         if os.path.exists(loader_system_search_folder):
             loader_system_folder = loader_system_search_folder
-            break
+            if os.path.exists(os.path.join(loader_system_folder, loader_name)):
+                loader_system_path = os.path.join(loader_system_folder, loader_name)
+                break
 
     if not loader_system_folder:
         print(">>> could not find loader folder " + loader_relative_folder)
         return
 
-    loader_bundle_folder = os.path.join(resources_path(binary), loader_relative_folder)
-    loader_system_path = os.path.join(loader_system_folder, loader_name)
-    loader_bundle_path = os.path.join(loader_bundle_folder, loader_name)
-    library_relative_folder = "../../../Frameworks/"
-
-    if not os.path.exists(loader_system_path):
+    if not loader_system_path:
         print(">>> could not find loader " + loader_name)
         return
+
+    loader_bundle_folder = os.path.join(resources_path(binary), loader_relative_folder)
+    loader_bundle_path = os.path.join(loader_bundle_folder, loader_name)
+    library_relative_folder = "../../../Frameworks/"
 
     if not os.path.exists(loader_bundle_folder):
         os.makedirs(loader_bundle_folder)

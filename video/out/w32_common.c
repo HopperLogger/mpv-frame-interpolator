@@ -120,6 +120,7 @@ struct vo_w32_state {
     bool current_fs;
     bool pending_resize;
     bool pending_reset_size;
+    bool window_state_changed;
     bool pending_maximize;
 
     RECT current_rect; // client rect of the window
@@ -1120,6 +1121,10 @@ static void update_fullscreen_state(struct vo_w32_state *w32)
         wp.showCmd = SW_SHOWNORMAL;
         SetWindowPlacement(w32->window, &wp);
         w32->pending_maximize = true;
+    } else if (w32->opts->window_maximized) {
+        // If the window was initialized directly in fullscreen mode, restore
+        // it to maximized state later.
+        w32->pending_maximize = true;
     }
 
     RECT r = w32->current_fs ? get_screen_area(w32) : w32->windowed_rect;
@@ -1407,6 +1412,7 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam,
             switch (wParam) {
             case SIZE_MAXIMIZED:
                 w32->opts->window_maximized = true;
+                w32->opts->window_minimized = false;
                 break;
             case SIZE_MINIMIZED:
                 w32->opts->window_minimized = true;
@@ -1434,6 +1440,10 @@ static LRESULT CALLBACK WndProc(HWND hWnd, UINT message, WPARAM wParam,
         bool updated = (m_config_cache_write_opt(w32->opts_cache, &w32->opts->window_maximized) ||
                         m_config_cache_write_opt(w32->opts_cache, &w32->opts->window_minimized));
         if (updated || w32->pending_resize) {
+            // We call window resize here, only to recalculate possible window
+            // size after changing the style, but we want to preserve the client
+            // size.
+            w32->window_state_changed = true;
             window_resize(w32);
             events |= VO_EVENT_WIN_STATE;
         }
@@ -1930,7 +1940,9 @@ static void window_resize(struct vo_w32_state *w32)
 
     w32->pending_reset_size |= w32->opts->auto_window_resize &&
                                (w32->o_dwidth != vo->dwidth ||
-                                w32->o_dheight != vo->dheight);
+                                w32->o_dheight != vo->dheight) &&
+                                !w32->window_state_changed;
+    w32->window_state_changed = false;
 
     if (w32->parent) {
         GetClientRect(w32->window, &r);
@@ -1973,7 +1985,7 @@ set_pos_done:
     if (!is_visible(w32->window)) {
         if (w32->opts->window_minimized) {
             ShowWindow(w32->window, SW_SHOWMINNOACTIVE);
-        } else if (w32->opts->window_maximized) {
+        } else if (w32->opts->window_maximized && !w32->current_fs) {
             ShowWindow(w32->window, SW_SHOWMAXIMIZED);
         } else {
             ShowWindow(w32->window, SW_SHOW);
@@ -2327,6 +2339,7 @@ static int gui_thread_control(struct vo_w32_state *w32, int request, void *arg)
                        changed_option == &vo_opts->title_bar)
             {
                 update_window_style(w32);
+                w32->window_state_changed = true;
                 window_resize(w32);
             } else if (changed_option == &vo_opts->show_in_taskbar) {
                 // This hide and show is apparently required according to the documentation:

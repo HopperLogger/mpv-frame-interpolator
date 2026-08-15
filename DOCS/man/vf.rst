@@ -35,7 +35,7 @@ The exact syntax is:
 
     and the ``filter-parameter-list``:
 
-        ``<filter-parameter> | <filter-parameter> "," <filter-parameter-list>``
+        ``<filter-parameter> | <filter-parameter> ":" <filter-parameter-list>``
 
     and ``filter-parameter``:
 
@@ -322,6 +322,12 @@ Available mpv-only filters are:
     ``<hdr10plus=yes|no>``
         Whether or not to include HDR10+ metadata (default: yes). If
         disabled, any HDR10+ metadata will be stripped from frames.
+
+    ``<enhancement-layer=yes|no>``
+        Whether or not to apply the image enhancement layer (default: yes).
+        If disabled, the enhancement-layer frame paired with each base-layer
+        frame is discarded. Currently this controls Dolby Vision Profile 7 FEL
+        application.
 
     ``<min-luma>``
         Set the minimum luminance value for the mastering display metadata.
@@ -760,7 +766,8 @@ Available mpv-only filters are:
         of the d3d11 frame.
 
     ``nvidia-true-hdr``
-        Enable NVIDIA RTX Video HDR processing.
+        Enable NVIDIA RTX Video HDR processing. This only converts SDR to HDR,
+        so it is ignored when the source is already HDR.
 
 ``amf_frc``
     AMD Frame Rate Conversion filter. Requires AMD hardware and drivers

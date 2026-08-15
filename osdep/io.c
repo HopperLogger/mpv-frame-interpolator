@@ -62,6 +62,63 @@ bool mp_set_cloexec(int fd)
     return true;
 }
 
+// fopen that sets cloexec.
+FILE *mp_fopen(const char *filename, const char *mode)
+{
+    if (!mode[0]) {
+        errno = EINVAL;
+        return NULL;
+    }
+
+    int rwmode;
+    int oflags = 0;
+    switch (mode[0]) {
+    case 'r':
+        rwmode = O_RDONLY;
+        break;
+    case 'w':
+        rwmode = O_WRONLY;
+        oflags |= O_CREAT | O_TRUNC;
+        break;
+    case 'a':
+        rwmode = O_WRONLY;
+        oflags |= O_CREAT | O_APPEND;
+        break;
+    default:
+        errno = EINVAL;
+        return NULL;
+    }
+
+    // Parse extra mode flags
+    for (const char *pos = mode + 1; *pos; pos++) {
+        switch (*pos) {
+        case '+': rwmode = O_RDWR;  break;
+        case 'x': oflags |= O_EXCL; break;
+        // Ignore unknown flags (glibc does too)
+        default: break;
+        }
+    }
+
+    // Open a CRT file descriptor
+    int fd = open(filename, rwmode | oflags | O_CLOEXEC, 0600);
+    if (fd < 0)
+        return NULL;
+
+    // Add 'b' to the mode so the CRT knows the file is opened in binary mode
+    char bmode[] = { mode[0], '\0', '\0', '\0' };
+    int idx = 1;
+    if (rwmode == O_RDWR)
+        bmode[idx++] = '+';
+    bmode[idx++] = 'b';
+    FILE *fp = fdopen(fd, bmode);
+    if (!fp) {
+        close(fd);
+        return NULL;
+    }
+
+    return fp;
+}
+
 #ifndef _WIN32
 int mp_dup_cloexec(int fd)
 {
@@ -508,58 +565,6 @@ int mp_rename(const char *oldpath, const char *newpath)
     return 0;
 }
 
-FILE *mp_fopen(const char *filename, const char *mode)
-{
-    if (!mode[0]) {
-        errno = EINVAL;
-        return NULL;
-    }
-
-    int rwmode;
-    int oflags = 0;
-    switch (mode[0]) {
-    case 'r':
-        rwmode = _O_RDONLY;
-        break;
-    case 'w':
-        rwmode = _O_WRONLY;
-        oflags |= _O_CREAT | _O_TRUNC;
-        break;
-    case 'a':
-        rwmode = _O_WRONLY;
-        oflags |= _O_CREAT | _O_APPEND;
-        break;
-    default:
-        errno = EINVAL;
-        return NULL;
-    }
-
-    // Parse extra mode flags
-    for (const char *pos = mode + 1; *pos; pos++) {
-        switch (*pos) {
-        case '+': rwmode = _O_RDWR;  break;
-        case 'x': oflags |= _O_EXCL; break;
-        // Ignore unknown flags (glibc does too)
-        default: break;
-        }
-    }
-
-    // Open a CRT file descriptor
-    int fd = mp_open(filename, rwmode | oflags);
-    if (fd < 0)
-        return NULL;
-
-    // Add 'b' to the mode so the CRT knows the file is opened in binary mode
-    char bmode[] = { mode[0], 'b', rwmode == _O_RDWR ? '+' : '\0', '\0' };
-    FILE *fp = fdopen(fd, bmode);
-    if (!fp) {
-        close(fd);
-        return NULL;
-    }
-
-    return fp;
-}
-
 // Windows' MAX_PATH/PATH_MAX/FILENAME_MAX is fixed to 260, but this limit
 // applies to unicode paths encoded with wchar_t (2 bytes on Windows). The UTF-8
 // version could end up bigger in memory. In the worst case each wchar_t is
@@ -745,36 +750,26 @@ int mp_ftruncate64(int fd, off_t length)
 thread_local
 static struct {
     DWORD errcode;
-    char *errstring;
-} mp_dl_result = {
-    .errcode = 0,
-    .errstring = NULL
-};
-
-static void mp_dl_free(void)
-{
-    talloc_free(mp_dl_result.errstring);
-}
-
-static void mp_dl_init(void)
-{
-    atexit(mp_dl_free);
-}
+    char errstring[1024];
+} mp_dl_result;
 
 void *mp_dlopen(const char *filename, int flag)
 {
     HMODULE lib = NULL;
     void *ta_ctx = talloc_new(NULL);
     wchar_t *wfilename = mp_from_utf8(ta_ctx, filename);
+    wchar_t *path = wfilename;
 
-    DWORD len = GetFullPathNameW(wfilename, 0, NULL, NULL);
-    if (!len)
-        goto err;
+    if (strchr(filename, '/') || strchr(filename, '\\')) {
+        DWORD len = GetFullPathNameW(wfilename, 0, NULL, NULL);
+        if (!len)
+            goto err;
 
-    wchar_t *path = talloc_array(ta_ctx, wchar_t, len);
-    len = GetFullPathNameW(wfilename, len, path, NULL);
-    if (!len)
-        goto err;
+        path = talloc_array(ta_ctx, wchar_t, len);
+        len = GetFullPathNameW(wfilename, len, path, NULL);
+        if (!len)
+            goto err;
+    }
 
     lib = LoadLibraryW(path);
 
@@ -793,17 +788,14 @@ void *mp_dlsym(void *handle, const char *symbol)
 
 char *mp_dlerror(void)
 {
-    static mp_once once_init_dlerror = MP_STATIC_ONCE_INITIALIZER;
-    mp_exec_once(&once_init_dlerror, mp_dl_init);
-    mp_dl_free();
-
     if (mp_dl_result.errcode == 0)
         return NULL;
 
-    mp_dl_result.errstring = talloc_strdup(NULL, mp_HRESULT_to_str(mp_dl_result.errcode));
+    mp_HRESULT_to_str_buf(mp_dl_result.errstring, sizeof(mp_dl_result.errstring),
+                          mp_dl_result.errcode);
     mp_dl_result.errcode = 0;
 
-    return mp_dl_result.errstring == NULL
+    return !mp_dl_result.errstring[0]
         ? "unknown error"
         : mp_dl_result.errstring;
 }

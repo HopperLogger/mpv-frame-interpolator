@@ -69,6 +69,7 @@ sources = files(
     'audio/filter/af_drop.c',
     'audio/filter/af_format.c',
     'audio/filter/af_lavcac3enc.c',
+    'audio/filter/af_lavfi_tempo.c',
     'audio/filter/af_scaletempo.c',
     'audio/filter/af_scaletempo2.c',
     'audio/filter/af_scaletempo2_internals.c',
@@ -110,6 +111,7 @@ sources = files(
     'demux/demux_playlist.c',
     'demux/demux_raw.c',
     'demux/demux_timeline.c',
+    'demux/dovi_split.c',
     'demux/ebml.c',
     'demux/packet.c',
     'demux/packet_pool.c',
@@ -121,6 +123,7 @@ sources = files(
     'filters/f_auto_filters.c',
     'filters/f_decoder_wrapper.c',
     'filters/f_demux_in.c',
+    'filters/f_enhancement_pair.c',
     'filters/f_hwtransfer.c',
     'filters/f_lavfi.c',
     'filters/f_output_chain.c',
@@ -133,6 +136,7 @@ sources = files(
 
     ## Input
     'input/cmd.c',
+    'input/dnd.c',
     'input/event.c',
     'input/input.c',
     'input/ipc.c',
@@ -187,6 +191,7 @@ sources = files(
 
     ## Streams
     'stream/cookies.c',
+    'stream/network.c',
     'stream/stream.c',
     'stream/stream_avdevice.c',
     'stream/stream_cb.c',
@@ -199,6 +204,8 @@ sources = files(
     'stream/stream_mpv.c',
     'stream/stream_null.c',
     'stream/stream_slice.c',
+    'stream/stream_bstr.c',
+    'stream/stream_env.c',
 
     ## Subtitles
     'sub/ass_mp.c',
@@ -469,6 +476,8 @@ features += {'ppoll': cc.has_function('ppoll', args: '-D_GNU_SOURCE',
                                       prefix: '#include <poll.h>')}
 features += {'memrchr': cc.has_function('memrchr', args: '-D_GNU_SOURCE',
                                         prefix: '#include <string.h>')}
+features += {'clone': cc.has_header_symbol('sched.h', 'clone', args: '-D_GNU_SOURCE')}
+features += {'rfork': cc.has_header_symbol('unistd.h', 'rfork_thread')}
 
 optical_devices = {
     'windows': 'D:',
@@ -625,6 +634,14 @@ if darwin
     subdir(join_paths('TOOLS', 'osxbundle'))
 endif
 
+libcurl = dependency('libcurl', version: '>= 7.88.0', required: get_option('libcurl'))
+features += {'libcurl': libcurl.found()}
+if features['libcurl']
+    dependencies += [libcurl]
+    sources += files('demux/avio_crypto.c',
+                     'stream/stream_curl.c')
+endif
+
 cdda_opt = get_option('cdda').require(
     get_option('gpl'),
     error_message: 'the build is not GPL!',
@@ -777,12 +794,13 @@ if features['uchardet']
     dependencies += uchardet
 endif
 
-vapoursynth = dependency('vapoursynth', version: '>= 56', required: get_option('vapoursynth'))
-vapoursynth_script = dependency('vapoursynth-script', version: '>= 56',
-                                required: get_option('vapoursynth'))
-features += {'vapoursynth': vapoursynth.found() and vapoursynth_script.found()}
+vapoursynth = dependency('vapoursynth-script', version: '>= 56', required: false)
+if not vapoursynth.found()
+    vapoursynth = dependency('vapoursynth', version: '>= 56', required: get_option('vapoursynth'))
+endif
+features += {'vapoursynth': vapoursynth.found()}
 if features['vapoursynth']
-    dependencies += [vapoursynth, vapoursynth_script]
+    dependencies += vapoursynth.partial_dependency(compile_args: true, includes: true)
     sources += files('video/filter/vf_vapoursynth.c')
 endif
 
@@ -1700,7 +1718,7 @@ if rst2man.found()
           docutils_wrapper, rst2man,
           '--record-dependencies', '@DEPFILE@',
           '--strip-elements-with-class=contents',
-          '@INPUT@', '@OUTPUT@'],
+          '--output=@OUTPUT@', '@INPUT@'],
         depfile: 'mpv.1.dep',
         install: true,
         install_tag: 'man',
@@ -1747,7 +1765,7 @@ endif
 
 # Set config.h
 conf_data = configuration_data()
-conf_data.set_quoted('CONFIGURATION', meson.build_options())
+conf_data.set_quoted('CONFIGURATION', meson.build_options().strip().replace('\\', '\\\\'))
 conf_data.set_quoted('DEFAULT_OPTICAL_DEVICE', optical_device)
 
 # Loop over all features in the build, create a define and add them to config.h
@@ -1921,6 +1939,7 @@ if features['sdl2-audio'] or features['sdl2-gamepad'] or features['sdl2-video']
 endif
 
 summary({'cocoa': features['cocoa'] and features['swift'],
+         'curl': features['libcurl'],
          'd3d11': features['d3d11'],
          'drm': features['drm'],
          'javascript': features['javascript'],

@@ -167,7 +167,7 @@ struct mp_pass_perf {
 };
 
 #define VO_PASS_PERF_MAX 64
-#define VO_PASS_DESC_MAX_LEN 128
+#define VO_PASS_DESC_MAX_LEN 256
 
 struct mp_frame_perf {
     int count;
@@ -549,8 +549,10 @@ void vo_query_formats(struct vo *vo, uint8_t *list);
 void vo_event(struct vo *vo, int event);
 int vo_query_and_reset_events(struct vo *vo, int events);
 struct mp_image *vo_get_current_frame(struct vo *vo);
-void vo_set_queue_params(struct vo *vo, int64_t offset_ns, int num_req_frames);
+void vo_set_queue_params(struct vo *vo, int64_t offset_ns, int num_req_frames,
+                         int num_frame_refs);
 int vo_get_num_req_frames(struct vo *vo);
+int vo_get_num_frame_refs(struct vo *vo);
 double vo_get_vsync_interval(struct vo *vo);
 double vo_get_estimated_vsync_interval(struct vo *vo);
 double vo_get_estimated_vsync_jitter(struct vo *vo);

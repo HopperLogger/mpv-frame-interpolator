@@ -368,6 +368,16 @@ Configurable Options
     The list of visibility modes to cycle through when calling the
     osc-visibility cycle script message. Modes are separated by ``_``.
 
+``boxwidth``
+    Default: 550
+
+    Width of the ``box`` layout.
+
+``slimboxwidth``
+    Default: 660
+
+    Width of the ``slimbox`` layout.
+
 ``boxmaxchars``
     Default: 80
 
@@ -473,7 +483,7 @@ Configurable Options
     Width of the ``floating`` layout.
 
 ``floatingalpha``
-    Default: 130
+    Default: 105
 
     Alpha of the ``floating`` layout background, 0 (opaque) to 255 (fully
     transparent).
@@ -488,12 +498,6 @@ Configurable Options
     Default: no
 
     Set to ``yes`` to reduce festivity (i.e. disable santa hat in December.)
-
-``livemarkers``
-    Default: yes
-
-    Update chapter markers positions on duration changes, e.g. live streams.
-    The updates are unoptimized - consider disabling it on very low-end systems.
 
 ``chapter_fmt``
     Default: ``Chapter: %s``
@@ -586,8 +590,16 @@ Configurable Options
 
     Use display fps to calculate the interval between OSC redraws.
 
+``max_thumb_size``
+    Default: 200
+
+    Maximum display size of the preview thumbnail. Only meaningful when a
+    Thumbnailer is active. See the `OSC Preview API`_ section.
+
 The following options configure what commands are run when the buttons are
 clicked. ``mbtn_mid`` commands are also triggered with ``shift+mbtn_left``.
+An option that ends with ``_down_command`` means that the command is
+continuously called while the mouse button is held down.
 
 ``menu_mbtn_left_command=script-binding select/menu; script-message-to osc osc-hide``
 
@@ -667,6 +679,36 @@ clicked. ``mbtn_mid`` commands are also triggered with ``shift+mbtn_left``.
 
 ``fullscreen_mbtn_right_command="cycle window-maximized"``
 
+``skip_backward_mbtn_left_down_command=seek -5``
+
+``skip_backward_mbtn_mid_down_command=frame-back-step``
+
+``skip_backward_mbtn_right_down_command=seek -30``
+
+``skip_forward_mbtn_left_down_command=seek 10``
+
+``skip_forward_mbtn_mid_down_command=frame-step``
+
+``skip_forward_mbtn_right_down_command=seek 60``
+
+``close_mbtn_left_command=quit``
+
+``close_mbtn_mid_command=``
+
+``close_mbtn_right_command=``
+
+``minimize_mbtn_left_command=cycle window-minimized``
+
+``minimize_mbtn_mid_command=``
+
+``minimize_mbtn_right_command=``
+
+``maximize_mbtn_left_command=cycle ${?fullscreen==yes:fullscreen}${!fullscreen==yes:window-maximized}``
+
+``maximize_mbtn_mid_command=``
+
+``maximize_mbtn_right_command=``
+
 Custom Buttons
 ~~~~~~~~~~~~~~
 
@@ -719,3 +761,36 @@ to set auto mode (the default) with ``b``::
     Controls the visibility of the mpv logo on idle. Valid arguments are ``yes``,
     ``no``, and ``cycle`` to toggle between yes and no. If a second argument is
     passed (any value), then the output on the OSD will be silenced.
+
+OSC Preview API
+~~~~~~~~~~~~~~~
+
+The OSC supports displaying preview thumbnails when hovering over the seekbar if
+a compatible thumbnailer script is installed. It communicates with a thumbnailer
+script via the following ``user-data`` properties:
+
+``user-data/osc/draw-preview``
+    Set by the OSC to request a thumbnail within the currently playing file.
+    The ``draw-preview`` property is a table with the following fields:
+
+    ``x``, ``y``
+        Top-left coordinates (positive integers) to draw the thumbnail at.
+
+    ``w``, ``h``
+        Width and height (positive non-zero integers) of the area to draw the
+        thumbnail in. Note that this only specifies the drawing width and
+        height, the actual backing thumbnail size may differ.
+
+    ``hover-sec``
+        Requested thumbnail timestamp in seconds.
+
+    ``ass``
+        Optional ASS string to render alongside the thumbnail, using OSD
+        coordinates. This can be used for decorations such as a thumbnail
+        border.
+
+    The OSC sets this property to ``nil`` to signal the thumbnailer to clear
+    the displayed thumbnail.
+
+Avoid installing/enabling multiple thumbnailer script since this api expects
+only one to be active at a time.

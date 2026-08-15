@@ -243,7 +243,10 @@ static struct tl_root *parse_edl(bstr str, struct mp_log *log)
                     : get_meta(tl, index);
                 sh->lang = get_param0(&ctx, sh, "lang");
                 sh->title = get_param0(&ctx, sh, "title");
-                sh->hls_bitrate = get_param_int(&ctx, "byterate", 0) * 8;
+                MP_SATURATE_MUL(&sh->hls_bitrate, get_param_int(&ctx, "byterate", 0), 8);
+                int pid = get_param_int(&ctx, "program_id", -1);
+                if (pid >= 0)
+                    MP_TARRAY_APPEND(sh, sh->program_ids, sh->num_program_ids, pid);
                 bstr flags = get_param(&ctx, "flags");
                 bstr flag;
                 while (bstr_split_tok(flags, "+", &flag, &flags) || flag.len) {
@@ -560,12 +563,11 @@ static struct timeline_par *build_timeline(struct timeline *root,
     if (!tl->track_layout && !tl->delay_open)
         goto error;
     if (!root->meta)
-        root->meta = tl->track_layout;
+        root->meta = tl->track_layout ? tl->track_layout : root->demuxer;
 
     // Not very sane, since demuxer fields are supposed to be treated read-only
     // from outside, but happens to work in this case, so who cares.
-    if (root->meta)
-        mp_tags_merge(root->meta->metadata, edl_root->tags);
+    mp_tags_merge(root->meta->metadata, edl_root->tags);
 
     mp_assert(tl->num_parts == parts->num_parts);
     return tl;

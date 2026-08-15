@@ -107,7 +107,7 @@ static void update_subtitle_speed(struct dec_sub *sub)
 static double pts_to_subtitle(struct dec_sub *sub, double pts)
 {
     struct mp_subtitle_shared_opts *opts = sub->shared_opts;
-    float delay = sub->order < 0 ? 0.0f : opts->sub_delay[sub->order];
+    double delay = sub->order < 0 ? 0.0 : opts->sub_delay[sub->order];
 
     if (pts != MP_NOPTS_VALUE)
         pts = (pts * sub->play_dir - delay) / sub->sub_speed;
@@ -118,7 +118,7 @@ static double pts_to_subtitle(struct dec_sub *sub, double pts)
 static double pts_from_subtitle(struct dec_sub *sub, double pts)
 {
     struct mp_subtitle_shared_opts *opts = sub->shared_opts;
-    float delay = sub->order < 0 ? 0.0f : opts->sub_delay[sub->order];
+    double delay = sub->order < 0 ? 0.0 : opts->sub_delay[sub->order];
 
     if (pts != MP_NOPTS_VALUE)
         pts = (pts * sub->sub_speed + delay) * sub->play_dir;
@@ -365,7 +365,7 @@ void sub_read_packets(struct dec_sub *sub, double video_pts, bool force,
             break;
 
         // (Use this mechanism only if sub_delay matters to avoid corner cases.)
-        float delay = sub->order < 0 ? 0.0f : sub->shared_opts->sub_delay[sub->order];
+        double delay = sub->order < 0 ? 0.0 : sub->shared_opts->sub_delay[sub->order];
         double min_pts = delay < 0 || force ? video_pts : MP_NOPTS_VALUE;
 
         struct demux_packet *pkt;
@@ -579,4 +579,59 @@ bool sub_is_secondary_visible(struct dec_sub *sub)
     bool ret = sub->shared_opts->sub_visibility[1];
     mp_mutex_unlock(&sub->lock);
     return ret;
+}
+
+static int sub_line_cmp(const void *a, const void *b)
+{
+    const struct sub_line *la = a, *lb = b;
+    if (la->start < lb->start) return -1;
+    if (la->start > lb->start) return  1;
+    return 0;
+}
+
+static void dedup_sub_lines(struct sub_lines *lines)
+{
+    int window_start = 0;
+    int window_end = 1;
+    int current_shift = 0;
+
+    while (window_end < lines->num_entries) {
+        struct sub_line next = lines->entries[window_end + current_shift];
+        for (int i = window_start; i < window_end; ++i) {
+            if (lines->entries[i].end < next.start) {
+                struct sub_line tmp = lines->entries[window_start];
+                lines->entries[window_start++] = lines->entries[i];
+                lines->entries[i] = tmp;
+                continue;
+            }
+
+            if (!strcmp(lines->entries[i].text, next.text)) {
+                lines->entries[i].end = MPMAX(next.end, lines->entries[i].end);
+                TA_FREEP(&next.text);
+                ++current_shift, --lines->num_entries;
+                goto skip;
+            }
+        }
+
+        lines->entries[window_end++] = next;
+
+    skip:;
+    }
+}
+
+struct sub_lines *sub_get_lines(struct dec_sub *sub)
+{
+    mp_mutex_lock(&sub->lock);
+    struct sub_lines *res = NULL;
+    if (sub->sd->driver->get_lines) {
+        res = sub->sd->driver->get_lines(sub->sd);
+        qsort(res->entries, res->num_entries, sizeof(res->entries[0]),
+              sub_line_cmp);
+        dedup_sub_lines(res);
+        // dedup may sometimes reorder lines to keep its window smaller
+        qsort(res->entries, res->num_entries, sizeof(res->entries[0]),
+              sub_line_cmp);
+    }
+    mp_mutex_unlock(&sub->lock);
+    return res;
 }

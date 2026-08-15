@@ -200,15 +200,25 @@ void update_vo_playback_state(struct MPContext *mpctx)
             .position = pos > 0 ? lrint(pos * UINT8_MAX) : 0,
         };
 
-        if (oldstate.taskbar_progress != newstate.taskbar_progress ||
-            oldstate.playing != newstate.playing ||
-            oldstate.paused != newstate.paused ||
-            oldstate.position != newstate.position)
-        {
+        bool state_changed = oldstate.taskbar_progress != newstate.taskbar_progress ||
+                             oldstate.playing != newstate.playing ||
+                             oldstate.paused != newstate.paused;
+        if (state_changed || oldstate.position != newstate.position) {
             // Don't update progress bar if it was and still is hidden
             if ((oldstate.playing && oldstate.taskbar_progress) ||
                 (newstate.playing && newstate.taskbar_progress))
             {
+                // Rate-limit progress-only updates. The win32 backend forwards
+                // these to the shell (explorer.exe), we don't want to spam it
+                // too much to avoid performance issues, when stealing cpu time
+                // from the shell thread. In normal playback, this doesn't update
+                // at all, but in live streams the duration can change, even on
+                // every frame.
+                int64_t now = mp_time_ns();
+                int64_t elapsed = now - mpctx->vo_playback_state_time;
+                if (!state_changed && elapsed < MP_TIME_MS_TO_NS(1000))
+                    return;
+                mpctx->vo_playback_state_time = now;
                 vo_control_async(mpctx->video_out,
                                  VOCTRL_UPDATE_PLAYBACK_STATE, &newstate);
             }
@@ -353,17 +363,6 @@ const char *mp_status_str(enum playback_status st)
     }
 }
 
-bool str_in_list(bstr str, char **list)
-{
-    if (!list)
-        return false;
-    while (*list) {
-        if (!bstrcasecmp0(str, *list++))
-            return true;
-    }
-    return false;
-}
-
 #define ADD_FLAG(ctx, dst, flag, first) do {                           \
     bstr_xappend_asprintf(ctx, &dst, " %s%s", first ? "[" : "", flag); \
     first = false;                                                     \
@@ -377,31 +376,15 @@ char *mp_format_track_metadata(void *ctx, struct track *t, bool add_lang)
     if (t->title)
         bstr_xappend_asprintf(ctx, &dst, "'%s' ", t->title);
 
-    const char *codec = s ? s->codec->codec : NULL;
-
     bstr_xappend0(ctx, &dst, "(");
 
     if (add_lang && t->lang)
         bstr_xappend_asprintf(ctx, &dst, "%s ", t->lang);
 
-    bstr_xappend0(ctx, &dst, codec ? codec : "<unknown>");
-
-    if (s && s->codec->codec_profile)
-        bstr_xappend_asprintf(ctx, &dst, " [%s]", s->codec->codec_profile);
-    if (s && s->codec->disp_w)
-        bstr_xappend_asprintf(ctx, &dst, " %dx%d", s->codec->disp_w, s->codec->disp_h);
-    if (s && s->codec->fps && !t->image) {
-        char *fps = mp_format_double(ctx, s->codec->fps, 4, false, false, true);
-        bstr_xappend_asprintf(ctx, &dst, " %s fps", fps);
-    }
-    if (s && s->codec->channels.num)
-        bstr_xappend_asprintf(ctx, &dst, " %dch", s->codec->channels.num);
-    if (s && s->codec->samplerate)
-        bstr_xappend_asprintf(ctx, &dst, " %d Hz", s->codec->samplerate);
-    if (s && s->codec->bitrate > 0 && s->codec->bitrate < INT_MAX - 500) {
-        bstr_xappend_asprintf(ctx, &dst, " %d kbps", (s->codec->bitrate + 500) / 1000);
-    } else if (s && s->hls_bitrate > 0 && s->hls_bitrate < INT_MAX - 500) {
-        bstr_xappend_asprintf(ctx, &dst, " %d kbps", (s->hls_bitrate + 500) / 1000);
+    if (s) {
+        demux_append_codec_desc(ctx, &dst, s, NULL);
+    } else {
+        bstr_xappend0(ctx, &dst, "<unknown>");
     }
     bstr_xappend0(ctx, &dst, ")");
 
