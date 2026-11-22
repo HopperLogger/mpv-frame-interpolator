@@ -7,7 +7,7 @@ __kernel void determineLowestLayerKernel(__global unsigned int* summedUpDeltaArr
     const int cy = get_global_id(1);
 
     // Find the layer with the lowest value (if we are a window represent)
-    if (cy % windowSize == 0 && cx % windowSize == 0) {
+    if (cy < lowDimY && cx < lowDimX && cy % windowSize == 0 && cx % windowSize == 0) {
         unsigned char lowestLayer = 0;
 
         for (int z = 1; z < searchWindowSize; ++z) {

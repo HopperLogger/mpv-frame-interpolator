@@ -91,6 +91,8 @@ __kernel void calcDeltaSumsKernel(__global unsigned int* summedUpDeltaArray, __g
             } else if (newCy < 0) {
                 newCy = -newCy - 1;
             }
+            newCx = clamp(newCx, 0, dimX - 1);
+            newCy = clamp(newCy, 0, dimY - 1);
 
             // Calculate the delta value for the current pixel
             delta = abs_diff(frame1[newCy * dimX + newCx], frame2[scaledCy * dimX + scaledCx]) + 
